@@ -4,6 +4,13 @@
      For more information, please see http://wiki.ros.org/sw_urdf_exporter -->
 <robot
   name="mini_akm_robot">
+  <link name="base_footprint"/>
+  <joint name="base_footprint_joint" type="fixed">
+    <origin xyz="0 0 0.0325" rpy="0 0 0"/>
+    <parent link="base_footprint"/>
+    <child link="base_link"/>
+  </joint>
+
   <link
     name="base_link">
     <inertial>
@@ -618,6 +625,31 @@
       <state_interface name="velocity"/>
     </joint>
   </ros2_control>
+
+  <gazebo reference="lb_link">
+    <mu1>1.5</mu1>
+    <mu2>1.5</mu2>
+    <kp>1000000.0</kp>
+    <kd>1.0</kd>
+  </gazebo>
+  <gazebo reference="rb_link">
+    <mu1>1.5</mu1>
+    <mu2>1.5</mu2>
+    <kp>1000000.0</kp>
+    <kd>1.0</kd>
+  </gazebo>
+  <gazebo reference="lf_link">
+    <mu1>1.5</mu1>
+    <mu2>1.5</mu2>
+    <kp>1000000.0</kp>
+    <kd>1.0</kd>
+  </gazebo>
+  <gazebo reference="rf_link">
+    <mu1>1.5</mu1>
+    <mu2>1.5</mu2>
+    <kp>1000000.0</kp>
+    <kd>1.0</kd>
+  </gazebo>
 
   <gazebo>
     <plugin filename="gz_ros2_control-system" name="gz_ros2_control::GazeboSimROS2ControlPlugin">
