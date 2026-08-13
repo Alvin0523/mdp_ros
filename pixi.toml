@@ -2,7 +2,7 @@
 authors = ["Wei Ming <alvinwm0523@gmail.com>"]
 channels = ["robostack-jazzy", "conda-forge"]
 name = "mdp_ros"
-platforms = ["linux-64", "osx-arm64"]
+platforms = ["linux-64", "linux-aarch64", "osx-arm64"]
 version = "0.1.0"
 
 [tasks]
