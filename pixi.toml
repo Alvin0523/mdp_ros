@@ -1,0 +1,44 @@
+[workspace]
+authors = ["Wei Ming <alvinwm0523@gmail.com>"]
+channels = ["robostack-jazzy", "conda-forge"]
+name = "mdp_ros"
+platforms = ["linux-64", "linux-aarch64", "osx-arm64"]
+version = "0.1.0"
+
+[tasks]
+build = "colcon build --symlink-install"
+test = "colcon test"
+clean = "rm -rf build install log"
+
+[dependencies]
+# Core ROS2
+ros-jazzy-ros-base = "*"
+ros-jazzy-xacro = "*"
+ros-jazzy-robot-state-publisher = "*"
+ros-jazzy-joint-state-publisher = "*"
+ros-jazzy-joint-state-publisher-gui = "*"
+ros-jazzy-rviz2 = "*"
+ros-jazzy-teleop-twist-keyboard = "*"
+
+# ros2_control stack (ackermann_steering_controller, controller_manager)
+ros-jazzy-ros2-control = "*"
+ros-jazzy-ros2-controllers = "*"
+ros-jazzy-controller-manager = "*"
+
+# Gazebo simulation hardware_interface + bridge
+ros-jazzy-gz-ros2-control = "*"
+ros-jazzy-ros-gz = "*"
+
+# Build tools
+colcon-common-extensions = "*"
+compilers = "*"
+cmake = "*"
+ninja = "*"
+pkg-config = "*"
+git = "*"
+
+[activation]
+scripts = ["install/setup.bash"]
+
+[activation.env]
+ROS_DOMAIN_ID = "0"
