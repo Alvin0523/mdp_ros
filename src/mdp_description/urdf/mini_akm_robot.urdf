@@ -95,7 +95,7 @@
     <child
       link="lb_link" />
     <axis
-      xyz="0 -1 0" />
+      xyz="0 1 0" />
   </joint>
   <link
     name="rb_link">
@@ -148,7 +148,7 @@
     <child
       link="rb_link" />
     <axis
-      xyz="0 -1 0" />
+      xyz="0 1 0" />
   </joint>
   <link
     name="front_link">
@@ -413,12 +413,12 @@
     <child
       link="left_link" />
     <axis
-      xyz="0 0 -1" />
+      xyz="0 0 1" />
     <limit
       lower="-0.39"
       upper="0.39"
-      effort="0"
-      velocity="0" />
+      effort="10.0"
+      velocity="5.0" />
   </joint>
   <link
     name="lf_link">
@@ -461,7 +461,7 @@
     </collision>
   </link>
   <joint
-    name="lf_point"
+    name="lf_joint"
     type="continuous">
     <origin
       xyz="0 0.0301260014087184 -0.0109999999999987"
@@ -471,7 +471,7 @@
     <child
       link="lf_link" />
     <axis
-      xyz="0 -1 0" />
+      xyz="0 1 0" />
   </joint>
   <link
     name="right_link">
@@ -528,8 +528,8 @@
     <limit
       lower="-0.39"
       upper="0.39"
-      effort="0"
-      velocity="0" />
+      effort="10.0"
+      velocity="5.0" />
   </joint>
   <link
     name="rf_link">
@@ -582,6 +582,49 @@
     <child
       link="rf_link" />
     <axis
-      xyz="0 -1 0" />
+      xyz="0 1 0" />
   </joint>
+
+  <ros2_control name="GazeboSimSystem" type="system">
+    <hardware>
+      <plugin>gz_ros2_control/GazeboSimSystem</plugin>
+    </hardware>
+    <joint name="left_joint">
+      <command_interface name="position"/>
+      <state_interface name="position"/>
+      <state_interface name="velocity"/>
+    </joint>
+    <joint name="right_joint">
+      <command_interface name="position"/>
+      <state_interface name="position"/>
+      <state_interface name="velocity"/>
+    </joint>
+    <joint name="lb_joint">
+      <command_interface name="velocity"/>
+      <state_interface name="position"/>
+      <state_interface name="velocity"/>
+    </joint>
+    <joint name="rb_joint">
+      <command_interface name="velocity"/>
+      <state_interface name="position"/>
+      <state_interface name="velocity"/>
+    </joint>
+    <joint name="lf_joint">
+      <state_interface name="position"/>
+      <state_interface name="velocity"/>
+    </joint>
+    <joint name="rf_joint">
+      <state_interface name="position"/>
+      <state_interface name="velocity"/>
+    </joint>
+  </ros2_control>
+
+  <gazebo>
+    <plugin filename="gz_ros2_control-system" name="gz_ros2_control::GazeboSimROS2ControlPlugin">
+      <parameters>package://mdp_bringup/config/ackermann_controller.yaml</parameters>
+      <ros>
+        <remapping>/ackermann_steering_controller/reference:=/cmd_vel</remapping>
+      </ros>
+    </plugin>
+  </gazebo>
 </robot>
