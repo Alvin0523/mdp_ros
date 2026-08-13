@@ -14,8 +14,8 @@ ackermann_steering_controller:
     steering_joints_names: ['left_joint', 'right_joint']
     traction_joints_names: ['lb_joint', 'rb_joint']
 
-    wheelbase: 0.147
-    steering_track_width: 0.16
+    wheelbase: 0.1433
+    steering_track_width: 0.104
     traction_track_width: 0.16
     steering_wheels_radius: 0.0325
     traction_wheels_radius: 0.0325
@@ -23,8 +23,12 @@ ackermann_steering_controller:
     open_loop: false
     enable_odom_tf: true
     odom_frame_id: odom
-    base_frame_id: base_link
+    base_frame_id: base_footprint
 
     cmd_vel_timeout: 10.0
     publish_limited_velocity: true
-    use_stamped_vel: false
+    use_stamped_vel: true
+
+    gains:
+      left_joint: {p: 100.0, i: 0.1, d: 5.0}
+      right_joint: {p: 100.0, i: 0.1, d: 5.0}
