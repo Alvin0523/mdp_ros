@@ -44,3 +44,5 @@ scripts = ["install/setup.bash"]
 
 [activation.env]
 ROS_DOMAIN_ID = "0"
+GZ_SIM_SYSTEM_PLUGIN_PATH = "$CONDA_PREFIX/lib"
+IGN_GAZEBO_SYSTEM_PLUGIN_PATH = "$CONDA_PREFIX/lib"
