@@ -9,6 +9,8 @@ version = "0.1.0"
 build = "colcon build --symlink-install"
 test = "colcon test"
 clean = "rm -rf build install log"
+sim = "ros2 launch mdp_bringup sim.launch.py"
+teleop = "ros2 run teleop_twist_keyboard teleop_twist_keyboard"
 
 [dependencies]
 # Core ROS2
