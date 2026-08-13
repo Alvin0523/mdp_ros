@@ -8,3 +8,7 @@
 build/
 install/
 log/
+
+# python bytecode
+__pycache__/
+*.pyc

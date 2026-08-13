@@ -10,6 +10,12 @@ build = "colcon build --symlink-install"
 test = "colcon test"
 clean = "rm -rf build install log"
 sim = "ros2 launch mdp_bringup sim.launch.py"
+sim-task2 = "ros2 launch mdp_bringup task2_sim.launch.py"
+hardware = "ros2 launch mdp_bringup real.launch.py"
+agent-build = "bash scripts/build_microxrce_agent.sh"
+agent = "../Micro-XRCE-DDS-Agent/build/MicroXRCEAgent serial --dev /dev/ttyUSB0 -b 115200"
+task1 = "ros2 run mdp_control task1_runner.py"
+task2 = "ros2 run mdp_control task2_runner.py"
 teleop = "ros2 run teleop_twist_keyboard teleop_twist_keyboard --ros-args -p stamped:=true"
 foxglove = "ros2 launch foxglove_bridge foxglove_bridge_launch.xml use_sim_time:=true"
 
@@ -23,15 +29,18 @@ ros-jazzy-joint-state-publisher-gui = "*"
 ros-jazzy-rviz2 = "*"
 ros-jazzy-teleop-twist-keyboard = "*"
 
-# ros2_control stack (ackermann_steering_controller, controller_manager)
+# ros2_control stack (framework, controllers, simulation & real hardware plugins)
 ros-jazzy-ros2-control = "*"
 ros-jazzy-ros2-controllers = "*"
-ros-jazzy-controller-manager = "*"
-
-# Gazebo simulation hardware_interface + bridge
 ros-jazzy-gz-ros2-control = "*"
+ros-jazzy-topic-based-ros2-control = "*"
+
+# Visualization & bridge
 ros-jazzy-ros-gz = "*"
 ros-jazzy-foxglove-bridge = "*"
+
+# Path planning (spline-based waypoint smoothing for task2)
+scipy = "*"
 
 # Build tools
 colcon-common-extensions = "*"
