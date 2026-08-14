@@ -27,6 +27,16 @@ def generate_launch_description():
         value=os.path.join(pkg_description, '..')
     )
 
+    pixi_lib_dir = os.path.abspath(os.path.join(pkg_ros_gz_sim, '../..', 'lib'))
+    gz_plugin_path = SetEnvironmentVariable(
+        name='GZ_SIM_SYSTEM_PLUGIN_PATH',
+        value=pixi_lib_dir + ':' + os.environ.get('GZ_SIM_SYSTEM_PLUGIN_PATH', '')
+    )
+    ign_plugin_path = SetEnvironmentVariable(
+        name='IGN_GAZEBO_SYSTEM_PLUGIN_PATH',
+        value=pixi_lib_dir + ':' + os.environ.get('IGN_GAZEBO_SYSTEM_PLUGIN_PATH', '')
+    )
+
     gz_sim = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(pkg_ros_gz_sim, 'launch', 'gz_sim.launch.py')
@@ -52,9 +62,12 @@ def generate_launch_description():
         package='ros_gz_bridge',
         executable='parameter_bridge',
         arguments=[
-            '/clock@rosgraph_msgs/msg/Clock[gz.msgs.Clock'
+            '/clock@rosgraph_msgs/msg/Clock[gz.msgs.Clock',
+            '/cmd_vel@geometry_msgs/msg/Twist@gz.msgs.Twist',
+            '/tf@tf2_msgs/msg/TFMessage[gz.msgs.Pose_V'
         ],
-        output='screen'
+        output='screen',
+        parameters=[{'use_sim_time': True}]
     )
 
     joint_state_broadcaster_spawner = Node(
@@ -75,7 +88,7 @@ def generate_launch_description():
     )
 
     yolo_detector = Node(
-        package='mdp_control',
+        package='mdp_vision',
         executable='yolo_arrow_detector.py',
         parameters=[{'camera_topic': '/camera/image_raw'}],
         output='screen'
@@ -90,6 +103,8 @@ def generate_launch_description():
 
     return LaunchDescription([
         gz_resource_path,
+        gz_plugin_path,
+        ign_plugin_path,
         gz_sim,
         robot_state_publisher,
         spawn_robot,
