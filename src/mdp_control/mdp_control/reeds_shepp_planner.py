@@ -229,7 +229,7 @@ class DubinsPathPlanner:
 ReedsSheppPlanner = DubinsPathPlanner
 
 
-if __name__ == '__main__':
+def main():
     planner = DubinsPathPlanner(min_turn_radius=0.35)
     start = (0.0, 0.0, math.pi / 2)
     obstacles = [
@@ -242,3 +242,8 @@ if __name__ == '__main__':
     standoffs = [planner.calc_standoff_pose(x, y, f) for x, y, f in obstacles]
     order = planner.solve_tsp(start, standoffs)
     print(f"Optimal TSP Visiting Sequence: {order}")
+
+
+if __name__ == '__main__':
+    main()
+

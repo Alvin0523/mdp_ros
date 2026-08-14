@@ -17,7 +17,7 @@ from visualization_msgs.msg import Marker, MarkerArray
 from std_msgs.msg import String
 import tf2_ros
 
-from spline_planner import SplinePathPlanner
+from mdp_control.spline_planner import SplinePathPlanner
 
 class State(Enum):
     WAITING_FOR_START = auto()
