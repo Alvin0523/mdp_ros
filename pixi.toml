@@ -17,6 +17,7 @@ agent = "../Micro-XRCE-DDS-Agent/build/MicroXRCEAgent serial --dev /dev/ttyUSB0 
 task1 = "ros2 run mdp_control task1_runner.py"
 task2 = "ros2 run mdp_control task2_runner.py"
 teleop = "ros2 run teleop_twist_keyboard teleop_twist_keyboard --ros-args -p stamped:=true"
+vision = "ros2 launch mdp_vision vision.launch.py"
 foxglove = "ros2 launch foxglove_bridge foxglove_bridge_launch.xml use_sim_time:=true"
 
 [dependencies]
@@ -42,13 +43,21 @@ ros-jazzy-foxglove-bridge = "*"
 # Path planning (spline-based waypoint smoothing for task2)
 scipy = "*"
 
+# Vision & Camera Stack
+ros-jazzy-cv-bridge = "*"
+ros-jazzy-image-transport = "*"
+opencv = "*"
+pip = "*"
+
 # Build tools
 colcon-common-extensions = "*"
 compilers = "*"
 cmake = "*"
 ninja = "*"
-pkg-config = "*"
 git = "*"
+
+[pypi-dependencies]
+ultralytics = "*"
 
 [activation]
 scripts = ["install/setup.bash"]

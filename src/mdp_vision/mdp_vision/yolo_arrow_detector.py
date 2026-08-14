@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Ultralytics YOLO ROS2 Arrow Detection Node.
-Follows Ultralytics ROS & Raspberry Pi integration guides.
-Subscribes to camera feed (/image_raw or /camera/image_raw),
-runs YOLO inference, and publishes arrow direction ('LEFT' or 'RIGHT') on /arrow_detection.
+Ultralytics YOLO ROS2 Arrow & Obstacle Detector Node.
+Located in mdp_vision package.
+Subscribes to camera feed (/image_raw), runs YOLO inference,
+and publishes detected target/arrow string to /yolo_result.
 """
 
 import rclpy
@@ -11,7 +11,6 @@ from rclpy.node import Node
 from sensor_msgs.msg import Image
 from std_msgs.msg import String
 from cv_bridge import CvBridge
-import cv2
 
 try:
     from ultralytics import YOLO
@@ -25,20 +24,22 @@ class YoloArrowDetector(Node):
         
         self.declare_parameter('camera_topic', '/image_raw')
         self.declare_parameter('model_path', 'yolov8n.pt')
+        self.declare_parameter('result_topic', '/yolo_result')
         
         camera_topic = self.get_parameter('camera_topic').value
         model_path = self.get_parameter('model_path').value
+        result_topic = self.get_parameter('result_topic').value
 
         self.bridge = CvBridge()
-        self.arrow_pub = self.create_publisher(String, '/arrow_detection', 10)
+        self.result_pub = self.create_publisher(String, result_topic, 10)
         self.create_subscription(Image, camera_topic, self.image_callback, 10)
 
         if ULTRALYTICS_AVAILABLE:
             self.model = YOLO(model_path)
-            self.get_logger().info(f"Ultralytics YOLO loaded successfully from {model_path}!")
+            self.get_logger().info(f"[mdp_vision] Ultralytics YOLO loaded successfully from {model_path}!")
         else:
             self.model = None
-            self.get_logger().warn("Ultralytics library not installed. Running in simulation fallback mode!")
+            self.get_logger().warn("[mdp_vision] Ultralytics library not installed. Simulation fallback mode active.")
 
     def image_callback(self, msg: Image):
         try:
@@ -48,26 +49,19 @@ class YoloArrowDetector(Node):
             return
 
         if self.model is not None:
-            # Run Ultralytics YOLO inference
             results = self.model(cv_image, verbose=False)
             for r in results:
                 for box in r.boxes:
                     cls_id = int(box.cls[0])
                     label = self.model.names[cls_id].upper()
-                    
-                    if 'LEFT' in label or 'RIGHT' in label:
-                        detected_direction = 'LEFT' if 'LEFT' in label else 'RIGHT'
-                        self.publish_detection(detected_direction)
-                        return
-        else:
-            # Fallback test simulation detection
-            self.publish_detection('RIGHT')
+                    self.publish_detection(label)
+                    return
 
-    def publish_detection(self, direction: str):
+    def publish_detection(self, detection: str):
         msg = String()
-        msg.data = direction
-        self.arrow_pub.publish(msg)
-        self.get_logger().info(f"YOLO Arrow Detected: {direction}")
+        msg.data = detection
+        self.result_pub.publish(msg)
+        self.get_logger().info(f"[mdp_vision] YOLO Detected: {detection}")
 
 def main(args=None):
     rclpy.init(args=args)

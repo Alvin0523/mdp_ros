@@ -1,17 +1,16 @@
 <?xml version="1.0"?>
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" type="application/xml" schematypens="http://download.ros.org/schema/package_format3.xsd"?>
 <package format="3">
-  <name>mdp_control</name>
+  <name>mdp_vision</name>
   <version>0.1.0</version>
-  <description>Autonomy, Vision, and Path Planning nodes for Mini Ackermann Robot</description>
+  <description>Vision stack for MDP robot</description>
 
   <maintainer email="user@todo.todo">MDP Team</maintainer>
   <license>Apache-2.0</license>
 
   <depend>rclpy</depend>
-  <depend>geometry_msgs</depend>
-  <depend>std_msgs</depend>
   <depend>sensor_msgs</depend>
+  <depend>std_msgs</depend>
   <depend>cv_bridge</depend>
 
   <export>

@@ -11,7 +11,7 @@ from enum import Enum, auto
 import math
 from geometry_msgs.msg import TwistStamped
 from std_msgs.msg import String
-from reeds_shepp_planner import ReedsSheppPlanner
+from mdp_control.reeds_shepp_planner import ReedsSheppPlanner
 
 class State(Enum):
     WAITING_FOR_SETUP = auto()
