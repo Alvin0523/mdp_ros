@@ -74,3 +74,12 @@ class SplinePathPlanner:
                                math.cos(path[i + 1][2] - path[i - 1][2]))
             worst = max(worst, abs(dyaw) / (2.0 * ds))
         return worst
+
+
+def main():
+    pass
+
+
+if __name__ == '__main__':
+    main()
+
