@@ -21,7 +21,9 @@ ackermann_steering_controller:
     traction_wheels_radius: 0.0325
 
     open_loop: false
-    enable_odom_tf: true
+    # ekf_node (robot_localization) is the sole odom->base_footprint TF
+    # publisher in sim -- see mdp_bringup/config/ekf.yaml.
+    enable_odom_tf: false
     odom_frame_id: odom
     base_frame_id: base_footprint
 

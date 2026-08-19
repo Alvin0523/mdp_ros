@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """
-True Odometry & Ground Truth Position-Reaching Task 2 Runner Node.
+Task 2 Runner Node, driven off the EKF-fused odom->base_footprint pose
+estimate (wheel odometry + IMU, not ground truth -- there is no ground
+truth source in this pipeline, sim or real).
 Features adaptive cornering speed reduction (reduces linear speed on sharp turns
 to allow full HWZ020 servo yaw rotation without overshooting).
 """
@@ -41,7 +43,7 @@ class Task2Runner(Node):
         self.create_subscription(JointState, '/joint_states', self.joint_states_callback, 10)
         self.create_subscription(Odometry, '/ackermann_steering_controller/odometry', self.odom_callback, 10)
         
-        # TF Buffer & Listener for Ground Truth Gazebo Pose
+        # TF Buffer & Listener for the EKF-fused odom->base_footprint pose estimate
         self.tf_buffer = tf2_ros.Buffer()
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
 
@@ -83,9 +85,9 @@ class Task2Runner(Node):
         self.odom_y = 0.0
         self.odom_yaw = 0.0
 
-        self.gt_x = 0.0
-        self.gt_y = 0.0
-        self.gt_yaw = 0.0
+        self.est_x = 0.0
+        self.est_y = 0.0
+        self.est_yaw = 0.0
 
         # State & Decisions
         self.state = State.WAITING_FOR_START
@@ -122,19 +124,19 @@ class Task2Runner(Node):
         pose_msg.pose = msg.pose.pose
         self.pose_pub.publish(pose_msg)
 
-    def update_ground_truth_tf(self):
+    def update_pose_estimate_tf(self):
         try:
             t = self.tf_buffer.lookup_transform('odom', 'base_footprint', rclpy.time.Time())
-            self.gt_x = t.transform.translation.x
-            self.gt_y = t.transform.translation.y
+            self.est_x = t.transform.translation.x
+            self.est_y = t.transform.translation.y
             q = t.transform.rotation
             siny_cosp = 2 * (q.w * q.z + q.x * q.y)
             cosy_cosp = 1 - 2 * (q.y * q.y + q.z * q.z)
-            self.gt_yaw = math.atan2(siny_cosp, cosy_cosp)
+            self.est_yaw = math.atan2(siny_cosp, cosy_cosp)
         except Exception:
-            self.gt_x = self.odom_x
-            self.gt_y = self.odom_y
-            self.gt_yaw = self.odom_yaw
+            self.est_x = self.odom_x
+            self.est_y = self.odom_y
+            self.est_yaw = self.odom_yaw
 
     def joint_states_callback(self, msg: JointState):
         pass
@@ -272,14 +274,14 @@ class Task2Runner(Node):
         n = len(self.dense_path)
         while self.path_idx < n - 1:
             px, py, _ = self.dense_path[self.path_idx]
-            if math.hypot(px - self.gt_x, py - self.gt_y) < self.lookahead * 0.5:
+            if math.hypot(px - self.est_x, py - self.est_y) < self.lookahead * 0.5:
                 self.path_idx += 1
             else:
                 break
 
         for i in range(self.path_idx, n):
             px, py, _ = self.dense_path[i]
-            if math.hypot(px - self.gt_x, py - self.gt_y) >= self.lookahead:
+            if math.hypot(px - self.est_x, py - self.est_y) >= self.lookahead:
                 return i
         return n - 1
 
@@ -287,7 +289,7 @@ class Task2Runner(Node):
         now = self.get_now_sec()
         elapsed = now - self.state_start_time
 
-        self.update_ground_truth_tf()
+        self.update_pose_estimate_tf()
 
         # STATE 0: Waiting for bringup (6s)
         if self.state == State.WAITING_FOR_START:
@@ -317,7 +319,7 @@ class Task2Runner(Node):
             self.publish_visualizations()
 
             final_x, final_y, _ = self.dense_path[-1]
-            dist_to_end = math.hypot(final_x - self.gt_x, final_y - self.gt_y)
+            dist_to_end = math.hypot(final_x - self.est_x, final_y - self.est_y)
 
             if self.path_idx >= len(self.dense_path) - 1 and dist_to_end < 0.10:
                 self.send_cmd(0.0, 0.0)
@@ -328,10 +330,10 @@ class Task2Runner(Node):
             target_idx = self.find_lookahead_point()
             target_x, target_y, _ = self.dense_path[target_idx]
 
-            dx = target_x - self.gt_x
-            dy = target_y - self.gt_y
-            local_x = dx * math.cos(-self.gt_yaw) - dy * math.sin(-self.gt_yaw)
-            local_y = dx * math.sin(-self.gt_yaw) + dy * math.cos(-self.gt_yaw)
+            dx = target_x - self.est_x
+            dy = target_y - self.est_y
+            local_x = dx * math.cos(-self.est_yaw) - dy * math.sin(-self.est_yaw)
+            local_y = dx * math.sin(-self.est_yaw) + dy * math.cos(-self.est_yaw)
 
             lookahead_actual = max(math.hypot(local_x, local_y), 0.05)
             curvature = (2.0 * local_y) / (lookahead_actual ** 2)
@@ -351,11 +353,11 @@ class Task2Runner(Node):
             # Milestone logging only (does not drive control anymore)
             if self.current_wpt_idx < len(self.waypoints):
                 wx, wy = self.waypoints[self.current_wpt_idx]
-                if math.hypot(wx - self.gt_x, wy - self.gt_y) < 0.15:
+                if math.hypot(wx - self.est_x, wy - self.est_y) < 0.15:
                     odom_err = math.hypot(wx - self.odom_x, wy - self.odom_y)
                     self.get_logger().info(
                         f"[Wpt {self.current_wpt_idx}] Target({wx:.2f}, {wy:.2f}) | "
-                        f"Gazebo GT({self.gt_x:.2f}, {self.gt_y:.2f}) | "
+                        f"Est Pose({self.est_x:.2f}, {self.est_y:.2f}) | "
                         f"Odom ({self.odom_x:.2f}, {self.odom_y:.2f}) [Err: {odom_err:.2f}m]"
                     )
                     self.current_wpt_idx += 1

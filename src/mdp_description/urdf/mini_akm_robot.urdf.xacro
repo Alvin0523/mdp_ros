@@ -318,6 +318,13 @@
       <kp>1000000.0</kp>
       <kd>1.0</kd>
     </gazebo>
+    <!-- mu1/mu2 on lf_link/rf_link must track measured real-wheel-to-floor
+         friction, not be detuned to make Gazebo's visible turning match
+         /tf. The controller's bicycle-model odometry ignores the ~30mm
+         kingpin-to-wheel-center offset on these steered wheels, so TF
+         legitimately over-rotates vs. the physical turn under real
+         friction, which is expected odometry error (see docs/troubleshooting.md),
+         not a friction bug. See openspec/changes/2026-08-13-ekf-sensor-fusion. -->
     <gazebo reference="lf_link">
       <mu1>2.0</mu1>
       <mu2>0.4</mu2>
@@ -349,6 +356,21 @@
           <remapping>/ackermann_steering_controller/reference:=/cmd_vel</remapping>
         </ros>
       </plugin>
+    </gazebo>
+
+    <!-- IMU: attached directly to base_link (not imu_link) as a deliberate
+         simplification for the sim-only EKF fusion input. Publishes on
+         /imu/data via the gz-sim IMU system plugin. -->
+    <gazebo reference="base_link">
+      <sensor name="imu_sensor" type="imu">
+        <always_on>true</always_on>
+        <update_rate>100</update_rate>
+        <topic>imu/data</topic>
+        <gz_frame_id>base_link</gz_frame_id>
+      </sensor>
+    </gazebo>
+    <gazebo>
+      <plugin filename="gz-sim-imu-system" name="gz::sim::systems::Imu"/>
     </gazebo>
   </xacro:if>
 
