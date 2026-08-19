@@ -14,6 +14,7 @@ def generate_launch_description():
     xacro_file = os.path.join(pkg_description, 'urdf', 'mini_akm_robot.urdf.xacro')
     world_file = os.path.join(pkg_description, 'worlds', 'task2_arena.sdf')
     config_file = os.path.join(pkg_bringup, 'config', 'ackermann_controller.yaml')
+    ekf_config_file = os.path.join(pkg_bringup, 'config', 'ekf.yaml')
 
     doc = xacro.process_file(xacro_file, mappings={'is_sim': 'true'})
     robot_desc = doc.toxml().replace(
@@ -63,10 +64,19 @@ def generate_launch_description():
         executable='parameter_bridge',
         arguments=[
             '/clock@rosgraph_msgs/msg/Clock[gz.msgs.Clock',
-            '/tf@tf2_msgs/msg/TFMessage[gz.msgs.Pose_V'
+            '/tf@tf2_msgs/msg/TFMessage[gz.msgs.Pose_V',
+            '/imu/data@sensor_msgs/msg/Imu[gz.msgs.IMU'
         ],
         output='screen',
         parameters=[{'use_sim_time': True}]
+    )
+
+    ekf_node = Node(
+        package='robot_localization',
+        executable='ekf_node',
+        name='ekf_filter_node',
+        output='screen',
+        parameters=[ekf_config_file, {'use_sim_time': True}]
     )
 
     joint_state_broadcaster_spawner = Node(
@@ -108,6 +118,7 @@ def generate_launch_description():
         robot_state_publisher,
         spawn_robot,
         gz_bridge,
+        ekf_node,
         joint_state_broadcaster_spawner,
         ackermann_controller_spawner,
         yolo_detector,

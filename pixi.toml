@@ -36,6 +36,9 @@ ros-jazzy-ros2-controllers = "*"
 ros-jazzy-gz-ros2-control = "*"
 ros-jazzy-topic-based-ros2-control = "*"
 
+# State estimation (wheel odometry + IMU fusion)
+ros-jazzy-robot-localization = "*"
+
 # Visualization & bridge
 ros-jazzy-ros-gz = "*"
 ros-jazzy-foxglove-bridge = "*"

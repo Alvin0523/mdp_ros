@@ -30,6 +30,7 @@ def generate_launch_description():
 
     xacro_file = os.path.join(pkg_mdp_description, 'urdf', 'mini_akm_robot.urdf.xacro')
     controller_config = os.path.join(pkg_mdp_bringup, 'config', 'ackermann_controller.yaml')
+    ekf_config = os.path.join(pkg_mdp_bringup, 'config', 'ekf.yaml')
 
     # Process xacro with is_sim:=true
     doc = xacro.process_file(xacro_file, mappings={'is_sim': 'true'})
@@ -97,10 +98,19 @@ def generate_launch_description():
         executable='parameter_bridge',
         arguments=[
             '/clock@rosgraph_msgs/msg/Clock[gz.msgs.Clock',
-            '/tf@tf2_msgs/msg/TFMessage[gz.msgs.Pose_V'
+            '/tf@tf2_msgs/msg/TFMessage[gz.msgs.Pose_V',
+            '/imu/data@sensor_msgs/msg/Imu[gz.msgs.IMU'
         ],
         output='screen',
         parameters=[{'use_sim_time': True}]
+    )
+
+    ekf_node = Node(
+        package='robot_localization',
+        executable='ekf_node',
+        name='ekf_filter_node',
+        output='screen',
+        parameters=[ekf_config, {'use_sim_time': True}]
     )
 
     return LaunchDescription([
@@ -112,5 +122,6 @@ def generate_launch_description():
         gz_spawn_entity,
         joint_state_broadcaster_spawner,
         ackermann_controller_spawner,
-        ros_gz_bridge
+        ros_gz_bridge,
+        ekf_node
     ])
