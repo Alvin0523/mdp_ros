@@ -1,27 +1,23 @@
 import os
-
+import xacro
 from ament_index_python.packages import get_package_share_directory
 
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, SetEnvironmentVariable
+from launch.actions import IncludeLaunchDescription, SetEnvironmentVariable
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
-from launch_ros.substitutions import FindPackageShare
-
 
 def generate_launch_description():
     pkg_mdp_description = get_package_share_directory('mdp_description')
     pkg_mdp_bringup = get_package_share_directory('mdp_bringup')
     pkg_ros_gz_sim = get_package_share_directory('ros_gz_sim')
 
-    # Ensure Gazebo Sim resolves package://mdp_description
+    # Environment variables for Gazebo Sim
     gz_resource_path = SetEnvironmentVariable(
         name='GZ_SIM_RESOURCE_PATH',
         value=os.path.join(pkg_mdp_description, '..')
     )
 
-    # Ensure Gazebo Sim finds gz_ros2_control-system shared library
     pixi_lib_dir = os.path.abspath(os.path.join(pkg_ros_gz_sim, '../..', 'lib'))
     gz_plugin_path = SetEnvironmentVariable(
         name='GZ_SIM_SYSTEM_PLUGIN_PATH',
@@ -32,11 +28,12 @@ def generate_launch_description():
         value=pixi_lib_dir + ':' + os.environ.get('IGN_GAZEBO_SYSTEM_PLUGIN_PATH', '')
     )
 
-    urdf_file = os.path.join(pkg_mdp_description, 'urdf', 'mini_akm_robot.urdf')
+    xacro_file = os.path.join(pkg_mdp_description, 'urdf', 'mini_akm_robot.urdf.xacro')
     controller_config = os.path.join(pkg_mdp_bringup, 'config', 'ackermann_controller.yaml')
 
-    with open(urdf_file, 'r') as infp:
-        robot_desc = infp.read()
+    # Process xacro with is_sim:=true
+    doc = xacro.process_file(xacro_file, mappings={'is_sim': 'true'})
+    robot_desc = doc.toxml()
 
     # Substitute controller config path for Gazebo plugin
     processed_urdf = robot_desc.replace('package://mdp_bringup/config/ackermann_controller.yaml', controller_config)
@@ -100,7 +97,6 @@ def generate_launch_description():
         executable='parameter_bridge',
         arguments=[
             '/clock@rosgraph_msgs/msg/Clock[gz.msgs.Clock',
-            '/cmd_vel@geometry_msgs/msg/Twist@gz.msgs.Twist',
             '/tf@tf2_msgs/msg/TFMessage[gz.msgs.Pose_V'
         ],
         output='screen',

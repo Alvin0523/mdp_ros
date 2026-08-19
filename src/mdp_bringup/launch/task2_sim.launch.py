@@ -1,4 +1,5 @@
 import os
+import xacro
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import IncludeLaunchDescription, SetEnvironmentVariable
@@ -10,16 +11,15 @@ def generate_launch_description():
     pkg_bringup = get_package_share_directory('mdp_bringup')
     pkg_ros_gz_sim = get_package_share_directory('ros_gz_sim')
 
-    urdf_file = os.path.join(pkg_description, 'urdf', 'mini_akm_robot.urdf')
+    xacro_file = os.path.join(pkg_description, 'urdf', 'mini_akm_robot.urdf.xacro')
     world_file = os.path.join(pkg_description, 'worlds', 'task2_arena.sdf')
-
     config_file = os.path.join(pkg_bringup, 'config', 'ackermann_controller.yaml')
 
-    with open(urdf_file, 'r') as infp:
-        robot_desc = infp.read().replace(
-            'package://mdp_bringup/config/ackermann_controller.yaml',
-            config_file
-        )
+    doc = xacro.process_file(xacro_file, mappings={'is_sim': 'true'})
+    robot_desc = doc.toxml().replace(
+        'package://mdp_bringup/config/ackermann_controller.yaml',
+        config_file
+    )
 
     # Environment variables for Gazebo meshes & system plugins
     gz_resource_path = SetEnvironmentVariable(
@@ -63,7 +63,6 @@ def generate_launch_description():
         executable='parameter_bridge',
         arguments=[
             '/clock@rosgraph_msgs/msg/Clock[gz.msgs.Clock',
-            '/cmd_vel@geometry_msgs/msg/Twist@gz.msgs.Twist',
             '/tf@tf2_msgs/msg/TFMessage[gz.msgs.Pose_V'
         ],
         output='screen',

@@ -1,0 +1,355 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Unified Mini Ackermann Robot Description (Simulation & Real Hardware) -->
+<robot name="mini_akm_robot" xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <!-- Launch Arguments -->
+  <xacro:arg name="is_sim" default="true"/>
+
+  <!-- 1. Root Frame & Main Chassis -->
+  <!-- Ground Reference Frame (Z = 0) -->
+  <link name="base_footprint"/>
+
+  <!-- Joint elevating base_link 0.0163m above ground so wheels touch Z=0 -->
+  <joint name="base_footprint_joint" type="fixed">
+    <origin xyz="0 0 0.0163" rpy="0 0 0"/>
+    <parent link="base_footprint"/>
+    <child link="base_link"/>
+  </joint>
+
+  <!-- Main Chassis Link -->
+  <link name="base_link">
+    <inertial>
+      <origin xyz="-0.012 -0.0001 0.021" rpy="0 0 0"/>
+      <mass value="0.4315"/>
+      <inertia ixx="0.00025" ixy="0.0" ixz="0.0" iyy="0.00037" iyz="0.0" izz="0.00054"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://mdp_description/meshes/mini_akm_robot_meshes/base_link.STL"/>
+      </geometry>
+      <material name="chassis_color">
+        <color rgba="0.74 0.90 0.95 1.0"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://mdp_description/meshes/mini_akm_robot_meshes/base_link.STL"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <!-- 2. Rear Traction Drive Wheels (Independent Motors) -->
+  <!-- Left Rear Wheel Link & Joint -->
+  <link name="lb_link">
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <mass value="0.0456"/>
+      <inertia ixx="1.8e-05" ixy="0.0" ixz="0.0" iyy="3.1e-05" iyz="0.0" izz="1.8e-05"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://mdp_description/meshes/mini_akm_robot_meshes/lb_link.STL"/>
+      </geometry>
+      <material name="wheel_black">
+        <color rgba="0.2 0.2 0.2 1.0"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="1.57079632679 0 0"/>
+      <geometry>
+        <cylinder radius="0.0325" length="0.025"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <joint name="lb_joint" type="continuous">
+    <origin xyz="-0.069657 0.07975 0.0162" rpy="0 0 0"/>
+    <parent link="base_link"/>
+    <child link="lb_link"/>
+    <axis xyz="0 1 0"/>
+    <limit effort="10.0" velocity="50.0"/>
+    <dynamics damping="0.001" friction="0.001"/>
+  </joint>
+
+  <!-- Right Rear Wheel Link & Joint -->
+  <link name="rb_link">
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <mass value="0.0456"/>
+      <inertia ixx="1.8e-05" ixy="0.0" ixz="0.0" iyy="3.1e-05" iyz="0.0" izz="1.8e-05"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://mdp_description/meshes/mini_akm_robot_meshes/rb_link.STL"/>
+      </geometry>
+      <material name="wheel_black"/>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="1.57079632679 0 0"/>
+      <geometry>
+        <cylinder radius="0.0325" length="0.025"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <joint name="rb_joint" type="continuous">
+    <origin xyz="-0.069657 -0.079776 0.0162" rpy="0 0 0"/>
+    <parent link="base_link"/>
+    <child link="rb_link"/>
+    <axis xyz="0 1 0"/>
+    <limit effort="10.0" velocity="50.0"/>
+    <dynamics damping="0.001" friction="0.001"/>
+  </joint>
+
+  <!-- 3. Front Steering Mechanism (Ackermann Chaining) -->
+  <!-- Left Steering Knuckle Link & Joint -->
+  <link name="left_link">
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <mass value="0.0047"/>
+      <inertia ixx="2.0e-07" ixy="0.0" ixz="0.0" iyy="3.9e-07" iyz="0.0" izz="4.6e-07"/>
+    </inertial>
+    <visual>
+      <geometry>
+        <mesh filename="package://mdp_description/meshes/mini_akm_robot_meshes/left_link.STL"/>
+      </geometry>
+    </visual>
+  </link>
+
+  <joint name="left_joint" type="revolute">
+    <origin xyz="0.073593 0.051987 0.022" rpy="0 0 0"/>
+    <parent link="base_link"/>
+    <child link="left_link"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="-0.39" upper="0.39" effort="10.0" velocity="5.0"/>
+  </joint>
+
+  <!-- Left Front Wheel Link & Joint (Child of left_link) -->
+  <link name="lf_link">
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <mass value="0.0441"/>
+      <inertia ixx="1.8e-05" ixy="0.0" ixz="0.0" iyy="3.1e-05" iyz="0.0" izz="1.8e-05"/>
+    </inertial>
+    <visual>
+      <geometry>
+        <mesh filename="package://mdp_description/meshes/mini_akm_robot_meshes/lf_link.STL"/>
+      </geometry>
+      <material name="wheel_black"/>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="1.57079632679 0 0"/>
+      <geometry>
+        <cylinder radius="0.0325" length="0.025"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <joint name="lf_joint" type="continuous">
+    <origin xyz="0 0.030126 -0.011" rpy="0 0 0"/>
+    <parent link="left_link"/>
+    <child link="lf_link"/>
+    <axis xyz="0 1 0"/>
+    <limit effort="10.0" velocity="50.0"/>
+    <dynamics damping="0.001" friction="0.001"/>
+  </joint>
+
+  <!-- Right Steering Knuckle Link & Joint -->
+  <link name="right_link">
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <mass value="0.0047"/>
+      <inertia ixx="2.0e-07" ixy="0.0" ixz="0.0" iyy="3.9e-07" iyz="0.0" izz="4.6e-07"/>
+    </inertial>
+    <visual>
+      <geometry>
+        <mesh filename="package://mdp_description/meshes/mini_akm_robot_meshes/right_link.STL"/>
+      </geometry>
+    </visual>
+  </link>
+
+  <joint name="right_joint" type="revolute">
+    <origin xyz="0.073593 -0.052012 0.022" rpy="0 0 0"/>
+    <parent link="base_link"/>
+    <child link="right_link"/>
+    <axis xyz="0 0 1"/>
+    <limit lower="-0.39" upper="0.39" effort="10.0" velocity="5.0"/>
+  </joint>
+
+  <!-- Right Front Wheel Link & Joint (Child of right_link) -->
+  <link name="rf_link">
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <mass value="0.0441"/>
+      <inertia ixx="1.8e-05" ixy="0.0" ixz="0.0" iyy="3.1e-05" iyz="0.0" izz="1.8e-05"/>
+    </inertial>
+    <visual>
+      <geometry>
+        <mesh filename="package://mdp_description/meshes/mini_akm_robot_meshes/rf_link.STL"/>
+      </geometry>
+      <material name="wheel_black"/>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="1.57079632679 0 0"/>
+      <geometry>
+        <cylinder radius="0.0325" length="0.025"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <joint name="rf_joint" type="continuous">
+    <origin xyz="0 -0.030126 -0.011" rpy="0 0 0"/>
+    <parent link="right_link"/>
+    <child link="rf_link"/>
+    <axis xyz="0 1 0"/>
+    <limit effort="10.0" velocity="50.0"/>
+    <dynamics damping="0.001" friction="0.001"/>
+  </joint>
+
+  <!-- 4. Sensors & Payload (Camera & IMU) -->
+  <!-- IMU Sensor Link & Joint -->
+  <link name="imu_link">
+    <inertial>
+      <origin xyz="-0.051353 0.047496 0.044407" rpy="0 0 0"/>
+      <mass value="0.0335"/>
+      <inertia ixx="1.9e-05" ixy="9.5e-07" ixz="-5.8e-08" iyy="2.2e-05" iyz="3.1e-07" izz="4.0e-05"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://mdp_description/meshes/mini_akm_robot_meshes/controller_link.STL"/>
+      </geometry>
+      <material name="controller_color">
+        <color rgba="0.74 0.90 0.95 1.0"/>
+      </material>
+    </visual>
+  </link>
+
+  <joint name="imu_joint" type="fixed">
+    <origin xyz="-0.00035718 -0.04684 0.0515" rpy="0 0 0"/>
+    <parent link="base_link"/>
+    <child link="imu_link"/>
+  </joint>
+
+  <!-- Camera Link & Joint -->
+  <link name="camera_link">
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <mass value="0.055"/>
+      <inertia ixx="0.00013" ixy="0.0" ixz="0.0" iyy="1.9e-05" iyz="0.0" izz="0.00013"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="1.5708 0 0"/>
+      <geometry>
+        <mesh filename="package://mdp_description/meshes/mini_akm_robot_meshes/rpi_camera.stl" scale="0.001 0.001 0.001"/>
+      </geometry>
+      <material name="camera_black">
+        <color rgba="0.15 0.15 0.15 1.0"/>
+      </material>
+    </visual>
+  </link>
+
+  <joint name="camera_joint" type="fixed">
+    <origin xyz="0.11365 0.00016 0.0762" rpy="0 0 0"/>
+    <parent link="base_link"/>
+    <child link="camera_link"/>
+  </joint>
+
+  <!-- 5. ROS 2 Control Hardware Configuration -->
+  <ros2_control name="HardwareSystem" type="system">
+    <hardware>
+      <xacro:if value="$(arg is_sim)">
+        <plugin>gz_ros2_control/GazeboSimSystem</plugin>
+      </xacro:if>
+      <xacro:unless value="$(arg is_sim)">
+        <plugin>topic_based_ros2_control/TopicBasedSystem</plugin>
+        <param name="joint_commands_topic">/joint_commands</param>
+        <param name="joint_states_topic">/joint_states</param>
+      </xacro:unless>
+    </hardware>
+
+    <joint name="left_joint">
+      <command_interface name="position"/>
+      <state_interface name="position"/>
+      <state_interface name="velocity"/>
+    </joint>
+    <joint name="right_joint">
+      <command_interface name="position"/>
+      <state_interface name="position"/>
+      <state_interface name="velocity"/>
+    </joint>
+    <joint name="lb_joint">
+      <command_interface name="velocity"/>
+      <state_interface name="position"/>
+      <state_interface name="velocity"/>
+    </joint>
+    <joint name="rb_joint">
+      <command_interface name="velocity"/>
+      <state_interface name="position"/>
+      <state_interface name="velocity"/>
+    </joint>
+    <xacro:if value="$(arg is_sim)">
+      <joint name="lf_joint">
+        <state_interface name="position"/>
+        <state_interface name="velocity"/>
+      </joint>
+      <joint name="rf_joint">
+        <state_interface name="position"/>
+        <state_interface name="velocity"/>
+      </joint>
+    </xacro:if>
+  </ros2_control>
+
+  <!-- 6. Gazebo Simulation Specific Tags -->
+  <xacro:if value="$(arg is_sim)">
+    <gazebo reference="lb_link">
+      <mu1>2.0</mu1>
+      <mu2>0.4</mu2>
+      <kp>1000000.0</kp>
+      <kd>1.0</kd>
+    </gazebo>
+    <gazebo reference="rb_link">
+      <mu1>2.0</mu1>
+      <mu2>0.4</mu2>
+      <kp>1000000.0</kp>
+      <kd>1.0</kd>
+    </gazebo>
+    <gazebo reference="lf_link">
+      <mu1>2.0</mu1>
+      <mu2>0.4</mu2>
+      <kp>1000000.0</kp>
+      <kd>1.0</kd>
+    </gazebo>
+    <gazebo reference="rf_link">
+      <mu1>2.0</mu1>
+      <mu2>0.4</mu2>
+      <kp>1000000.0</kp>
+      <kd>1.0</kd>
+    </gazebo>
+    <gazebo reference="camera_link">
+      <material>Gazebo/DarkGrey</material>
+      <visual>
+        <material>
+          <ambient>0.15 0.15 0.15 1.0</ambient>
+          <diffuse>0.15 0.15 0.15 1.0</diffuse>
+          <specular>0.5 0.5 0.5 1.0</specular>
+        </material>
+      </visual>
+    </gazebo>
+
+    <!-- Gazebo ROS 2 Control Plugin -->
+    <gazebo>
+      <plugin filename="gz_ros2_control-system" name="gz_ros2_control::GazeboSimROS2ControlPlugin">
+        <parameters>package://mdp_bringup/config/ackermann_controller.yaml</parameters>
+        <ros>
+          <remapping>/ackermann_steering_controller/reference:=/cmd_vel</remapping>
+        </ros>
+      </plugin>
+    </gazebo>
+  </xacro:if>
+
+</robot>

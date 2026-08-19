@@ -14,7 +14,7 @@ ARGUMENTS = [
         'urdf_path',
         default_value=os.path.join(
             get_package_share_directory('mdp_description'),
-            'urdf', 'mini_akm_robot.urdf'),
+            'urdf', 'mini_akm_robot.urdf.xacro'),
         description='Path to the robot URDF/xacro file'),
     DeclareLaunchArgument(
         'use_joint_state_gui', default_value='true',
