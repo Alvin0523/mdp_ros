@@ -45,9 +45,17 @@ def generate_launch_description():
         output='screen'
     )
 
+    serial_bridge = Node(
+        package='mdp_hardware_bridge',
+        executable='serial_bridge_node',
+        parameters=[{'serial_port': '/dev/ttyUSB0', 'baud_rate': 115200}],
+        output='screen'
+    )
+
     return LaunchDescription([
         robot_state_publisher,
         controller_manager,
         joint_state_broadcaster_spawner,
-        ackermann_controller_spawner
+        ackermann_controller_spawner,
+        serial_bridge
     ])
