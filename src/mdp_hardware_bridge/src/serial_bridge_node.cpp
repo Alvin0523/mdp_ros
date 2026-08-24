@@ -128,17 +128,26 @@ private:
     double lb_vel = 0.0, rb_vel = 0.0;
     bool have_left_steer = false, have_right_steer = false;
 
+    /* topic_based_ros2_control's TopicBasedSystem publishes position[] and
+     * velocity[] as separate arrays, each containing only the joints that
+     * actually use that command interface (in name[] order), NOT one slot
+     * per entry in name[]. So position/velocity need their own running
+     * indices, not the shared name[] loop index - reusing a single index
+     * silently left lb_vel/rb_vel at 0 forever once they stopped lining up
+     * with name[]'s indices, and the rear wheels never actually drove. */
+    size_t position_idx = 0, velocity_idx = 0;
+
     for (size_t i = 0; i < msg->name.size(); i++) {
-      if (msg->name[i] == "left_joint" && i < msg->position.size()) {
-        left_steer_rad = msg->position[i];
+      if (msg->name[i] == "left_joint" && position_idx < msg->position.size()) {
+        left_steer_rad = msg->position[position_idx++];
         have_left_steer = true;
-      } else if (msg->name[i] == "right_joint" && i < msg->position.size()) {
-        right_steer_rad = msg->position[i];
+      } else if (msg->name[i] == "right_joint" && position_idx < msg->position.size()) {
+        right_steer_rad = msg->position[position_idx++];
         have_right_steer = true;
-      } else if (msg->name[i] == "lb_joint" && i < msg->velocity.size()) {
-        lb_vel = msg->velocity[i];
-      } else if (msg->name[i] == "rb_joint" && i < msg->velocity.size()) {
-        rb_vel = msg->velocity[i];
+      } else if (msg->name[i] == "lb_joint" && velocity_idx < msg->velocity.size()) {
+        lb_vel = msg->velocity[velocity_idx++];
+      } else if (msg->name[i] == "rb_joint" && velocity_idx < msg->velocity.size()) {
+        rb_vel = msg->velocity[velocity_idx++];
       }
     }
 
@@ -157,7 +166,13 @@ private:
     pkt.type = kTypeCommand;
     pkt.left_wheel_rad_s = static_cast<float>(lb_vel);
     pkt.right_wheel_rad_s = static_cast<float>(rb_vel);
-    pkt.steer_rad = static_cast<float>(steer_rad);
+    /* Sign convention mismatch: ROS's left_joint/right_joint (axis 0 0 1)
+     * follow REP-103 - positive = left (CCW from above). The STM32's
+     * servo_set_angle() (mdp_stm32/src/servo.c) is documented the other
+     * way - positive = right. Negate here, at the one seam that already
+     * hand-translates between the two systems, rather than changing either
+     * side's own internally-consistent convention. */
+    pkt.steer_rad = static_cast<float>(-steer_rad);
     pkt.checksum = xor_checksum(
       reinterpret_cast<const uint8_t *>(&pkt.type),
       sizeof(CommandPacket) - offsetof(CommandPacket, type) - 1);
@@ -249,7 +264,10 @@ private:
     sensor_msgs::msg::JointState js;
     js.header.stamp = stamp;
     js.name = {"left_joint", "right_joint", "lb_joint", "rb_joint"};
-    const double steer_rad = pkt.steer_deg * M_PI / 180.0;
+    /* Negated for the same reason as in onJointCommand() above - pkt.steer_deg
+     * is in the STM32's positive=right convention, ROS's left_joint/right_joint
+     * expect positive=left. */
+    const double steer_rad = -(pkt.steer_deg * M_PI / 180.0);
     js.position = {
       steer_rad, steer_rad,
       pkt.enc_left * kRadPerTick, pkt.enc_right * kRadPerTick
