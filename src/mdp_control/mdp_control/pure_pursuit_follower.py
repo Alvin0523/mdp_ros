@@ -61,7 +61,6 @@ class PurePursuitFollower(Node):
         msg.twist.linear.x = float(linear_x)
         msg.twist.angular.z = float(angular_z)
         self.cmd_pub.publish(msg)
-        self.ref_pub.publish(msg)
 
     def stop(self):
         self.active = False
