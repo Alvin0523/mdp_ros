@@ -84,6 +84,11 @@ libudev = "*"
 # camera_ros's own ROS dependencies
 ros-jazzy-camera-info-manager = "*"
 ros-jazzy-image-transport = "*"
+# H.264 transport plugin for efficient camera streaming to Foxglove over the
+# network (raw/JPEG are too heavy for WiFi/Tailscale); adds a
+# /camera/image_raw/foxglove_compressed_video topic automatically once
+# installed, no code changes needed -- image_transport plugins self-register
+ros-jazzy-foxglove-compressed-video-transport = "*"
 
 [pypi-dependencies]
 ultralytics = "*"

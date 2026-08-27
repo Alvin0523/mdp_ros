@@ -1577,11 +1577,14 @@ environments:
       - conda: https://conda.anaconda.org/robostack-jazzy/linux-aarch64/ros-jazzy-fastcdr-2.2.7-np2py312h61f2ce4_18.conda
       - conda: https://conda.anaconda.org/robostack-jazzy/linux-aarch64/ros-jazzy-fastrtps-2.14.6-np2py312h61f2ce4_18.conda
       - conda: https://conda.anaconda.org/robostack-jazzy/linux-aarch64/ros-jazzy-fastrtps-cmake-module-3.6.3-np2py312h61f2ce4_18.conda
+      - conda: https://conda.anaconda.org/robostack-jazzy/linux-aarch64/ros-jazzy-ffmpeg-encoder-decoder-3.0.1-np2py312h3c25c5b_18.conda
       - conda: https://conda.anaconda.org/robostack-jazzy/linux-aarch64/ros-jazzy-filters-2.2.2-np2py312h61f2ce4_18.conda
       - conda: https://conda.anaconda.org/robostack-jazzy/linux-aarch64/ros-jazzy-foonathan-memory-vendor-1.3.1-np2py312h61f2ce4_18.conda
       - conda: https://conda.anaconda.org/robostack-jazzy/linux-aarch64/ros-jazzy-force-torque-sensor-broadcaster-4.40.0-np2py312h61f2ce4_18.conda
       - conda: https://conda.anaconda.org/robostack-jazzy/linux-aarch64/ros-jazzy-forward-command-controller-4.40.0-np2py312h61f2ce4_18.conda
       - conda: https://conda.anaconda.org/robostack-jazzy/linux-aarch64/ros-jazzy-foxglove-bridge-3.3.0-np2py312h61f2ce4_18.conda
+      - conda: https://conda.anaconda.org/robostack-jazzy/linux-aarch64/ros-jazzy-foxglove-compressed-video-transport-3.0.1-np2py312h61f2ce4_18.conda
+      - conda: https://conda.anaconda.org/robostack-jazzy/linux-aarch64/ros-jazzy-foxglove-msgs-3.3.0-np2py312h61f2ce4_18.conda
       - conda: https://conda.anaconda.org/robostack-jazzy/linux-aarch64/ros-jazzy-generate-parameter-library-0.7.3-np2py312h8b5252a_18.conda
       - conda: https://conda.anaconda.org/robostack-jazzy/linux-aarch64/ros-jazzy-generate-parameter-library-py-0.7.3-np2py312h61f2ce4_18.conda
       - conda: https://conda.anaconda.org/robostack-jazzy/linux-aarch64/ros-jazzy-geometry-msgs-5.3.7-np2py312h61f2ce4_18.conda
@@ -36832,6 +36835,35 @@ packages:
   license: Apache-2.0
   size: 27524
   timestamp: 1782300411325
+- conda: https://conda.anaconda.org/robostack-jazzy/linux-aarch64/ros-jazzy-ffmpeg-encoder-decoder-3.0.1-np2py312h3c25c5b_18.conda
+  sha256: dd331eb61071849c63d5e2b352306750d49ca5c5b1d52f31ea78a6e2ea90a27c
+  md5: 76b2fe4dc112321e1746379843d33ea5
+  depends:
+  - ffmpeg
+  - libgl-devel
+  - libopencv
+  - libopengl-devel
+  - py-opencv
+  - python
+  - ros-jazzy-cv-bridge
+  - ros-jazzy-rclcpp
+  - ros-jazzy-ros-workspace
+  - ros-jazzy-sensor-msgs
+  - ros-jazzy-std-msgs
+  - ros2-distro-mutex 0.15.* jazzy_*
+  - libstdcxx >=14
+  - libgcc >=14
+  - libopencv >=4.13.0,<4.13.1.0a0
+  - libgl >=1.7.0,<2.0a0
+  - ffmpeg >=8.1.2,<9.0a0
+  - libopengl >=1.7.0,<2.0a0
+  - numpy >=1.25,<3
+  - py-opencv >=4.13.0,<5.0a0
+  - python_abi 3.12.* *_cp312
+  - ros2-distro-mutex >=0.15.0,<0.16.0a0
+  license: Apache-2.0
+  size: 190587
+  timestamp: 1782303539069
 - conda: https://conda.anaconda.org/robostack-jazzy/linux-aarch64/ros-jazzy-filters-2.2.2-np2py312h61f2ce4_18.conda
   sha256: a1c719da6d43723e8a07bf7b9b2db8df88bcf6a0a69c9418c87d704a67f6c083
   md5: ce149f12d4cc493ccffdd4754ab98c26
@@ -36947,6 +36979,47 @@ packages:
   license: MIT
   size: 15186360
   timestamp: 1782374318154
+- conda: https://conda.anaconda.org/robostack-jazzy/linux-aarch64/ros-jazzy-foxglove-compressed-video-transport-3.0.1-np2py312h61f2ce4_18.conda
+  sha256: 90a411096d38b7a915b718d001f175f3f8ba2f8b62f7c3715593b05f2aa1efb4
+  md5: bfada47c1b79ae20971d6c4fd85e75f3
+  depends:
+  - python
+  - ros-jazzy-ffmpeg-encoder-decoder
+  - ros-jazzy-foxglove-msgs
+  - ros-jazzy-image-transport
+  - ros-jazzy-pluginlib
+  - ros-jazzy-rclcpp
+  - ros-jazzy-rcutils
+  - ros-jazzy-ros-workspace
+  - ros-jazzy-sensor-msgs
+  - ros-jazzy-std-msgs
+  - ros2-distro-mutex 0.15.* jazzy_*
+  - libstdcxx >=14
+  - libgcc >=14
+  - numpy >=1.25,<3
+  - python_abi 3.12.* *_cp312
+  - ros2-distro-mutex >=0.15.0,<0.16.0a0
+  license: Apache-2.0
+  size: 230015
+  timestamp: 1782326706533
+- conda: https://conda.anaconda.org/robostack-jazzy/linux-aarch64/ros-jazzy-foxglove-msgs-3.3.0-np2py312h61f2ce4_18.conda
+  sha256: 9050ba5546617c7a7e41d6abb0b6272e2a4d97451c50ecd17bc4862ec6fecefb
+  md5: dcfcc0bb8f018af5cf4fd79cd2bd78f1
+  depends:
+  - python
+  - ros-jazzy-builtin-interfaces
+  - ros-jazzy-geometry-msgs
+  - ros-jazzy-ros-workspace
+  - ros-jazzy-rosidl-default-runtime
+  - ros2-distro-mutex 0.15.* jazzy_*
+  - libgcc >=14
+  - libstdcxx >=14
+  - numpy >=1.25,<3
+  - python_abi 3.12.* *_cp312
+  - ros2-distro-mutex >=0.15.0,<0.16.0a0
+  license: MIT
+  size: 744509
+  timestamp: 1782302104421
 - conda: https://conda.anaconda.org/robostack-jazzy/linux-aarch64/ros-jazzy-generate-parameter-library-0.7.3-np2py312h8b5252a_18.conda
   sha256: c8280bc92c63c2b6d06d36b3eaedb869f67ffbd28b65fb1d3b87bd9917cb3947
   md5: 8e15dd25e1becbaf06671d1901fef965
