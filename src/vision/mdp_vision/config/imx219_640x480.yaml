@@ -1,0 +1,35 @@
+# Generic RPi Camera Module V2 (IMX219) calibration, scaled to 640x480.
+#
+# NOT measured on this robot's specific physical camera unit - per-unit lens/
+# sensor manufacturing tolerances mean a checkerboard calibration on this
+# exact camera (`ros2 run camera_calibration cameracalibrator`) would differ
+# slightly. Sourced from UbiquityRobotics/raspicam_node's community-published
+# camerav2_1280x960.yaml (github.com/UbiquityRobotics/raspicam_node,
+# camera_info/camerav2_1280x960.yaml) and linearly scaled by 0.5 in fx/fy/cx/cy
+# for this resolution (distortion coefficients are resolution-independent -
+# they're defined on normalized coordinates, not pixel-scaled ones).
+#
+# Good enough to silence "calibration file not found" and give YOLO/cv_bridge
+# a real (not identity/zero) CameraInfo; NOT good enough for tasks needing
+# precise metric distance/offset estimation from the image - recalibrate on
+# this unit if that's ever needed.
+image_width: 640
+image_height: 480
+camera_name: imx219
+camera_matrix:
+  rows: 3
+  cols: 3
+  data: [499.7305853316655, 0, 321.1291288789086, 0, 498.4805725933136, 237.0735953217274, 0, 0, 1]
+distortion_model: plumb_bob
+distortion_coefficients:
+  rows: 1
+  cols: 5
+  data: [0.1644274736100891, -0.2717244716038656, -0.002867946281892625, -9.69782173585606e-05, 0]
+rectification_matrix:
+  rows: 3
+  cols: 3
+  data: [1, 0, 0, 0, 1, 0, 0, 0, 1]
+projection_matrix:
+  rows: 3
+  cols: 4
+  data: [511.071990966797, 0, 321.11899669314515, 0, 0, 510.791778564453, 235.96811915763285, 0, 0, 0, 1, 0]
