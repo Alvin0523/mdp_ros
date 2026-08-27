@@ -24,7 +24,6 @@ def generate_launch_description():
         output='screen',
         parameters=[{
             'camera_topic': '/image_raw',
-            'model_path': 'yolov8n.pt',
             'result_topic': '/yolo_result'
         }]
     )
