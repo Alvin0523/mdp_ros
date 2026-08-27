@@ -59,6 +59,12 @@ def generate_launch_description():
         package='mdp_hardware_bridge',
         executable='serial_bridge_node',
         parameters=[{'serial_port': serial_port, 'baud_rate': 115200}],
+        # The bridge's own JointState publish is TopicBasedSystem's raw
+        # hardware-feedback input, not the graph-wide /joint_states topic -
+        # joint_state_broadcaster owns that name (see mini_akm_real_robot.urdf's
+        # joint_states_topic param). Remapped here rather than in the node's
+        # C++ source so the topic name stays a launch-time concern.
+        remappings=[('/joint_states', '/joint_states_raw')],
         output='screen'
     )
 
@@ -74,7 +80,14 @@ def generate_launch_description():
         package='camera_ros',
         executable='camera_node',
         name='camera',
-        parameters=[{'width': 640, 'height': 480}],
+        parameters=[{
+            'camera': 0,           # only one camera on this board (RPi Camera Module V2 / IMX219)
+            'width': 640,
+            'height': 480,
+            'format': 'RGB888',    # 3-channel, no alpha - avoids XRGB8888's auto-pick and matches
+                                    # cv_bridge's bgr8 conversion in yolo_arrow_detector.py cleanly
+            'camera_info_url': 'package://mdp_vision/config/imx219_640x480.yaml',
+        }],
         output='screen'
     )
 

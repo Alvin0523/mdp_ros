@@ -5,7 +5,7 @@ hardware (Raspberry Pi 4B + STM32), autonomy, path planning, and vision.
 
 Managed with [pixi](https://pixi.sh) — `pixi install` sets up the full ROS2 + build
 environment (no system-wide ROS install needed). See `pixi.toml` for tasks (`pixi run sim`,
-`pixi run hardware`, `pixi run build`, etc.) and dependencies.
+`pixi run real`, `pixi run build`, etc.) and dependencies.
 
 ## Packages (`src/`)
 

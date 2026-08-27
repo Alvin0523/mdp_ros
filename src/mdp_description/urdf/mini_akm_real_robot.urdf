@@ -80,7 +80,13 @@
     <hardware>
       <plugin>topic_based_ros2_control/TopicBasedSystem</plugin>
       <param name="joint_commands_topic">/joint_commands</param>
-      <param name="joint_states_topic">/joint_states</param>
+      <!-- Deliberately NOT /joint_states: joint_state_broadcaster re-publishes
+           the aggregated state interfaces on that exact name for the rest of
+           the graph (RViz, TF, etc). If TopicBasedSystem's raw hardware-feedback
+           subscription used the same name, two independently-ordered
+           publishers would collide on one topic - see docs/ros/launch.md's
+           note on this remap for what that looked like before the fix. -->
+      <param name="joint_states_topic">/joint_states_raw</param>
     </hardware>
     <joint name="left_joint">
       <command_interface name="position"/>

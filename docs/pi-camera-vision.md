@@ -124,17 +124,35 @@ becomes a recurring pain.
    lookups), but anything spatial later (projecting a detection into the robot frame) will need a
    static transform for `camera_link` added back, either in the URDF or via
    `static_transform_publisher` in `real.launch.py`.
-3. **`pixi.toml`'s `ros-jazzy-foxglove-compressed-video-transport` line was added then locally
-   reverted** (uncommitted, laptop-side) since H.264 wasn't pursued — check current `git diff
-   pixi.toml` before assuming it's committed either way.
+3. **`pixi.toml`'s `ros-jazzy-foxglove-compressed-video-transport` line was added then dropped**
+   (committed, not just locally reverted) since H.264 wasn't pursued and `camera_ros` doesn't use
+   `image_transport`'s plugin auto-discovery anyway (see above) — confirmed not present in the
+   current `pixi.toml`.
 4. Cosmetic-only, not a bug: `Could not enable FIFO RT scheduling policy: ... Operation not
    permitted` on every `ros2_control_node` startup — needs `CAP_SYS_NICE` (or root) on the Pi to
    go away; controllers work fine without it, just without RT scheduling guarantees.
 
+## Camera parameters pinned in `real.launch.py`
+
+`camera_node`'s `Node(...)` params were previously bare (`width`/`height` only), which left two
+warnings on every launch - `camera_node` logs the exact param name each time, which is how these
+were found:
+
+- `camera: 0` and `format: 'RGB888'` - silences "no camera selected"/"no pixel format selected,
+  auto-selecting XRGB8888". `RGB888` (3-channel, no alpha) was chosen over the auto-picked
+  `XRGB8888` since it matches `yolo_arrow_detector.py`'s `cv_bridge.imgmsg_to_cv2(...,
+  desired_encoding='bgr8')` conversion more directly.
+- `camera_info_url: 'package://mdp_vision/config/imx219_640x480.yaml'` - a generic IMX219
+  calibration (community-published, `UbiquityRobotics/raspicam_node`'s `camerav2_1280x960.yaml`
+  scaled 0.5x for this resolution), **not measured on this robot's specific camera unit**. Silences
+  "calibration file not found" and gives `CameraInfo` real (not identity) values; recalibrate on
+  this exact unit with `ros2 run camera_calibration cameracalibrator` if a task ever needs precise
+  metric distance/offset estimation from the image - YOLO classification doesn't.
+
 ## Real-hardware quirks (non-camera, found along the way)
 
 - STM32 bridge enumerates as `/dev/ttyACM0` on this Pi, not the `/dev/ttyUSB0` launch-file
-  default — `pixi run hardware` hardcodes the override.
+  default — `pixi run real` hardcodes the override.
 - If `camera_node` fails with `failed to acquire camera` / `Pipeline handler in use by another
   process`, something else still has `/dev/media0` open — `ps aux | grep camera_node` and kill
   the stale one before retrying.
