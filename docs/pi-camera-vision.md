@@ -7,7 +7,7 @@ Sim (Gazebo):
   camera_link sensor plugin --(ros_gz_bridge)--> /camera/image_raw, /camera/camera_info
                                                         |
 Real (Pi 4B + Camera Module v2 / imx219):              v
-  camera_ros node --------------------------------> yolo_arrow_detector.py (mdp_vision)
+  camera_ros node --------------------------------> yolo_detector.py (mdp_vision)
     /camera/image_raw (raw)                              | cv_bridge -> ultralytics YOLO
     /camera/image_raw/compressed (JPEG)                  v
     /camera/camera_info                              /yolo_result (std_msgs/String)
@@ -16,11 +16,13 @@ Real (Pi 4B + Camera Module v2 / imx219):              v
 - Sim: `mini_akm_robot.urdf` has a `<sensor type="camera">` on `camera_link`; `task2_sim.launch.py`
   bridges `/camera/image_raw` + `/camera/camera_info` from Gazebo.
 - Real: `real.launch.py` launches `camera_ros`'s `camera_node` (package `camera_ros`, built from
-  source, see below) and `yolo_arrow_detector.py`, pointed at `/camera/image_raw`.
-- `yolo_arrow_detector.py`'s `model_path` param defaults to
-  `get_package_share_directory('mdp_vision')/models/yolov8n.pt`. `.pt` files are gitignored, so
-  the model must be copied to any new machine manually (e.g. `scp` from a machine that has it) —
-  `pixi run colcon build --packages-select mdp_vision` then installs it into the share dir.
+  source, see below) and `yolo_detector.py`, pointed at `/camera/image_raw`.
+- `yolo_detector.py`'s `model_path` param defaults to
+  `get_package_share_directory('mdp_vision')/models/yolo26n_ncnn_model` (see "Known open issues"
+  #1 below for why NCNN rather than a raw `.pt` checkpoint). Both `*.pt` files and
+  `models/*_ncnn_model/` directories are gitignored, so the model must be exported/copied to any
+  new machine manually — `pixi run colcon build --packages-select mdp_vision` then installs
+  whatever's in `models/` into the share dir.
 
 ## Why camera_ros is built from source, not `pixi install`ed
 
@@ -105,7 +107,7 @@ becomes a recurring pain.
 ## Known open issues
 
 1. **YOLO inference crashes (SIGILL) on the Pi — fixed, needs a re-flash/rebuild + retest.**
-   `yolo_arrow_detector.py` loaded the model fine, then died with exit code `-4` on the first
+   `yolo_detector.py` loaded the model fine, then died with exit code `-4` on the first
    actual inference. Root cause: `numpy`'s BLAS backend resolved to conda-forge's `nvpl` (NVIDIA
    Performance Libraries) variant — `libcblas.so.3: undefined symbol: nvpl_blas_core_scabs1`.
    NVPL targets NVIDIA Grace/Graviton (SVE-capable) server ARM chips; it's simply the wrong
@@ -119,7 +121,7 @@ becomes a recurring pain.
    Confirmed `nvpl` no longer appears anywhere in `pixi.lock` for either platform (`linux-64` or
    `linux-aarch64`) after `pixi install`. **Not yet re-tested on the physical Pi** — pull, run
    `pixi install` (picks up the new lockfile) and `pixi run vision` or `pixi run real`, and
-   confirm `yolo_arrow_detector.py` survives its first inference instead of dying with exit
+   confirm `yolo_detector.py` survives its first inference instead of dying with exit
    code `-4`.
 2. **`mini_akm_real_robot.urdf` has no `camera_link` / TF frame for the camera.** It's a
    control-only URDF (5 links: `base_link` + 4 actuated wheel/steering joints) — no visuals, no
@@ -143,7 +145,7 @@ were found:
 
 - `camera: 0` and `format: 'RGB888'` - silences "no camera selected"/"no pixel format selected,
   auto-selecting XRGB8888". `RGB888` (3-channel, no alpha) was chosen over the auto-picked
-  `XRGB8888` since it matches `yolo_arrow_detector.py`'s `cv_bridge.imgmsg_to_cv2(...,
+  `XRGB8888` since it matches `yolo_detector.py`'s `cv_bridge.imgmsg_to_cv2(...,
   desired_encoding='bgr8')` conversion more directly.
 - `camera_info_url: 'package://mdp_vision/config/imx219_640x480.yaml'` - a generic IMX219
   calibration (community-published, `UbiquityRobotics/raspicam_node`'s `camerav2_1280x960.yaml`

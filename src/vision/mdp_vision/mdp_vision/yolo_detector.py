@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Ultralytics YOLO ROS2 Arrow & Obstacle Detector Node.
+Ultralytics YOLO ROS2 Detector Node.
 Located in mdp_vision package.
 Subscribes to camera feed (/image_raw), runs YOLO inference,
 and publishes detected target/arrow string to /yolo_result.
@@ -21,12 +21,16 @@ try:
 except ImportError:
     ULTRALYTICS_AVAILABLE = False
 
+# The `_ncnn_model` suffix is required, not a naming choice - ultralytics'
+# AutoBackend detects the model format from the directory name itself
+# (every export format has its own required suffix: *_ncnn_model/,
+# *_saved_model/, *_openvino_model/, ...), not from the files inside it.
 DEFAULT_MODEL_PATH = os.path.join(
-    get_package_share_directory('mdp_vision'), 'models', 'yolov8n.pt')
+    get_package_share_directory('mdp_vision'), 'models', 'yolo26n_ncnn_model')
 
-class YoloArrowDetector(Node):
+class YoloDetector(Node):
     def __init__(self):
-        super().__init__('yolo_arrow_detector')
+        super().__init__('yolo_detector')
 
         self.declare_parameter('camera_topic', '/image_raw')
         self.declare_parameter('model_path', DEFAULT_MODEL_PATH)
@@ -41,7 +45,12 @@ class YoloArrowDetector(Node):
         self.create_subscription(Image, camera_topic, self.image_callback, 10)
 
         if ULTRALYTICS_AVAILABLE:
-            self.model = YOLO(model_path)
+            # NCNN (exported via `model.export(format='ncnn')`) rather than a
+            # raw .pt checkpoint - NCNN's runtime doesn't route inference
+            # through torch's BLAS/CUDA backend at all, which is what was
+            # crashing (SIGILL, exit -4) on the Pi's Cortex-A72 with a .pt
+            # model - see docs/pi-camera-vision.md "Known open issues" #1.
+            self.model = YOLO(model_path, task='detect')
             self.get_logger().info(f"[mdp_vision] Ultralytics YOLO loaded successfully from {model_path}!")
         else:
             self.model = None
@@ -71,7 +80,7 @@ class YoloArrowDetector(Node):
 
 def main(args=None):
     rclpy.init(args=args)
-    node = YoloArrowDetector()
+    node = YoloDetector()
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:

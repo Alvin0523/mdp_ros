@@ -85,7 +85,7 @@ def generate_launch_description():
             'width': 640,
             'height': 480,
             'format': 'RGB888',    # 3-channel, no alpha - avoids XRGB8888's auto-pick and matches
-                                    # cv_bridge's bgr8 conversion in yolo_arrow_detector.py cleanly
+                                    # cv_bridge's bgr8 conversion in yolo_detector.py cleanly
             'camera_info_url': 'package://mdp_vision/config/imx219_640x480.yaml',
         }],
         output='screen'
@@ -93,7 +93,7 @@ def generate_launch_description():
 
     yolo_detector = Node(
         package='mdp_vision',
-        executable='yolo_arrow_detector.py',
+        executable='yolo_detector.py',
         parameters=[{'camera_topic': '/camera/image_raw'}],
         output='screen'
     )
