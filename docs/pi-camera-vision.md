@@ -7,7 +7,7 @@ Sim (Gazebo):
   camera_link sensor plugin --(ros_gz_bridge)--> /camera/image_raw, /camera/camera_info
                                                         |
 Real (Pi 4B + Camera Module v2 / imx219):              v
-  camera_ros node --------------------------------> yolo_arrow_detector.py (mdp_vision)
+  camera_ros node --------------------------------> yolo_detector.py (mdp_vision)
     /camera/image_raw (raw)                              | cv_bridge -> ultralytics YOLO
     /camera/image_raw/compressed (JPEG)                  v
     /camera/camera_info                              /yolo_result (std_msgs/String)
@@ -16,11 +16,13 @@ Real (Pi 4B + Camera Module v2 / imx219):              v
 - Sim: `mini_akm_robot.urdf` has a `<sensor type="camera">` on `camera_link`; `task2_sim.launch.py`
   bridges `/camera/image_raw` + `/camera/camera_info` from Gazebo.
 - Real: `real.launch.py` launches `camera_ros`'s `camera_node` (package `camera_ros`, built from
-  source, see below) and `yolo_arrow_detector.py`, pointed at `/camera/image_raw`.
-- `yolo_arrow_detector.py`'s `model_path` param defaults to
-  `get_package_share_directory('mdp_vision')/models/yolov8n.pt`. `.pt` files are gitignored, so
-  the model must be copied to any new machine manually (e.g. `scp` from a machine that has it) —
-  `pixi run colcon build --packages-select mdp_vision` then installs it into the share dir.
+  source, see below) and `yolo_detector.py`, pointed at `/camera/image_raw`.
+- `yolo_detector.py`'s `model_path` param defaults to
+  `get_package_share_directory('mdp_vision')/models/yolo26n_ncnn_model` (see "Known open issues"
+  #1 below for why NCNN rather than a raw `.pt` checkpoint). Both `*.pt` files and
+  `models/*_ncnn_model/` directories are gitignored, so the model must be exported/copied to any
+  new machine manually — `pixi run colcon build --packages-select mdp_vision` then installs
+  whatever's in `models/` into the share dir.
 
 ## Why camera_ros is built from source, not `pixi install`ed
 
@@ -104,20 +106,66 @@ becomes a recurring pain.
 
 ## Known open issues
 
-1. **YOLO inference crashes (SIGILL) on the Pi — not yet fixed.** `yolo_arrow_detector.py` loads
-   the model fine, then dies with exit code `-4` on the first actual inference. Root cause:
-   `numpy`'s BLAS backend resolved to conda-forge's `nvpl` (NVIDIA Performance Libraries) variant
-   — `libcblas.so.3: undefined symbol: nvpl_blas_core_scabs1`. NVPL targets NVIDIA
-   Grace/Graviton (SVE-capable) server ARM chips; it's simply the wrong backend for a Pi 4B's
-   Cortex-A72, and there's also a version mismatch between the installed `libcblas` and
-   `libnvpl_blas_core` builds. **Fix not yet applied**: pin the conda BLAS variant to
-   `openblas` (broadly ARM-compatible) instead, e.g. in `pixi.toml`:
+1. **YOLO inference crashes (SIGILL) on the Pi — fixed via two independent changes, needs retest.**
+
+   `yolo_detector.py` loaded the model fine, then died with exit code `-4` on the first actual
+   inference. Two separate wrong-architecture problems were stacked here, found and fixed in
+   this order:
+
+   **a) Wrong BLAS variant.** `numpy`/`torch` resolved conda-forge's `nvpl` (NVIDIA Performance
+   Libraries) BLAS backend — `libcblas.so.3: undefined symbol: nvpl_blas_core_scabs1`. NVPL
+   targets NVIDIA Grace/Graviton (SVE-capable) *server* ARM chips, not a Pi 4B's Cortex-A72.
+
+   *Why conda picked the wrong one, and why this needed a manual fix*: this workspace uses
+   `pixi`/conda-forge for the whole ROS2 stack (not plain pip), and conda-forge packages BLAS as
+   a separate, swappable component — `numpy`, `torch`, `opencv` all dynamically link against
+   whichever BLAS variant is present (`openblas`, `mkl`, `nvpl`, ...). The solver just picks one
+   to satisfy the whole environment from its own internal ranking; it doesn't inspect the actual
+   CPU the environment will run on, and `linux-aarch64` as a platform tag covers everything from
+   a Pi 4B to an NVIDIA Grace server. There's also no runtime fallback once the wrong one is
+   linked — a compiled library either has the CPU instruction or it hard-crashes hitting it,
+   there's no "try it, catch, fall back" happening automatically. (Plain `pip install numpy`
+   would likely have avoided this entirely — PyPI wheels bundle a widely-compatible OpenBLAS by
+   default — but numpy comes from conda here since the rest of the ROS2 stack needs it from
+   there too.) Fixed by pinning the conda BLAS build variant explicitly in `pixi.toml`:
    ```toml
    [dependencies]
-   libblas = "*=*openblas"
-   liblapack = "*=*openblas"
+   libblas = { version = "*", build = "*openblas" }
+   liblapack = { version = "*", build = "*openblas" }
    ```
-   Camera capture itself is unaffected by this — only YOLO inference is blocked.
+   Confirmed `nvpl` no longer appears anywhere in `pixi.lock` for either platform.
+
+   **b) Still crashed after (a) — switched to NCNN.** Even with the BLAS fix applied and
+   confirmed on the Pi (`pixi list | grep blas` showed `openblas` correctly), YOLO still crashed
+   identically. `pixi list` also showed `nvidia_cublas` (~660MB, a CUDA runtime library) present
+   despite there being no NVIDIA GPU anywhere in this system — `torch`, pulled in via `pip`
+   through `ultralytics`, had resolved PyPI's default CUDA-enabled build rather than a CPU-only
+   one. Rather than keep chasing exact torch/CUDA wheel selection, switched to running the model
+   via **NCNN** instead of raw `.pt`/torch inference, per Ultralytics' own
+   [Raspberry Pi guide](https://docs.ultralytics.com/guides/raspberry-pi/) (NCNN is their
+   recommended format for ARM, and benchmarks ~4x faster than raw PyTorch on a Pi 5 in their own
+   numbers). `yolo26n.pt` exported via `model.export(format='ncnn')`, model now lives at
+   `models/yolo26n_ncnn_model/` (the `_ncnn_model` directory suffix is required by ultralytics'
+   own format-detection, not a naming choice). `ncnn`/`pnnx` added to `pixi.toml`'s
+   `[pypi-dependencies]` (resolved proper per-platform wheels, confirmed for `linux-aarch64`).
+
+   NCNN's own inference engine is self-contained and doesn't use system BLAS at all - but the
+   BLAS pin from (a) is still needed regardless, since `ultralytics` still imports `torch` and
+   uses `numpy` for everything *around* the model (image preprocessing, NMS, result
+   postprocessing) no matter which format runs the model itself.
+
+   *Open question, not yet decided*: `pnnx` is only used at export time
+   (`model.export(format='ncnn')`, already run once on a dev machine), not by `yolo_detector.py`
+   at runtime - only `ncnn` is needed to load and run the already-exported model. Whether `pnnx`
+   is needed on the Pi depends on whether the Pi is expected to run its own export locally, or
+   just receive the already-exported `models/yolo26n_ncnn_model/` directory (gitignored, so it
+   isn't pulled in by `git pull` either way - needs an explicit copy, e.g. `scp`, same as the
+   old `.pt` file did per the note above).
+
+   **Verified so far**: end-to-end on the dev machine only (node loads the NCNN model and runs
+   the exact `image_callback()` code path without crashing). **Not yet re-tested on the physical
+   Pi** — pull, `pixi install`, `pixi run real` or `pixi run vision`, confirm `yolo_detector.py`
+   survives its first inference instead of dying with exit code `-4`.
 2. **`mini_akm_real_robot.urdf` has no `camera_link` / TF frame for the camera.** It's a
    control-only URDF (5 links: `base_link` + 4 actuated wheel/steering joints) — no visuals, no
    `camera_link`, no `laser_link`, no `base_footprint`. YOLO detection itself doesn't care (no TF
@@ -140,7 +188,7 @@ were found:
 
 - `camera: 0` and `format: 'RGB888'` - silences "no camera selected"/"no pixel format selected,
   auto-selecting XRGB8888". `RGB888` (3-channel, no alpha) was chosen over the auto-picked
-  `XRGB8888` since it matches `yolo_arrow_detector.py`'s `cv_bridge.imgmsg_to_cv2(...,
+  `XRGB8888` since it matches `yolo_detector.py`'s `cv_bridge.imgmsg_to_cv2(...,
   desired_encoding='bgr8')` conversion more directly.
 - `camera_info_url: 'package://mdp_vision/config/imx219_640x480.yaml'` - a generic IMX219
   calibration (community-published, `UbiquityRobotics/raspicam_node`'s `camerav2_1280x960.yaml`
