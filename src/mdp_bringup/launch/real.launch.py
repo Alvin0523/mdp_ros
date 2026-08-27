@@ -74,7 +74,14 @@ def generate_launch_description():
         package='camera_ros',
         executable='camera_node',
         name='camera',
-        parameters=[{'width': 640, 'height': 480}],
+        parameters=[{
+            'camera': 0,           # only one camera on this board (RPi Camera Module V2 / IMX219)
+            'width': 640,
+            'height': 480,
+            'format': 'RGB888',    # 3-channel, no alpha - avoids XRGB8888's auto-pick and matches
+                                    # cv_bridge's bgr8 conversion in yolo_arrow_detector.py cleanly
+            'camera_info_url': 'package://mdp_vision/config/imx219_640x480.yaml',
+        }],
         output='screen'
     )
 

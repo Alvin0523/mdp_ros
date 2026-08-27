@@ -71,6 +71,15 @@ public:
       std::chrono::milliseconds(250),
       std::bind(&SerialBridgeNode::checkLinkHealth, this));
 
+    /* Periodic serial-link diagnostic - distinguishes "nothing arriving on
+     * the port" (bytes_rx stays 0: wrong device/baud/cable, or firmware not
+     * running) from "bytes arriving but framing/checksum always fails"
+     * (protocol.h/protocol.hpp struct-size mismatch between the flashed
+     * STM32 firmware and this bridge build being the most common cause). */
+    diag_timer_ = create_wall_timer(
+      std::chrono::seconds(3),
+      std::bind(&SerialBridgeNode::logSerialDiagnostic, this));
+
     running_ = true;
     read_thread_ = std::thread(&SerialBridgeNode::readLoop, this);
   }
@@ -211,6 +220,7 @@ private:
       if (n <= 0) {
         continue; /* timeout (VTIME) or nothing available yet */
       }
+      bytes_rx_.fetch_add(1);
 
       switch (state) {
         case State::WaitSync0:
@@ -239,18 +249,44 @@ private:
             uint8_t expected = buf[index - 1];
             uint8_t computed = xor_checksum(buf, index - 1);
             if (computed == expected) {
+              frames_ok_.fetch_add(1);
               TelemetryPacket pkt{};
               pkt.sync0 = kSync0;
               pkt.sync1 = kSync1;
               std::memcpy(&pkt.type, buf, index);
               onTelemetry(pkt);
             } else {
+              frames_bad_.fetch_add(1);
               RCLCPP_DEBUG(get_logger(), "Telemetry checksum mismatch, dropping frame");
             }
             state = State::WaitSync0;
           }
           break;
       }
+    }
+  }
+
+  void logSerialDiagnostic()
+  {
+    const uint64_t bytes = bytes_rx_.exchange(0);
+    const uint64_t ok = frames_ok_.exchange(0);
+    const uint64_t bad = frames_bad_.exchange(0);
+    if (bytes == 0) {
+      RCLCPP_WARN(
+        get_logger(),
+        "Serial: 0 bytes received in the last 3s - check serial_port, baud rate, cable, "
+        "and that the STM32 firmware is actually running (try 'pixi run monitor' from "
+        "mdp_stm32 with this bridge node stopped, to rule out the ROS side entirely).");
+    } else if (ok == 0 && bad > 0) {
+      RCLCPP_WARN(
+        get_logger(),
+        "Serial: %lu bytes received, %lu frames failed checksum, 0 valid telemetry frames "
+        "in the last 3s - likely a TelemetryPacket size/layout mismatch between the flashed "
+        "STM32 firmware and this bridge build (protocol.h vs protocol.hpp out of sync, or "
+        "STM32 not reflashed after a protocol change).",
+        bytes, bad);
+    } else {
+      RCLCPP_INFO(get_logger(), "Serial: %lu bytes, %lu OK frames, %lu bad frames in last 3s", bytes, ok, bad);
     }
   }
 
@@ -355,7 +391,11 @@ private:
   rclcpp::Publisher<sensor_msgs::msg::BatteryState>::SharedPtr battery_pub_;
   rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr joint_command_sub_;
   rclcpp::TimerBase::SharedPtr link_watchdog_timer_;
+  rclcpp::TimerBase::SharedPtr diag_timer_;
   std::atomic<int64_t> last_telemetry_ns_{0};
+  std::atomic<uint64_t> bytes_rx_{0};
+  std::atomic<uint64_t> frames_ok_{0};
+  std::atomic<uint64_t> frames_bad_{0};
 
   bool have_prev_telemetry_ = false;
   int32_t prev_enc_left_ = 0;
