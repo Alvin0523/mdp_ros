@@ -60,6 +60,14 @@ scipy = "*"
 # Vision & camera stack
 ros-jazzy-cv-bridge = "*"
 opencv = "*"
+# Pin the BLAS backend numpy/torch resolve to, away from conda-forge's default
+# `nvpl` (NVIDIA Performance Libraries) variant. nvpl targets SVE-capable
+# server ARM (Grace/Graviton), NOT a Raspberry Pi 4B's Cortex-A72 - loading
+# it there SIGILLs (illegal instruction) on first YOLO inference, after the
+# model itself loads fine. openblas is broadly ARM/x86-compatible. See
+# docs/pi-camera-vision.md "Known open issues" #1 for the original diagnosis.
+libblas = { version = "*", build = "*openblas" }
+liblapack = { version = "*", build = "*openblas" }
 
 # Build tools (colcon-common-extensions provides the colcon CLI itself;
 # compilers + cmake are needed for the CMake-based packages: wayp_plan_tools,

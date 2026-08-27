@@ -104,20 +104,23 @@ becomes a recurring pain.
 
 ## Known open issues
 
-1. **YOLO inference crashes (SIGILL) on the Pi — not yet fixed.** `yolo_arrow_detector.py` loads
-   the model fine, then dies with exit code `-4` on the first actual inference. Root cause:
-   `numpy`'s BLAS backend resolved to conda-forge's `nvpl` (NVIDIA Performance Libraries) variant
-   — `libcblas.so.3: undefined symbol: nvpl_blas_core_scabs1`. NVPL targets NVIDIA
-   Grace/Graviton (SVE-capable) server ARM chips; it's simply the wrong backend for a Pi 4B's
-   Cortex-A72, and there's also a version mismatch between the installed `libcblas` and
-   `libnvpl_blas_core` builds. **Fix not yet applied**: pin the conda BLAS variant to
-   `openblas` (broadly ARM-compatible) instead, e.g. in `pixi.toml`:
+1. **YOLO inference crashes (SIGILL) on the Pi — fixed, needs a re-flash/rebuild + retest.**
+   `yolo_arrow_detector.py` loaded the model fine, then died with exit code `-4` on the first
+   actual inference. Root cause: `numpy`'s BLAS backend resolved to conda-forge's `nvpl` (NVIDIA
+   Performance Libraries) variant — `libcblas.so.3: undefined symbol: nvpl_blas_core_scabs1`.
+   NVPL targets NVIDIA Grace/Graviton (SVE-capable) server ARM chips; it's simply the wrong
+   backend for a Pi 4B's Cortex-A72. Fixed by pinning the conda BLAS variant to `openblas`
+   (broadly ARM/x86-compatible) in `pixi.toml`:
    ```toml
    [dependencies]
-   libblas = "*=*openblas"
-   liblapack = "*=*openblas"
+   libblas = { version = "*", build = "*openblas" }
+   liblapack = { version = "*", build = "*openblas" }
    ```
-   Camera capture itself is unaffected by this — only YOLO inference is blocked.
+   Confirmed `nvpl` no longer appears anywhere in `pixi.lock` for either platform (`linux-64` or
+   `linux-aarch64`) after `pixi install`. **Not yet re-tested on the physical Pi** — pull, run
+   `pixi install` (picks up the new lockfile) and `pixi run vision` or `pixi run real`, and
+   confirm `yolo_arrow_detector.py` survives its first inference instead of dying with exit
+   code `-4`.
 2. **`mini_akm_real_robot.urdf` has no `camera_link` / TF frame for the camera.** It's a
    control-only URDF (5 links: `base_link` + 4 actuated wheel/steering joints) — no visuals, no
    `camera_link`, no `laser_link`, no `base_footprint`. YOLO detection itself doesn't care (no TF
