@@ -62,11 +62,27 @@ def generate_launch_description():
         output='screen'
     )
 
+    camera_node = Node(
+        package='camera_ros',
+        executable='camera_node',
+        name='camera',
+        output='screen'
+    )
+
+    yolo_detector = Node(
+        package='mdp_vision',
+        executable='yolo_arrow_detector.py',
+        parameters=[{'camera_topic': '/camera/image_raw'}],
+        output='screen'
+    )
+
     return LaunchDescription([
         serial_port_arg,
         robot_state_publisher,
         controller_manager,
         joint_state_broadcaster_spawner,
         ackermann_controller_spawner,
-        serial_bridge
+        serial_bridge,
+        camera_node,
+        yolo_detector
     ])
