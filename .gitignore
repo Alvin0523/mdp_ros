@@ -15,3 +15,7 @@ __pycache__/
 
 # model weights
 *.pt
+
+# recorded rosbags
+bags/*
+!bags/.gitkeep
