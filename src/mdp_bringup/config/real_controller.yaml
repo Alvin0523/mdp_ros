@@ -21,7 +21,12 @@ ackermann_steering_controller:
     traction_wheels_radius: 0.0325
 
     open_loop: false
-    enable_odom_tf: true
+    # robot_localization's ekf_node is the single odom->base_link TF
+    # broadcaster now (see mdp_bringup/config/ekf.yaml) - leaving this true
+    # as well would mean two nodes fighting over the same transform.
+    # /ackermann_steering_controller/odometry is still published either way;
+    # this only disables its own TF broadcast.
+    enable_odom_tf: false
     odom_frame_id: odom
     base_frame_id: base_link
 

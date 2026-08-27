@@ -44,6 +44,7 @@ struct TelemetryPacket
   float yaw_deg;
   uint8_t imu_ready;
   uint8_t estop;
+  float battery_v;
   uint32_t uptime_ms;
   uint8_t checksum;
 };

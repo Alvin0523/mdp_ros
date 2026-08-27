@@ -19,3 +19,8 @@ __pycache__/
 # recorded rosbags
 bags/*
 !bags/.gitkeep
+
+# external projects, cloned directly per docs/pi-camera-vision.md -- not
+# vendored, not submodules
+src/vision/libcamera/
+src/vision/camera_ros/

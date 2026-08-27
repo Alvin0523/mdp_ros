@@ -1,0 +1,64 @@
+ekf_filter_node:
+  ros__parameters:
+    # --- Timing ---
+    # EKF runs its own predict step at this rate regardless of sensor rate,
+    # then corrects with whichever input(s) have new data on each cycle.
+    # Faster than the 10Hz IMU/encoder telemetry (see mdp_hardware_bridge)
+    # so /odometry/filtered stays smooth between sensor updates.
+    frequency: 30.0
+    two_d_mode: true      # ground vehicle - locks z/roll/pitch/vz/vroll/vpitch/az to 0
+    publish_tf: true
+    print_diagnostics: true
+
+    # If an input source stops updating for this long, the filter falls back
+    # to prediction-only (no correction) rather than trusting stale data.
+    # Matches the bridge's own /hardware_bridge/link_ok timeout.
+    sensor_timeout: 0.5
+
+    # --- Frames ---
+    map_frame: map              # unused - no absolute localization source (GPS/AMCL) yet
+    odom_frame: odom
+    base_link_frame: base_link
+    world_frame: odom           # single EKF instance operating in odom frame (no map-fusion stage)
+
+    use_sim_time: false
+
+    # --- Input 0: wheel odometry (ackermann_steering_controller) ---
+    # Only forward velocity (vx) is fused, NOT position (x/y/yaw) or its
+    # own heading estimate. Reason: this chassis has one physical steering
+    # servo standing in for two independently-commanded Ackermann joints
+    # (see mdp_hardware_bridge's averaging in onJointCommand()), so the
+    # controller's own dead-reckoned x/y/yaw is only an approximation.
+    # Feeding the EKF just vx lets it integrate position itself using a
+    # heading it trusts more (the IMU, input 1 below).
+    odom0: /ackermann_steering_controller/odometry
+    odom0_config: [false, false, false,   # x,  y,  z
+                   false, false, false,   # roll, pitch, yaw
+                   true,  false, false,   # vx, vy, vz
+                   false, false, false,   # vroll, vpitch, vyaw
+                   false, false, false]   # ax, ay, az
+    odom0_differential: false
+    odom0_relative: false
+
+    # --- Input 1: IMU (mdp_hardware_bridge -> /imu/data) ---
+    # Fuses yaw (orientation.z, gyro-integrated on the STM32 - see
+    # mdp_stm32/src/imu.c) and yaw rate (angular_velocity.z, bias-corrected
+    # raw gyro). Roll/pitch and linear acceleration are NOT fused:
+    # roll/pitch aren't estimated at all (bridge sets their covariance to
+    # 1e6 to signal "don't trust this" - two_d_mode discards them anyway),
+    # and accel-integrated velocity is too noisy for a ground vehicle when
+    # wheel-encoder velocity (input 0) is already available.
+    imu0: /imu/data
+    imu0_config: [false, false, false,   # x,  y,  z
+                  false, false, true,    # roll, pitch, yaw
+                  false, false, false,   # vx, vy, vz
+                  false, false, true,    # vroll, vpitch, vyaw
+                  false, false, false]   # ax, ay, az
+    imu0_differential: false
+    imu0_relative: false
+    # /imu/data reports "not ready" by setting angular_velocity_covariance[0]
+    # to -1 when the STM32's IMU isn't detected (see onTelemetry() in
+    # serial_bridge_node.cpp) - remove_gravitational_acceleration is moot
+    # since accel isn't fused here, left at the default (true) for safety
+    # if accel fusion is ever turned on later.
+    imu0_remove_gravitational_acceleration: true

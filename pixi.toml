@@ -51,6 +51,9 @@ ros-jazzy-topic-based-ros2-control = "*"
 ros-jazzy-ros-gz = "*"
 ros-jazzy-foxglove-bridge = "*"
 
+# Sensor fusion (wheel odometry + IMU -> /odometry/filtered)
+ros-jazzy-robot-localization = "*"
+
 # Path planning (spline-based waypoint smoothing for task2)
 scipy = "*"
 
@@ -84,11 +87,6 @@ libudev = "*"
 # camera_ros's own ROS dependencies
 ros-jazzy-camera-info-manager = "*"
 ros-jazzy-image-transport = "*"
-# H.264 transport plugin for efficient camera streaming to Foxglove over the
-# network (raw/JPEG are too heavy for WiFi/Tailscale); adds a
-# /camera/image_raw/foxglove_compressed_video topic automatically once
-# installed, no code changes needed -- image_transport plugins self-register
-ros-jazzy-foxglove-compressed-video-transport = "*"
 
 [pypi-dependencies]
 ultralytics = "*"

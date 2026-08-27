@@ -62,6 +62,14 @@ def generate_launch_description():
         output='screen'
     )
 
+    ekf_node = Node(
+        package='robot_localization',
+        executable='ekf_node',
+        name='ekf_filter_node',
+        parameters=[os.path.join(pkg_bringup, 'config', 'ekf.yaml')],
+        output='screen'
+    )
+
     camera_node = Node(
         package='camera_ros',
         executable='camera_node',
@@ -84,6 +92,7 @@ def generate_launch_description():
         joint_state_broadcaster_spawner,
         ackermann_controller_spawner,
         serial_bridge,
+        ekf_node,
         camera_node,
         yolo_detector
     ])
