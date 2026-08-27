@@ -98,6 +98,13 @@ ros-jazzy-image-transport = "*"
 
 [pypi-dependencies]
 ultralytics = "*"
+# NCNN export/runtime: ultralytics needs these to export to and run the .ncnn
+# model format. NCNN doesn't route inference through torch's BLAS backend at
+# all, sidestepping the wrong-BLAS-variant/CUDA-wheel crashes hit trying to
+# run yolo_detector.py's .pt model directly on the Pi's Cortex-A72 -
+# see docs/pi-camera-vision.md "Known open issues" #1.
+ncnn = "*"
+pnnx = "*"
 
 [activation]
 scripts = ["install/setup.bash"]
