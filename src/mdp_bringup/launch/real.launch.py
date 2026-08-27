@@ -66,6 +66,7 @@ def generate_launch_description():
         package='camera_ros',
         executable='camera_node',
         name='camera',
+        parameters=[{'width': 640, 'height': 480}],
         output='screen'
     )
 
