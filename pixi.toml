@@ -16,7 +16,7 @@ sim = "ros2 launch mdp_bringup sim.launch.py"
 sim-task2 = "ros2 launch mdp_bringup task2_sim.launch.py"
 
 # Real hardware (Pi + STM32)
-hardware = "ros2 launch mdp_bringup real.launch.py serial_port:=/dev/ttyACM0"
+real = "ros2 launch mdp_bringup real.launch.py serial_port:=/dev/ttyACM0"
 task1 = "ros2 run mdp_control task1_runner.py"
 task2 = "ros2 run mdp_control task2_runner.py"
 teleop = "ros2 run teleop_twist_keyboard teleop_twist_keyboard --ros-args -p stamped:=true"

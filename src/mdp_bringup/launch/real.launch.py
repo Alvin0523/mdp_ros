@@ -59,6 +59,12 @@ def generate_launch_description():
         package='mdp_hardware_bridge',
         executable='serial_bridge_node',
         parameters=[{'serial_port': serial_port, 'baud_rate': 115200}],
+        # The bridge's own JointState publish is TopicBasedSystem's raw
+        # hardware-feedback input, not the graph-wide /joint_states topic -
+        # joint_state_broadcaster owns that name (see mini_akm_real_robot.urdf's
+        # joint_states_topic param). Remapped here rather than in the node's
+        # C++ source so the topic name stays a launch-time concern.
+        remappings=[('/joint_states', '/joint_states_raw')],
         output='screen'
     )
 

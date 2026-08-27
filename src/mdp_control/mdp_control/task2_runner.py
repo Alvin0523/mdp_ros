@@ -37,7 +37,7 @@ class Task2Runner(Node):
         self.path_pub = self.create_publisher(Path, '/planned_path', 10)
         self.marker_pub = self.create_publisher(MarkerArray, '/waypoint_markers', 10)
         
-        self.create_subscription(String, '/arrow_detection', self.arrow_callback, 10)
+        self.create_subscription(String, '/yolo_result', self.arrow_callback, 10)
         self.create_subscription(JointState, '/joint_states', self.joint_states_callback, 10)
         self.create_subscription(Odometry, '/ackermann_steering_controller/odometry', self.odom_callback, 10)
         

@@ -28,8 +28,12 @@ class Task1Runner(Node):
             self.declare_parameter('use_sim_time', False)
 
         # Publishers & Subscribers
+        # /cmd_vel is the correct target: real.launch.py and sim.launch.py both
+        # remap ackermann_steering_controller's actual reference subscription
+        # to /cmd_vel, so publishing directly to
+        # /ackermann_steering_controller/reference (as this used to do) never
+        # reached the controller - dead traffic to an unsubscribed topic.
         self.cmd_pub = self.create_publisher(TwistStamped, '/cmd_vel', 10)
-        self.ref_pub = self.create_publisher(TwistStamped, '/ackermann_steering_controller/reference', 10)
         self.bt_pub = self.create_publisher(String, '/bluetooth_tx', 10)
         
         self.create_subscription(String, '/obstacle_setup', self.setup_callback, 10)
@@ -81,7 +85,6 @@ class Task1Runner(Node):
         msg.twist.linear.x = float(linear_x)
         msg.twist.angular.z = float(angular_z)
         self.cmd_pub.publish(msg)
-        self.ref_pub.publish(msg)
 
     def send_bt(self, text: str):
         msg = String()
