@@ -11,6 +11,7 @@
 
   <exec_depend>mdp_description</exec_depend>
   <exec_depend>mdp_hardware_bridge</exec_depend>
+  <exec_depend>mdp_vision</exec_depend>
 
   <export>
     <build_type>ament_cmake</build_type>
