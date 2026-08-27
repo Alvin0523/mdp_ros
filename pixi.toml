@@ -6,19 +6,26 @@ platforms = ["linux-64", "linux-aarch64", "osx-arm64"]
 version = "0.1.0"
 
 [tasks]
+# Workspace
 build = "colcon build --symlink-install"
 test = "colcon test"
 clean = "rm -rf build install log"
+
+# Simulation (Gazebo)
 sim = "ros2 launch mdp_bringup sim.launch.py"
 sim-task2 = "ros2 launch mdp_bringup task2_sim.launch.py"
+
+# Real hardware (Pi + STM32)
 hardware = "ros2 launch mdp_bringup real.launch.py"
-agent-build = "bash scripts/build_microxrce_agent.sh"
-agent = "../Micro-XRCE-DDS-Agent/build/MicroXRCEAgent serial --dev /dev/ttyUSB0 -b 115200"
 task1 = "ros2 run mdp_control task1_runner.py"
 task2 = "ros2 run mdp_control task2_runner.py"
 teleop = "ros2 run teleop_twist_keyboard teleop_twist_keyboard --ros-args -p stamped:=true"
+
+# Vision & debugging
 vision = "ros2 launch mdp_vision vision.launch.py"
-foxglove = "ros2 launch foxglove_bridge foxglove_bridge_launch.xml use_sim_time:=true"
+# use_sim_time defaults false (real hardware has no /clock); when pairing
+# with `sim`/`sim-task2`, override with: pixi run foxglove use_sim_time:=true
+foxglove = "ros2 launch foxglove_bridge foxglove_bridge_launch.xml"
 
 [dependencies]
 # Core ROS2
@@ -43,18 +50,33 @@ ros-jazzy-foxglove-bridge = "*"
 # Path planning (spline-based waypoint smoothing for task2)
 scipy = "*"
 
-# Vision & Camera Stack
+# Vision & camera stack
 ros-jazzy-cv-bridge = "*"
-ros-jazzy-image-transport = "*"
 opencv = "*"
-pip = "*"
 
-# Build tools
+# Build tools (colcon-common-extensions provides the colcon CLI itself;
+# compilers + cmake are needed for the CMake-based packages: wayp_plan_tools,
+# mdp_hardware_bridge, mdp_bringup, mdp_description)
 colcon-common-extensions = "*"
 compilers = "*"
 cmake = "*"
 ninja = "*"
-git = "*"
+
+[target.linux-aarch64.dependencies]
+# libcamera + camera_ros build deps (Raspberry Pi camera capture, built from
+# source in src/ rather than as prebuilt ros-jazzy-camera-ros/-libcamera
+# packages, since those pull in a broken aarch64 dependency chain)
+meson = "*"
+pkg-config = "*"
+colcon-meson = "*"
+yaml = "*"
+pyyaml = "*"
+ply = "*"
+jinja2 = "*"
+gnutls = "*"
+openssl = "*"
+libtiff = "*"
+libudev = "*"
 
 [pypi-dependencies]
 ultralytics = "*"
@@ -64,5 +86,8 @@ scripts = ["install/setup.bash"]
 
 [activation.env]
 ROS_DOMAIN_ID = "0"
+# Both names are read by libgz-sim8 itself (GZ_SIM_* is current, IGN_GAZEBO_*
+# is a legacy fallback it still checks) to find libgz_ros2_control-system.so,
+# which installs straight into lib/ rather than gz-sim's default plugin path.
 GZ_SIM_SYSTEM_PLUGIN_PATH = "$CONDA_PREFIX/lib"
 IGN_GAZEBO_SYSTEM_PLUGIN_PATH = "$CONDA_PREFIX/lib"

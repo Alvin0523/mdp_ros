@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.8)
+cmake_minimum_required(VERSION 3.8...3.28)
 project(mdp_hardware_bridge)
 
 set(CMAKE_CXX_STANDARD 17)
@@ -32,9 +32,6 @@ if(BUILD_TESTING)
   ament_lint_auto_find_test_dependencies()
 endif()
 
-install(DIRECTORY
-  launch
-  DESTINATION share/${PROJECT_NAME})
 install(TARGETS
   serial_bridge_node
   DESTINATION lib/${PROJECT_NAME})
