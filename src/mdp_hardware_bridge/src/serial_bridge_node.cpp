@@ -15,6 +15,7 @@
  */
 
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstring>
 #include <thread>
@@ -24,6 +25,7 @@
 #include <unistd.h>
 
 #include "rclcpp/rclcpp.hpp"
+#include "sensor_msgs/msg/battery_state.hpp"
 #include "sensor_msgs/msg/imu.hpp"
 #include "sensor_msgs/msg/joint_state.hpp"
 #include "std_msgs/msg/bool.hpp"
@@ -53,10 +55,21 @@ public:
     joint_state_pub_ = create_publisher<sensor_msgs::msg::JointState>("/joint_states", 10);
     imu_pub_ = create_publisher<sensor_msgs::msg::Imu>("/imu/data", 10);
     estop_pub_ = create_publisher<std_msgs::msg::Bool>("/estop", 10);
+    link_ok_pub_ = create_publisher<std_msgs::msg::Bool>("/hardware_bridge/link_ok", 10);
+    battery_pub_ = create_publisher<sensor_msgs::msg::BatteryState>("/battery_state", 10);
 
     joint_command_sub_ = create_subscription<sensor_msgs::msg::JointState>(
       "/joint_commands", 10,
       std::bind(&SerialBridgeNode::onJointCommand, this, std::placeholders::_1));
+
+    /* Mirrors the STM32's own PROTOCOL_COMMAND_TIMEOUT_MS fail-safe window
+     * (mdp_stm32/src/main.c) - if we haven't seen a valid telemetry frame
+     * in that long, treat the link as down. Checked twice as often as the
+     * timeout so the flag flips promptly. */
+    last_telemetry_ns_.store(now().nanoseconds());
+    link_watchdog_timer_ = create_wall_timer(
+      std::chrono::milliseconds(250),
+      std::bind(&SerialBridgeNode::checkLinkHealth, this));
 
     running_ = true;
     read_thread_ = std::thread(&SerialBridgeNode::readLoop, this);
@@ -241,9 +254,19 @@ private:
     }
   }
 
+  void checkLinkHealth()
+  {
+    constexpr int64_t kLinkTimeoutNs = 500'000'000; /* 500ms, matches the MCU's fail-safe window */
+    const bool link_ok = now().nanoseconds() - last_telemetry_ns_.load() < kLinkTimeoutNs;
+    std_msgs::msg::Bool msg;
+    msg.data = link_ok;
+    link_ok_pub_->publish(msg);
+  }
+
   void onTelemetry(const TelemetryPacket & pkt)
   {
     const auto stamp = now();
+    last_telemetry_ns_.store(stamp.nanoseconds());
 
     /* Differentiate cumulative ticks against the last packet to get
      * wheel angular velocity (rad/s). Uses the MCU's own uptime_ms so
@@ -284,8 +307,9 @@ private:
     imu.linear_acceleration.x = pkt.accel_x;
     imu.linear_acceleration.y = pkt.accel_y;
     imu.linear_acceleration.z = pkt.accel_z;
-    /* Only yaw comes from a real filter (accel/gyro complementary filter,
-     * no magnetometer fusion) - roll/pitch are not estimated, so their
+    /* Only yaw is estimated, and it's raw gyro-Z integration with no bias
+     * calibration and no accel fusion (mdp_stm32/src/imu.c:imu_update()) -
+     * expect drift over time. Roll/pitch are not estimated at all, so their
      * covariance is set high to tell consumers (e.g. robot_localization)
      * not to trust them. */
     const double yaw_rad = pkt.yaw_deg * M_PI / 180.0;
@@ -304,6 +328,20 @@ private:
     std_msgs::msg::Bool estop_msg;
     estop_msg.data = pkt.estop != 0;
     estop_pub_->publish(estop_msg);
+
+    sensor_msgs::msg::BatteryState battery;
+    battery.header.stamp = stamp;
+    battery.voltage = pkt.battery_v;
+    battery.present = true;
+    /* Pack is 3S NCR18650B Li-ion (docs/hardware.md) - nominal 11.1V,
+     * full-charge 12.6V. No current/charge sensing exists yet, so those
+     * fields are left at BatteryState's default NaN ("unknown") rather
+     * than guessed. */
+    battery.design_capacity = 3.4f; /* Ah, 3400mAh pack */
+    battery.power_supply_technology = sensor_msgs::msg::BatteryState::POWER_SUPPLY_TECHNOLOGY_LION;
+    battery.power_supply_status = sensor_msgs::msg::BatteryState::POWER_SUPPLY_STATUS_UNKNOWN;
+    battery.power_supply_health = sensor_msgs::msg::BatteryState::POWER_SUPPLY_HEALTH_UNKNOWN;
+    battery_pub_->publish(battery);
   }
 
   int fd_ = -1;
@@ -313,7 +351,11 @@ private:
   rclcpp::Publisher<sensor_msgs::msg::JointState>::SharedPtr joint_state_pub_;
   rclcpp::Publisher<sensor_msgs::msg::Imu>::SharedPtr imu_pub_;
   rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr estop_pub_;
+  rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr link_ok_pub_;
+  rclcpp::Publisher<sensor_msgs::msg::BatteryState>::SharedPtr battery_pub_;
   rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr joint_command_sub_;
+  rclcpp::TimerBase::SharedPtr link_watchdog_timer_;
+  std::atomic<int64_t> last_telemetry_ns_{0};
 
   bool have_prev_telemetry_ = false;
   int32_t prev_enc_left_ = 0;
