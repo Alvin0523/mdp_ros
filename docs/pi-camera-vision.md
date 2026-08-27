@@ -106,23 +106,66 @@ becomes a recurring pain.
 
 ## Known open issues
 
-1. **YOLO inference crashes (SIGILL) on the Pi — fixed, needs a re-flash/rebuild + retest.**
-   `yolo_detector.py` loaded the model fine, then died with exit code `-4` on the first
-   actual inference. Root cause: `numpy`'s BLAS backend resolved to conda-forge's `nvpl` (NVIDIA
-   Performance Libraries) variant — `libcblas.so.3: undefined symbol: nvpl_blas_core_scabs1`.
-   NVPL targets NVIDIA Grace/Graviton (SVE-capable) server ARM chips; it's simply the wrong
-   backend for a Pi 4B's Cortex-A72. Fixed by pinning the conda BLAS variant to `openblas`
-   (broadly ARM/x86-compatible) in `pixi.toml`:
+1. **YOLO inference crashes (SIGILL) on the Pi — fixed via two independent changes, needs retest.**
+
+   `yolo_detector.py` loaded the model fine, then died with exit code `-4` on the first actual
+   inference. Two separate wrong-architecture problems were stacked here, found and fixed in
+   this order:
+
+   **a) Wrong BLAS variant.** `numpy`/`torch` resolved conda-forge's `nvpl` (NVIDIA Performance
+   Libraries) BLAS backend — `libcblas.so.3: undefined symbol: nvpl_blas_core_scabs1`. NVPL
+   targets NVIDIA Grace/Graviton (SVE-capable) *server* ARM chips, not a Pi 4B's Cortex-A72.
+
+   *Why conda picked the wrong one, and why this needed a manual fix*: this workspace uses
+   `pixi`/conda-forge for the whole ROS2 stack (not plain pip), and conda-forge packages BLAS as
+   a separate, swappable component — `numpy`, `torch`, `opencv` all dynamically link against
+   whichever BLAS variant is present (`openblas`, `mkl`, `nvpl`, ...). The solver just picks one
+   to satisfy the whole environment from its own internal ranking; it doesn't inspect the actual
+   CPU the environment will run on, and `linux-aarch64` as a platform tag covers everything from
+   a Pi 4B to an NVIDIA Grace server. There's also no runtime fallback once the wrong one is
+   linked — a compiled library either has the CPU instruction or it hard-crashes hitting it,
+   there's no "try it, catch, fall back" happening automatically. (Plain `pip install numpy`
+   would likely have avoided this entirely — PyPI wheels bundle a widely-compatible OpenBLAS by
+   default — but numpy comes from conda here since the rest of the ROS2 stack needs it from
+   there too.) Fixed by pinning the conda BLAS build variant explicitly in `pixi.toml`:
    ```toml
    [dependencies]
    libblas = { version = "*", build = "*openblas" }
    liblapack = { version = "*", build = "*openblas" }
    ```
-   Confirmed `nvpl` no longer appears anywhere in `pixi.lock` for either platform (`linux-64` or
-   `linux-aarch64`) after `pixi install`. **Not yet re-tested on the physical Pi** — pull, run
-   `pixi install` (picks up the new lockfile) and `pixi run vision` or `pixi run real`, and
-   confirm `yolo_detector.py` survives its first inference instead of dying with exit
-   code `-4`.
+   Confirmed `nvpl` no longer appears anywhere in `pixi.lock` for either platform.
+
+   **b) Still crashed after (a) — switched to NCNN.** Even with the BLAS fix applied and
+   confirmed on the Pi (`pixi list | grep blas` showed `openblas` correctly), YOLO still crashed
+   identically. `pixi list` also showed `nvidia_cublas` (~660MB, a CUDA runtime library) present
+   despite there being no NVIDIA GPU anywhere in this system — `torch`, pulled in via `pip`
+   through `ultralytics`, had resolved PyPI's default CUDA-enabled build rather than a CPU-only
+   one. Rather than keep chasing exact torch/CUDA wheel selection, switched to running the model
+   via **NCNN** instead of raw `.pt`/torch inference, per Ultralytics' own
+   [Raspberry Pi guide](https://docs.ultralytics.com/guides/raspberry-pi/) (NCNN is their
+   recommended format for ARM, and benchmarks ~4x faster than raw PyTorch on a Pi 5 in their own
+   numbers). `yolo26n.pt` exported via `model.export(format='ncnn')`, model now lives at
+   `models/yolo26n_ncnn_model/` (the `_ncnn_model` directory suffix is required by ultralytics'
+   own format-detection, not a naming choice). `ncnn`/`pnnx` added to `pixi.toml`'s
+   `[pypi-dependencies]` (resolved proper per-platform wheels, confirmed for `linux-aarch64`).
+
+   NCNN's own inference engine is self-contained and doesn't use system BLAS at all - but the
+   BLAS pin from (a) is still needed regardless, since `ultralytics` still imports `torch` and
+   uses `numpy` for everything *around* the model (image preprocessing, NMS, result
+   postprocessing) no matter which format runs the model itself.
+
+   *Open question, not yet decided*: `pnnx` is only used at export time
+   (`model.export(format='ncnn')`, already run once on a dev machine), not by `yolo_detector.py`
+   at runtime - only `ncnn` is needed to load and run the already-exported model. Whether `pnnx`
+   is needed on the Pi depends on whether the Pi is expected to run its own export locally, or
+   just receive the already-exported `models/yolo26n_ncnn_model/` directory (gitignored, so it
+   isn't pulled in by `git pull` either way - needs an explicit copy, e.g. `scp`, same as the
+   old `.pt` file did per the note above).
+
+   **Verified so far**: end-to-end on the dev machine only (node loads the NCNN model and runs
+   the exact `image_callback()` code path without crashing). **Not yet re-tested on the physical
+   Pi** — pull, `pixi install`, `pixi run real` or `pixi run vision`, confirm `yolo_detector.py`
+   survives its first inference instead of dying with exit code `-4`.
 2. **`mini_akm_real_robot.urdf` has no `camera_link` / TF frame for the camera.** It's a
    control-only URDF (5 links: `base_link` + 4 actuated wheel/steering joints) — no visuals, no
    `camera_link`, no `laser_link`, no `base_footprint`. YOLO detection itself doesn't care (no TF
