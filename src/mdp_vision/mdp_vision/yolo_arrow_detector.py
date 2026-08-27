@@ -6,7 +6,10 @@ Subscribes to camera feed (/image_raw), runs YOLO inference,
 and publishes detected target/arrow string to /yolo_result.
 """
 
+import os
+
 import rclpy
+from ament_index_python.packages import get_package_share_directory
 from rclpy.node import Node
 from sensor_msgs.msg import Image
 from std_msgs.msg import String
@@ -18,12 +21,15 @@ try:
 except ImportError:
     ULTRALYTICS_AVAILABLE = False
 
+DEFAULT_MODEL_PATH = os.path.join(
+    get_package_share_directory('mdp_vision'), 'models', 'yolov8n.pt')
+
 class YoloArrowDetector(Node):
     def __init__(self):
         super().__init__('yolo_arrow_detector')
-        
+
         self.declare_parameter('camera_topic', '/image_raw')
-        self.declare_parameter('model_path', 'yolov8n.pt')
+        self.declare_parameter('model_path', DEFAULT_MODEL_PATH)
         self.declare_parameter('result_topic', '/yolo_result')
         
         camera_topic = self.get_parameter('camera_topic').value

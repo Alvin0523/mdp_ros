@@ -16,7 +16,7 @@ sim = "ros2 launch mdp_bringup sim.launch.py"
 sim-task2 = "ros2 launch mdp_bringup task2_sim.launch.py"
 
 # Real hardware (Pi + STM32)
-hardware = "ros2 launch mdp_bringup real.launch.py"
+hardware = "ros2 launch mdp_bringup real.launch.py serial_port:=/dev/ttyACM0"
 task1 = "ros2 run mdp_control task1_runner.py"
 task2 = "ros2 run mdp_control task2_runner.py"
 teleop = "ros2 run teleop_twist_keyboard teleop_twist_keyboard --ros-args -p stamped:=true"
@@ -26,6 +26,10 @@ vision = "ros2 launch mdp_vision vision.launch.py"
 # use_sim_time defaults false (real hardware has no /clock); when pairing
 # with `sim`/`sim-task2`, override with: pixi run foxglove use_sim_time:=true
 foxglove = "ros2 launch foxglove_bridge foxglove_bridge_launch.xml"
+# records every topic into a timestamped dir under bags/. -a and explicit
+# topics are mutually exclusive in ros2 bag, so for specific topics only,
+# run directly instead: pixi run ros2 bag record -o bags/mybag /yolo_result
+bag = "ros2 bag record -a -o bags/rosbag2_$(date +%Y%m%d_%H%M%S)"
 
 [dependencies]
 # Core ROS2
