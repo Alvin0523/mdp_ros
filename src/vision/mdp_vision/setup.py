@@ -13,7 +13,8 @@ setup(
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
         (os.path.join('share', package_name, 'launch'), glob('launch/*.launch.py')),
-        (os.path.join('share', package_name, 'models'), glob('models/*.pt')),
+        (os.path.join('share', package_name, 'models', 'yolo26n_ncnn_model'),
+            glob('models/yolo26n_ncnn_model/*')),
         (os.path.join('share', package_name, 'config'), glob('config/*.yaml')),
     ],
     install_requires=['setuptools'],
@@ -29,8 +30,8 @@ setup(
         'console_scripts': [
             'camera_publisher = mdp_vision.camera_publisher:main',
             'camera_publisher.py = mdp_vision.camera_publisher:main',
-            'yolo_arrow_detector = mdp_vision.yolo_arrow_detector:main',
-            'yolo_arrow_detector.py = mdp_vision.yolo_arrow_detector:main',
+            'yolo_detector = mdp_vision.yolo_detector:main',
+            'yolo_detector.py = mdp_vision.yolo_detector:main',
         ],
     },
 )

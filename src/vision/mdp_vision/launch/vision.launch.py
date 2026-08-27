@@ -19,8 +19,8 @@ def generate_launch_description():
 
     yolo_node = Node(
         package='mdp_vision',
-        executable='yolo_arrow_detector.py',
-        name='yolo_arrow_detector',
+        executable='yolo_detector.py',
+        name='yolo_detector',
         output='screen',
         parameters=[{
             'camera_topic': '/image_raw',
