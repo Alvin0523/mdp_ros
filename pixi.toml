@@ -81,6 +81,9 @@ gnutls = "*"
 openssl = "*"
 libtiff = "*"
 libudev = "*"
+# camera_ros's own ROS dependencies
+ros-jazzy-camera-info-manager = "*"
+ros-jazzy-image-transport = "*"
 
 [pypi-dependencies]
 ultralytics = "*"

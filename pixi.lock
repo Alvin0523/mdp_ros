@@ -1552,6 +1552,8 @@ environments:
       - conda: https://conda.anaconda.org/robostack-jazzy/linux-aarch64/ros-jazzy-backward-ros-1.0.8-np2py312h61f2ce4_18.conda
       - conda: https://conda.anaconda.org/robostack-jazzy/linux-aarch64/ros-jazzy-bicycle-steering-controller-4.40.0-np2py312h61f2ce4_18.conda
       - conda: https://conda.anaconda.org/robostack-jazzy/linux-aarch64/ros-jazzy-builtin-interfaces-2.0.3-np2py312h61f2ce4_18.conda
+      - conda: https://conda.anaconda.org/robostack-jazzy/linux-aarch64/ros-jazzy-camera-calibration-parsers-5.1.7-np2py312h61f2ce4_18.conda
+      - conda: https://conda.anaconda.org/robostack-jazzy/linux-aarch64/ros-jazzy-camera-info-manager-5.1.7-np2py312h61f2ce4_18.conda
       - conda: https://conda.anaconda.org/robostack-jazzy/linux-aarch64/ros-jazzy-chained-filter-controller-4.40.0-np2py312h61f2ce4_18.conda
       - conda: https://conda.anaconda.org/robostack-jazzy/linux-aarch64/ros-jazzy-class-loader-2.7.0-np2py312h61f2ce4_18.conda
       - conda: https://conda.anaconda.org/robostack-jazzy/linux-aarch64/ros-jazzy-common-interfaces-5.3.7-np2py312h61f2ce4_18.conda
@@ -36307,6 +36309,45 @@ packages:
   license: Apache-2.0
   size: 86205
   timestamp: 1782301601808
+- conda: https://conda.anaconda.org/robostack-jazzy/linux-aarch64/ros-jazzy-camera-calibration-parsers-5.1.7-np2py312h61f2ce4_18.conda
+  sha256: 753848a9364c7aaf9dbee1bec624c7c46a4310b4f1974c55dd2b572b100cd577
+  md5: ced7ff65dcd100a3db76adeeef3b781d
+  depends:
+  - python
+  - ros-jazzy-rclcpp
+  - ros-jazzy-ros-workspace
+  - ros-jazzy-sensor-msgs
+  - ros-jazzy-yaml-cpp-vendor
+  - ros2-distro-mutex 0.15.* jazzy_*
+  - libstdcxx >=14
+  - libgcc >=14
+  - python_abi 3.12.* *_cp312
+  - ros2-distro-mutex >=0.15.0,<0.16.0a0
+  - numpy >=1.25,<3
+  license: BSD-3-Clause
+  size: 110820
+  timestamp: 1782303397124
+- conda: https://conda.anaconda.org/robostack-jazzy/linux-aarch64/ros-jazzy-camera-info-manager-5.1.7-np2py312h61f2ce4_18.conda
+  sha256: a5cce12f84662851de2fa546992f2760e455b5c3a9e31f7d8323a5c437a6eab3
+  md5: 222170301d571277557f5e4178159c8e
+  depends:
+  - python
+  - ros-jazzy-ament-index-cpp
+  - ros-jazzy-camera-calibration-parsers
+  - ros-jazzy-rclcpp
+  - ros-jazzy-rclcpp-lifecycle
+  - ros-jazzy-rcpputils
+  - ros-jazzy-ros-workspace
+  - ros-jazzy-sensor-msgs
+  - ros2-distro-mutex 0.15.* jazzy_*
+  - libstdcxx >=14
+  - libgcc >=14
+  - ros2-distro-mutex >=0.15.0,<0.16.0a0
+  - python_abi 3.12.* *_cp312
+  - numpy >=1.25,<3
+  license: BSD-3-Clause
+  size: 81091
+  timestamp: 1782303599514
 - conda: https://conda.anaconda.org/robostack-jazzy/linux-aarch64/ros-jazzy-chained-filter-controller-4.40.0-np2py312h61f2ce4_18.conda
   sha256: f5813d3057d83e5d49f1c3af46f92d3ccbe74eb32cbfb1dd87e96bd057ffff62
   md5: f9d74617b3157300a4f5c88b5dd0b230
