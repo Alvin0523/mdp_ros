@@ -37,11 +37,21 @@ def generate_launch_description():
         value=pixi_lib_dir + ':' + os.environ.get('IGN_GAZEBO_SYSTEM_PLUGIN_PATH', '')
     )
 
-    gz_sim = IncludeLaunchDescription(
+    # Server and GUI are launched as separate processes: on macOS, `gz sim`
+    # cannot run server + GUI together in one process (gazebosim/gz-sim#44).
+    # Splitting them works identically on Linux, so we always do it.
+    gz_sim_server = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(pkg_ros_gz_sim, 'launch', 'gz_sim.launch.py')
         ),
-        launch_arguments={'gz_args': f'-r -v 4 {world_file}'}.items()
+        launch_arguments={'gz_args': f'-s -r -v 4 {world_file}'}.items()
+    )
+
+    gz_sim_gui = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(pkg_ros_gz_sim, 'launch', 'gz_sim.launch.py')
+        ),
+        launch_arguments={'gz_args': '-g'}.items()
     )
 
     robot_state_publisher = Node(
@@ -107,7 +117,8 @@ def generate_launch_description():
         gz_resource_path,
         gz_plugin_path,
         ign_plugin_path,
-        gz_sim,
+        gz_sim_server,
+        gz_sim_gui,
         robot_state_publisher,
         spawn_robot,
         gz_bridge,
