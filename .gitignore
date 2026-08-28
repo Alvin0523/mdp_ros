@@ -13,13 +13,6 @@ log/
 __pycache__/
 *.pyc
 
-# model weights
-*.pt
-src/vision/mdp_vision/models/*_ncnn_model/
-
-# recorded rosbags
-bags/*
-!bags/.gitkeep
 
 # external projects, cloned directly per docs/pi-camera-vision.md -- not
 # vendored, not submodules
