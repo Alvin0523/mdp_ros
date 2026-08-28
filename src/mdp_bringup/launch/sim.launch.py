@@ -57,11 +57,21 @@ def generate_launch_description():
     )
 
     # Gazebo Sim launch
-    gz_sim = IncludeLaunchDescription(
+    # Server and GUI are launched as separate processes: on macOS, `gz sim`
+    # cannot run server + GUI together in one process (gazebosim/gz-sim#44).
+    # Splitting them works identically on Linux, so we always do it.
+    gz_sim_server = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(pkg_ros_gz_sim, 'launch', 'gz_sim.launch.py')
         ),
-        launch_arguments={'gz_args': '-r empty.sdf'}.items()
+        launch_arguments={'gz_args': '-s -r empty.sdf'}.items()
+    )
+
+    gz_sim_gui = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(pkg_ros_gz_sim, 'launch', 'gz_sim.launch.py')
+        ),
+        launch_arguments={'gz_args': '-g'}.items()
     )
 
     # Spawn robot in Gazebo
@@ -112,7 +122,8 @@ def generate_launch_description():
         gz_plugin_path,
         ign_plugin_path,
         robot_state_publisher,
-        gz_sim,
+        gz_sim_server,
+        gz_sim_gui,
         gz_spawn_entity,
         joint_state_broadcaster_spawner,
         ackermann_controller_spawner,
