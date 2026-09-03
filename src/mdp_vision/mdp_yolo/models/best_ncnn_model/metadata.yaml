@@ -1,0 +1,49 @@
+description: Ultralytics YOLO26n model trained on MDP.v1i.yolo26\data.yaml
+author: Ultralytics
+date: '2026-08-28T09:50:46.922528+08:00'
+version: 8.4.131
+license: AGPL-3.0 License (https://ultralytics.com/license)
+docs: https://docs.ultralytics.com
+stride: 32
+task: detect
+head: Detect
+batch: 1
+imgsz:
+- 640
+- 640
+names:
+  0: Arrow Down
+  1: Arrow Left
+  2: Arrow Right
+  3: Arrow Up
+  4: Circle
+  5: Letter A
+  6: Letter B
+  7: Letter C
+  8: Letter D
+  9: Letter E
+  10: Letter F
+  11: Letter G
+  12: Letter H
+  13: Letter S
+  14: Letter T
+  15: Letter U
+  16: Letter V
+  17: Letter W
+  18: Letter X
+  19: Letter Y
+  20: Letter Z
+  21: Number 1
+  22: Number 2
+  23: Number 3
+  24: Number 4
+  25: Number 5
+  26: Number 6
+  27: Number 7
+  28: Number 8
+  29: Number 9
+args:
+  batch: 1
+  quantize: null
+channels: 3
+end2end: false

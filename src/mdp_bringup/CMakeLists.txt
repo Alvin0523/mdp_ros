@@ -8,4 +8,10 @@ install(
   DESTINATION share/${PROJECT_NAME}
 )
 
+install(PROGRAMS
+  scripts/task1_runner.py
+  scripts/task2_runner.py
+  DESTINATION lib/${PROJECT_NAME}
+)
+
 ament_package()
