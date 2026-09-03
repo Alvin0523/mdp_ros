@@ -188,13 +188,18 @@ private:
     pkt.type = kTypeCommand;
     pkt.left_wheel_rad_s = static_cast<float>(lb_vel);
     pkt.right_wheel_rad_s = static_cast<float>(rb_vel);
-    /* Sign convention mismatch: ROS's left_joint/right_joint (axis 0 0 1)
-     * follow REP-103 - positive = left (CCW from above). The STM32's
+    /* Sign convention: ROS's left_joint/right_joint (axis 0 0 1) follow
+     * REP-103 - positive = left (CCW from above). The STM32's
      * servo_set_angle() (mdp_stm32/src/servo.c) is documented the other
-     * way - positive = right. Negate here, at the one seam that already
-     * hand-translates between the two systems, rather than changing either
-     * side's own internally-consistent convention. */
-    pkt.steer_rad = static_cast<float>(-steer_rad);
+     * way - positive = right. A negation was tried here on the theory that
+     * ackermann_steering_controller passes angular.z's sign straight
+     * through to the joint commands - confirmed WRONG on real hardware
+     * (2026-09-03): commanding a left turn (teleop 'j', angular.z>0)
+     * measurably steered right. ackermann_steering_controller's internal
+     * sign convention doesn't match that assumption, so no negation is
+     * needed here after all - passing the joint value straight through
+     * gives the correct physical direction. */
+    pkt.steer_rad = static_cast<float>(steer_rad);
     pkt.checksum = xor_checksum(
       reinterpret_cast<const uint8_t *>(&pkt.type),
       sizeof(CommandPacket) - offsetof(CommandPacket, type) - 1);
@@ -323,10 +328,10 @@ private:
     sensor_msgs::msg::JointState js;
     js.header.stamp = stamp;
     js.name = {"left_joint", "right_joint", "lb_joint", "rb_joint"};
-    /* Negated for the same reason as in onJointCommand() above - pkt.steer_deg
-     * is in the STM32's positive=right convention, ROS's left_joint/right_joint
-     * expect positive=left. */
-    const double steer_rad = -(pkt.steer_deg * M_PI / 180.0);
+    /* No negation - see onJointCommand()'s comment above; confirmed on
+     * hardware that ackermann_steering_controller's sign convention already
+     * matches the STM32's positive=right without translation. */
+    const double steer_rad = pkt.steer_deg * M_PI / 180.0;
     js.position = {
       steer_rad, steer_rad,
       pkt.enc_left * kRadPerTick, pkt.enc_right * kRadPerTick

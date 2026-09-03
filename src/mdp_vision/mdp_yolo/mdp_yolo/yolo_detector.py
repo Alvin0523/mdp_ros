@@ -35,13 +35,22 @@ class YoloDetector(Node):
         self.declare_parameter('camera_topic', '/image_raw')
         self.declare_parameter('model_path', DEFAULT_MODEL_PATH)
         self.declare_parameter('result_topic', '/yolo_result')
-        
+        self.declare_parameter('annotated_topic', '/yolo_result/image_annotated')
+
         camera_topic = self.get_parameter('camera_topic').value
         model_path = self.get_parameter('model_path').value
         result_topic = self.get_parameter('result_topic').value
+        annotated_topic = self.get_parameter('annotated_topic').value
 
         self.bridge = CvBridge()
         self.result_pub = self.create_publisher(String, result_topic, 10)
+        # Full camera frame with YOLO's own boxes/labels/confidences drawn on
+        # it (via Ultralytics Results.plot()) - for visual confirmation in
+        # Foxglove/RViz, since /yolo_result alone is just a bare label
+        # string with no way to see what the model actually saw/boxed.
+        # Published every frame regardless of whether anything was detected,
+        # same as any other live camera feed.
+        self.annotated_pub = self.create_publisher(Image, annotated_topic, 10)
         self.create_subscription(Image, camera_topic, self.image_callback, 10)
 
         if ULTRALYTICS_AVAILABLE:
@@ -66,11 +75,27 @@ class YoloDetector(Node):
         if self.model is not None:
             results = self.model(cv_image, verbose=False)
             for r in results:
+                self.publish_annotated(r, msg.header)
                 for box in r.boxes:
                     cls_id = int(box.cls[0])
                     label = self.model.names[cls_id].upper()
                     self.publish_detection(label)
                     return
+
+    def publish_annotated(self, result, header):
+        # result.plot() returns a BGR numpy array (same convention as the
+        # cv_image this all started from) with boxes/labels/confidences
+        # already drawn by Ultralytics - no manual cv2.rectangle/putText
+        # needed. Reuses the original frame's header/timestamp so this
+        # topic stays sync'able with /image_raw in Foxglove/rviz.
+        annotated = result.plot()
+        try:
+            out_msg = self.bridge.cv2_to_imgmsg(annotated, encoding='bgr8')
+        except Exception as e:
+            self.get_logger().error(f"CvBridge Error (annotated): {e}")
+            return
+        out_msg.header = header
+        self.annotated_pub.publish(out_msg)
 
     def publish_detection(self, detection: str):
         msg = String()
