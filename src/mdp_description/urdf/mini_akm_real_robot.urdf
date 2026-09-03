@@ -59,7 +59,22 @@
     <parent link="base_link" />
     <child link="left_link" />
     <axis xyz="0 0 1" />
-    <limit lower="-0.39" upper="0.39" effort="10.0" velocity="5.0" />
+    <!-- 0.5672 rad = 32.5deg - steering angle, physically measured with a
+         protractor at the wheel (not a servo/pulse-derived estimate).
+         Single shared servo/linkage driving both front wheels, servo
+         connects directly to the right wheel, right connects to left via
+         a tie-rod. 8 raw readings taken across 2 measurement sessions
+         (both wheels, at both firmware-clamped commanded extremes);
+         rounding each to the nearest 0.5deg and taking the mode gives
+         32.5deg (3 of 8 readings agree there, vs. 2 for the next-most-
+         common value) - confirmed independently using just the 4
+         right-wheel-only readings (right is the directly-driven side,
+         closer to the servo), which also mode to 32.5deg. See
+         docs/stm32/control_loop.md ("Servo range") for the full
+         precision analysis and reading-by-reading breakdown. Was 0.39 rad
+         (~22.35deg, the HWZ020 servo's bare datasheet spec) before
+         physical measurement. -->
+    <limit lower="-0.5672" upper="0.5672" effort="10.0" velocity="5.0" />
   </joint>
 
   <link name="right_link">
@@ -73,7 +88,8 @@
     <parent link="base_link" />
     <child link="right_link" />
     <axis xyz="0 0 1" />
-    <limit lower="-0.39" upper="0.39" effort="10.0" velocity="5.0" />
+    <!-- See left_joint's comment above - same measured, mode-based value. -->
+    <limit lower="-0.5672" upper="0.5672" effort="10.0" velocity="5.0" />
   </joint>
 
   <ros2_control name="TopicBasedSystem" type="system">
@@ -84,7 +100,7 @@
            the aggregated state interfaces on that exact name for the rest of
            the graph (RViz, TF, etc). If TopicBasedSystem's raw hardware-feedback
            subscription used the same name, two independently-ordered
-           publishers would collide on one topic - see docs/ros/launch.md's
+           publishers would collide on one topic - see docs/rpi/launch.md's
            note on this remap for what that looked like before the fix. -->
       <param name="joint_states_topic">/joint_states_raw</param>
     </hardware>

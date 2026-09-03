@@ -3,9 +3,11 @@ ekf_filter_node:
     # --- Timing ---
     # EKF runs its own predict step at this rate regardless of sensor rate,
     # then corrects with whichever input(s) have new data on each cycle.
-    # Faster than the 10Hz IMU/encoder telemetry (see mdp_hardware_bridge)
-    # so /odometry/filtered stays smooth between sensor updates.
-    frequency: 30.0
+    # Matches mdp_stm32's fast-tier telemetry rate (100Hz - interrupt-driven
+    # UART TX, see mdp_stm32/src/usart.c and docs/stm32/control_loop.md) so
+    # every telemetry sample actually gets used instead of some being
+    # discarded between predict steps.
+    frequency: 100.0
     two_d_mode: true      # ground vehicle - locks z/roll/pitch/vz/vroll/vpitch/az to 0
     publish_tf: true
     print_diagnostics: true
@@ -27,7 +29,7 @@ ekf_filter_node:
     # Only forward velocity (vx) is fused, NOT position (x/y/yaw) or its
     # own heading estimate. Reason: this chassis has one physical steering
     # servo standing in for two independently-commanded Ackermann joints
-    # (see mdp_hardware_bridge's averaging in onJointCommand()), so the
+    # (see mdp_bridge's averaging in onJointCommand()), so the
     # controller's own dead-reckoned x/y/yaw is only an approximation.
     # Feeding the EKF just vx lets it integrate position itself using a
     # heading it trusts more (the IMU, input 1 below).
@@ -40,17 +42,23 @@ ekf_filter_node:
     odom0_differential: false
     odom0_relative: false
 
-    # --- Input 1: IMU (mdp_hardware_bridge -> /imu/data) ---
-    # Fuses yaw (orientation.z, gyro-integrated on the STM32 - see
-    # mdp_stm32/src/imu.c) and yaw rate (angular_velocity.z, bias-corrected
-    # raw gyro). Roll/pitch and linear acceleration are NOT fused:
-    # roll/pitch aren't estimated at all (bridge sets their covariance to
-    # 1e6 to signal "don't trust this" - two_d_mode discards them anyway),
-    # and accel-integrated velocity is too noisy for a ground vehicle when
+    # --- Input 1: IMU (mdp_bridge -> /imu/data) ---
+    # Fuses ONLY yaw rate (angular_velocity.z, bias-corrected raw gyro) -
+    # NOT orientation.z. The STM32's orientation.z/w quaternion (see
+    # mdp_stm32/src/imu.c) is itself just a naive gyro-Z integration with no
+    # drift correction; fusing it as a position measurement here would hand
+    # the EKF that same uncorrected integration a second time (once as a
+    # "position", once as the rate it was integrated from) instead of
+    # letting the EKF do its own integration/weighting against wheel
+    # odometry heading - defeating the point of running an EKF for yaw at
+    # all. Roll/pitch and linear acceleration are NOT fused: roll/pitch
+    # aren't estimated at all (bridge sets their covariance to 1e6 to
+    # signal "don't trust this" - two_d_mode discards them anyway), and
+    # accel-integrated velocity is too noisy for a ground vehicle when
     # wheel-encoder velocity (input 0) is already available.
     imu0: /imu/data
     imu0_config: [false, false, false,   # x,  y,  z
-                  false, false, true,    # roll, pitch, yaw
+                  false, false, false,   # roll, pitch, yaw
                   false, false, false,   # vx, vy, vz
                   false, false, true,    # vroll, vpitch, vyaw
                   false, false, false]   # ax, ay, az

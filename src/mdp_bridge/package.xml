@@ -1,0 +1,22 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>mdp_bridge</name>
+  <version>0.0.0</version>
+  <description>Hardware/communication bridges for the robot: serial_bridge_node links mdp_stm32's custom binary protocol (USART3) to topic_based_ros2_control's /joint_commands and /joint_states topics (plus /imu/data and /estop); bluetooth_bridge_node is a placeholder for the Android tablet's Bluetooth RFCOMM link.</description>
+  <maintainer email="alvinwm0523@gmail.com">Wei Ming</maintainer>
+  <license>TODO: License declaration</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <test_depend>ament_lint_auto</test_depend>
+  <test_depend>ament_lint_common</test_depend>
+  <exec_depend>ros2launch</exec_depend>
+  <depend>rclcpp</depend>
+  <depend>sensor_msgs</depend>
+  <depend>std_msgs</depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>
