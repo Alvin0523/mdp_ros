@@ -1,8 +1,0 @@
-# Core path-planning maths
-numpy>=1.24
-
-# Pygame movement-area simulator
-pygame>=2.5
-
-# Optional occupancy-map debug display used by objects/OccupancyMap.py
-matplotlib>=3.7
