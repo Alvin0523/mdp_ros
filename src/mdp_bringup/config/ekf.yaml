@@ -6,7 +6,9 @@ ekf_filter_node:
     # Matches mdp_stm32's fast-tier telemetry rate (100Hz - interrupt-driven
     # UART TX, see mdp_stm32/src/usart.c and docs/stm32/control_loop.md) so
     # every telemetry sample actually gets used instead of some being
-    # discarded between predict steps.
+    # discarded between predict steps. WHEELTEC's own reference config
+    # (turn_on_wheeltec_robot/config/ekf.yaml) uses 10Hz - kept ours higher
+    # since it's matched to our own telemetry rate, not a mistake to fix.
     frequency: 100.0
     two_d_mode: true      # ground vehicle - locks z/roll/pitch/vz/vroll/vpitch/az to 0
     publish_tf: true
@@ -26,18 +28,28 @@ ekf_filter_node:
     use_sim_time: false
 
     # --- Input 0: wheel odometry (ackermann_steering_controller) ---
-    # Only forward velocity (vx) is fused, NOT position (x/y/yaw) or its
-    # own heading estimate. Reason: this chassis has one physical steering
-    # servo standing in for two independently-commanded Ackermann joints
-    # (see mdp_bridge's averaging in onJointCommand()), so the
-    # controller's own dead-reckoned x/y/yaw is only an approximation.
-    # Feeding the EKF just vx lets it integrate position itself using a
-    # heading it trusts more (the IMU, input 1 below).
+    # Forward velocity (vx) AND yaw rate (vyaw) are fused - NOT position
+    # (x/y/yaw) or the controller's own heading estimate (dead-reckoned,
+    # only an approximation since this chassis has one physical steering
+    # servo standing in for two independently-commanded Ackermann joints -
+    # see mdp_bridge's averaging in onJointCommand()).
+    #
+    # vyaw WAS excluded entirely (2026-09-03 and earlier) on the reasoning
+    # that the IMU (input 1) was the sole/better yaw source. Confirmed on
+    # hardware that this was a real single point of failure: with vyaw
+    # excluded from BOTH odom0 and imu0 doing anything but full trust, if
+    # the IMU ever reports invalid/dead data the EKF has zero yaw input at
+    # all - the robot dead-reckons a straight line regardless of actual
+    # steering. WHEELTEC's own reference config (turn_on_wheeltec_robot/
+    # config/ekf.yaml) fuses vyaw from BOTH sources simultaneously,
+    # weighted by their respective covariances, rather than picking one -
+    # adopted that pattern here for the same reason: a working fallback,
+    # not just less code to maintain.
     odom0: /ackermann_steering_controller/odometry
     odom0_config: [false, false, false,   # x,  y,  z
                    false, false, false,   # roll, pitch, yaw
                    true,  false, false,   # vx, vy, vz
-                   false, false, false,   # vroll, vpitch, vyaw
+                   false, false, true,    # vroll, vpitch, vyaw
                    false, false, false]   # ax, ay, az
     odom0_differential: false
     odom0_relative: false
@@ -50,12 +62,12 @@ ekf_filter_node:
     # the EKF that same uncorrected integration a second time (once as a
     # "position", once as the rate it was integrated from) instead of
     # letting the EKF do its own integration/weighting against wheel
-    # odometry heading - defeating the point of running an EKF for yaw at
-    # all. Roll/pitch and linear acceleration are NOT fused: roll/pitch
-    # aren't estimated at all (bridge sets their covariance to 1e6 to
-    # signal "don't trust this" - two_d_mode discards them anyway), and
-    # accel-integrated velocity is too noisy for a ground vehicle when
-    # wheel-encoder velocity (input 0) is already available.
+    # odometry's own yaw rate (input 0, above) - defeating the point of
+    # running an EKF for yaw at all. Roll/pitch and linear acceleration are
+    # NOT fused: roll/pitch aren't estimated at all (bridge sets their
+    # covariance to 1e6 to signal "don't trust this" - two_d_mode discards
+    # them anyway), and accel-integrated velocity is too noisy for a ground
+    # vehicle when wheel-encoder velocity (input 0) is already available.
     imu0: /imu/data
     imu0_config: [false, false, false,   # x,  y,  z
                   false, false, false,   # roll, pitch, yaw
@@ -70,3 +82,54 @@ ekf_filter_node:
     # since accel isn't fused here, left at the default (true) for safety
     # if accel fusion is ever turned on later.
     imu0_remove_gravitational_acceleration: true
+
+    # --- Outlier rejection (Mahalanobis distance) ---
+    # Rejects a single bad frame from corrupting the filter instead of
+    # blindly trusting every measurement. Starting values borrowed from
+    # WHEELTEC's reference config (their imu0_twist_rejection_threshold) -
+    # UNVERIFIED for our specific sensors' actual noise characteristics,
+    # same caveat as the servo cubic coefficients (docs/stm32/tuning.md):
+    # the pattern/existence of tuning is right, the exact number is a
+    # starting point to refine against real data, not a spec value.
+    odom0_twist_rejection_threshold: 2.0
+    imu0_twist_rejection_threshold: 1.542
+
+    # --- Process/initial covariance (UNVERIFIED starting point) ---
+    # Also borrowed from WHEELTEC's reference config as a structurally
+    # reasonable starting point (explicit per-state tuning rather than the
+    # robot_localization default identity matrix) - NOT validated against
+    # this chassis's actual sensor noise. Needs retuning once real
+    # hardware data is available (compare EKF's estimated covariance
+    # against actual measured drift/noise) - flagged here rather than
+    # silently presented as final.
+    process_noise_covariance: [0.05, 0.0,  0.0,  0.0,  0.0,  0.0,  0.0,   0.0,   0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                                0.0,  0.05, 0.0,  0.0,  0.0,  0.0,  0.0,   0.0,   0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                                0.0,  0.0,  0.06, 0.0,  0.0,  0.0,  0.0,   0.0,   0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                                0.0,  0.0,  0.0,  0.03, 0.0,  0.0,  0.0,   0.0,   0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                                0.0,  0.0,  0.0,  0.0,  0.03, 0.0,  0.0,   0.0,   0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                                0.0,  0.0,  0.0,  0.0,  0.0,  0.06, 0.0,   0.0,   0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                                0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.025, 0.0,   0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                                0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,   0.025, 0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                                0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,   0.0,   0.04, 0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                                0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,   0.0,   0.0,  0.01, 0.0,  0.0,  0.0,  0.0,  0.0,
+                                0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,   0.0,   0.0,  0.0,  0.01, 0.0,  0.0,  0.0,  0.0,
+                                0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,   0.0,   0.0,  0.0,  0.0,  0.02, 0.0,  0.0,  0.0,
+                                0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,   0.0,   0.0,  0.0,  0.0,  0.0,  0.01, 0.0,  0.0,
+                                0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,   0.0,   0.0,  0.0,  0.0,  0.0,  0.0,  0.01, 0.0,
+                                0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,   0.0,   0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.015]
+
+    initial_estimate_covariance: [1e-9, 0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                                   0.0,  1e-9, 0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                                   0.0,  0.0,  1e-9, 0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                                   0.0,  0.0,  0.0,  1e-9, 0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                                   0.0,  0.0,  0.0,  0.0,  1e-9, 0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                                   0.0,  0.0,  0.0,  0.0,  0.0,  1e-9, 0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                                   0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  1e-9, 0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                                   0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  1e-9, 0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                                   0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  1e-9, 0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                                   0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  1e-9, 0.0,  0.0,  0.0,  0.0,  0.0,
+                                   0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  1e-9, 0.0,  0.0,  0.0,  0.0,
+                                   0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  1e-9, 0.0,  0.0,  0.0,
+                                   0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  1e-9, 0.0,  0.0,
+                                   0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  1e-9, 0.0,
+                                   0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  1e-9]
