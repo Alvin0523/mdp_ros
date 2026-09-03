@@ -7,7 +7,7 @@ Sim (Gazebo):
   camera_link sensor plugin --(ros_gz_bridge)--> /camera/image_raw, /camera/camera_info
                                                         |
 Real (Pi 4B + Camera Module v2 / imx219):              v
-  camera_ros node --------------------------------> yolo_detector.py (mdp_vision)
+  camera_ros node --------------------------------> yolo_detector.py (mdp_yolo)
     /camera/image_raw (raw)                              | cv_bridge -> ultralytics YOLO
     /camera/image_raw/compressed (JPEG)                  v
     /camera/camera_info                              /yolo_result (std_msgs/String)
@@ -18,10 +18,10 @@ Real (Pi 4B + Camera Module v2 / imx219):              v
 - Real: `real.launch.py` launches `camera_ros`'s `camera_node` (package `camera_ros`, built from
   source, see below) and `yolo_detector.py`, pointed at `/camera/image_raw`.
 - `yolo_detector.py`'s `model_path` param defaults to
-  `get_package_share_directory('mdp_vision')/models/yolo26n_ncnn_model` (see "Known open issues"
+  `get_package_share_directory('mdp_yolo')/models/yolo26n_ncnn_model` (see "Known open issues"
   #1 below for why NCNN rather than a raw `.pt` checkpoint). Both `*.pt` files and
   `models/*_ncnn_model/` directories are gitignored, so the model must be exported/copied to any
-  new machine manually — `pixi run colcon build --packages-select mdp_vision` then installs
+  new machine manually — `pixi run colcon build --packages-select mdp_yolo` then installs
   whatever's in `models/` into the share dir.
 
 ## Why camera_ros is built from source, not `pixi install`ed
@@ -39,7 +39,7 @@ Linux-aarch64-only since this is Pi-specific; the laptop/sim side never needs it
 
 **Setup on a new Pi:**
 ```bash
-cd ~/mdp/mdp_ros/src
+cd ~/mdp/mdp_ros/src/mdp_vision
 git clone https://git.libcamera.org/libcamera/libcamera.git   # upstream, NOT the raspberrypi fork
 git clone https://github.com/christianrauch/camera_ros.git
 cd ~/mdp/mdp_ros
@@ -47,8 +47,8 @@ pixi install
 pixi run colcon build --packages-select libcamera camera_ros --event-handlers console_direct+ \
   --meson-args -Dpipelines=rpi/vc4 -Dtracing=disabled -Dqcam=disabled -Dpycamera=disabled
 ```
-(`src/libcamera` and `src/camera_ros` are currently untracked/uncommitted in this repo — they're
-external upstream source, not this project's code. Consider adding them to `.gitignore`.)
+(`src/mdp_vision/libcamera` and `src/mdp_vision/camera_ros` are untracked/uncommitted in this repo
+— they're external upstream source, not this project's code, and already listed in `.gitignore`.)
 
 Camera Module v2 = Sony IMX219, which **upstream** libcamera supports directly — no need for the
 `raspberrypi/libcamera` fork (that's only required for Camera Module 3 / IMX708). Confirmed via
@@ -190,7 +190,7 @@ were found:
   auto-selecting XRGB8888". `RGB888` (3-channel, no alpha) was chosen over the auto-picked
   `XRGB8888` since it matches `yolo_detector.py`'s `cv_bridge.imgmsg_to_cv2(...,
   desired_encoding='bgr8')` conversion more directly.
-- `camera_info_url: 'package://mdp_vision/config/imx219_640x480.yaml'` - a generic IMX219
+- `camera_info_url: 'package://mdp_yolo/config/imx219_640x480.yaml'` - a generic IMX219
   calibration (community-published, `UbiquityRobotics/raspicam_node`'s `camerav2_1280x960.yaml`
   scaled 0.5x for this resolution), **not measured on this robot's specific camera unit**. Silences
   "calibration file not found" and gives `CameraInfo` real (not identity) values; recalibrate on

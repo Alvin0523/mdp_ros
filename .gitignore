@@ -16,5 +16,5 @@ __pycache__/
 
 # external projects, cloned directly per docs/pi-camera-vision.md -- not
 # vendored, not submodules
-src/vision/libcamera/
-src/vision/camera_ros/
+src/mdp_vision/libcamera/
+src/mdp_vision/camera_ros/
