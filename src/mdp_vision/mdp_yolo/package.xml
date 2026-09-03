@@ -1,0 +1,20 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" type="application/xml" schematypens="http://download.ros.org/schema/package_format3.xsd"?>
+<package format="3">
+  <name>mdp_yolo</name>
+  <version>0.1.0</version>
+  <description>Vision stack for MDP robot</description>
+
+  <maintainer email="user@todo.todo">MDP Team</maintainer>
+  <license>Apache-2.0</license>
+
+  <depend>rclpy</depend>
+  <depend>sensor_msgs</depend>
+  <depend>std_msgs</depend>
+  <depend>cv_bridge</depend>
+  <depend>ament_index_python</depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

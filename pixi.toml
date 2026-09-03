@@ -17,12 +17,12 @@ sim-task2 = "ros2 launch mdp_bringup task2_sim.launch.py"
 
 # Real hardware (Pi + STM32)
 real = "ros2 launch mdp_bringup real.launch.py serial_port:=/dev/ttyACM0"
-task1 = "ros2 run mdp_control task1_runner.py"
-task2 = "ros2 run mdp_control task2_runner.py"
+task1 = "ros2 run mdp_bringup task1_runner.py"
+task2 = "ros2 run mdp_bringup task2_runner.py"
 teleop = "ros2 run teleop_twist_keyboard teleop_twist_keyboard --ros-args -p stamped:=true"
 
 # Vision & debugging
-vision = "ros2 launch mdp_vision vision.launch.py"
+vision = "ros2 launch mdp_yolo vision.launch.py"
 # use_sim_time defaults false (real hardware has no /clock); when pairing
 # with `sim`/`sim-task2`, override with: pixi run foxglove use_sim_time:=true
 foxglove = "ros2 launch foxglove_bridge foxglove_bridge_launch.xml"
@@ -54,8 +54,12 @@ ros-jazzy-foxglove-bridge = "*"
 # Sensor fusion (wheel odometry + IMU -> /odometry/filtered)
 ros-jazzy-robot-localization = "*"
 
-# Path planning (spline-based waypoint smoothing for task2)
+# Path planning (spline-based waypoint smoothing for task2; numpy is used
+# directly by mdp_algorithm's collision-aware planner - occupancy_map.py,
+# hybrid_astar.py, reeds_shepp_curves.py - declared explicitly rather than
+# relying on it riding in transitively via scipy/opencv/ultralytics)
 scipy = "*"
+numpy = "*"
 
 # Vision & camera stack
 ros-jazzy-cv-bridge = "*"
@@ -70,8 +74,8 @@ libblas = { version = "*", build = "*openblas" }
 liblapack = { version = "*", build = "*openblas" }
 
 # Build tools (colcon-common-extensions provides the colcon CLI itself;
-# compilers + cmake are needed for the CMake-based packages: wayp_plan_tools,
-# mdp_hardware_bridge, mdp_bringup, mdp_description)
+# compilers + cmake are needed for the CMake-based packages: mdp_bridge,
+# mdp_bringup, mdp_description)
 colcon-common-extensions = "*"
 compilers = "*"
 cmake = "*"

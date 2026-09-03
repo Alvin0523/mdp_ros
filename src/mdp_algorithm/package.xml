@@ -1,0 +1,18 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" type="application/xml" schematypens="http://download.ros.org/schema/package_format3.xsd"?>
+<package format="3">
+  <name>mdp_algorithm</name>
+  <version>0.1.0</version>
+  <description>Path planning building blocks for the Mini Ackermann Robot (Reeds-Shepp/Dubins curve + TSP solver, pure-pursuit follower, spline planner)</description>
+
+  <maintainer email="user@todo.todo">MDP Team</maintainer>
+  <license>Apache-2.0</license>
+
+  <depend>rclpy</depend>
+  <depend>geometry_msgs</depend>
+  <depend>sensor_msgs</depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

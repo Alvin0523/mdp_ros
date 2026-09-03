@@ -56,7 +56,7 @@ def generate_launch_description():
     )
 
     serial_bridge = Node(
-        package='mdp_hardware_bridge',
+        package='mdp_bridge',
         executable='serial_bridge_node',
         parameters=[{'serial_port': serial_port, 'baud_rate': 115200}],
         # The bridge's own JointState publish is TopicBasedSystem's raw
@@ -86,13 +86,13 @@ def generate_launch_description():
             'height': 480,
             'format': 'RGB888',    # 3-channel, no alpha - avoids XRGB8888's auto-pick and matches
                                     # cv_bridge's bgr8 conversion in yolo_detector.py cleanly
-            'camera_info_url': 'package://mdp_vision/config/imx219_640x480.yaml',
+            'camera_info_url': 'package://mdp_yolo/config/imx219_640x480.yaml',
         }],
         output='screen'
     )
 
     yolo_detector = Node(
-        package='mdp_vision',
+        package='mdp_yolo',
         executable='yolo_detector.py',
         parameters=[{'camera_topic': '/camera/image_raw'}],
         output='screen'

@@ -12,21 +12,21 @@ environment (no system-wide ROS install needed). See `pixi.toml` for tasks (`pix
 | Package | Description |
 |---|---|
 | `mdp_description` | URDF and meshes for the robot |
-| `mdp_bringup` | Top-level launch files (sim, real hardware) |
-| `mdp_control` | Autonomy, path planning, and task-runner nodes |
-| `mdp_hardware_bridge` | Serial bridge between the STM32 firmware's custom protocol and ROS2 topics |
-| `wayp_plan_tools` | Waypoint loading/saving and pursuit control tools |
-| `src/vision/mdp_vision` | Camera capture (sim fallback) + YOLO detection node |
+| `mdp_bringup` | Top-level launch files (sim, real hardware) + Task 1/2 runner scripts |
+| `mdp_algorithm/mdp_planning` | Path planning building blocks (Reeds-Shepp/Dubins + TSP, pure-pursuit, spline) |
+| `mdp_algorithm/wayp_plan_tools` | Waypoint loading/saving and pursuit control tools |
+| `mdp_bridge` | STM32 serial bridge (`serial_bridge_node`) + Android Bluetooth bridge (`bluetooth_bridge_node`, placeholder) |
+| `mdp_vision/mdp_yolo` | Camera capture (sim fallback) + YOLO detection node |
 
 ## External dependencies (not submodules)
 
-`src/vision/` also holds two upstream projects, cloned directly rather than vendored as git
+`src/mdp_vision/` also holds two upstream projects, cloned directly rather than vendored as git
 submodules — they're built from source on the Raspberry Pi only (see
 [`docs/pi-camera-vision.md`](docs/pi-camera-vision.md) for the full why/how, including
 Pi-specific build patches):
 
 ```bash
-cd src/vision
+cd src/mdp_vision
 git clone https://git.libcamera.org/libcamera/libcamera.git
 git clone https://github.com/christianrauch/camera_ros.git
 ```
