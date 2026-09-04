@@ -1,0 +1,35 @@
+# Test obstacle layout for development without the Android tablet/Bluetooth
+# in the loop - see publish_test_obstacles.py's docstring.
+#
+# x/y: metres, matching this project's arena convention (start pose at
+#   (0.15, 0.15), bottom-left corner - see task1_runner.py). Arena is
+#   2.0m x 2.0m.
+# facing: N/S/E/W - which side of the obstacle its scannable image is on
+#   (the direction the robot must face to see it), per
+#   docs/assessment_checklist.md's Module B.1/C.5 convention.
+#
+# This is a made-up layout for testing the pipeline end-to-end (planner +
+# visualization), NOT the real competition layout - real obstacle
+# positions are supervisor-specified at setup time and come from the
+# tablet over Bluetooth in the actual run.
+obstacles:
+  - id: 1
+    x: 0.50
+    y: 1.00
+    facing: S
+  - id: 2
+    x: 1.20
+    y: 0.40
+    facing: W
+  - id: 3
+    x: 1.70
+    y: 1.50
+    facing: N
+  - id: 4
+    x: 0.90
+    y: 1.80
+    facing: E
+  - id: 5
+    x: 1.50
+    y: 0.90
+    facing: S
