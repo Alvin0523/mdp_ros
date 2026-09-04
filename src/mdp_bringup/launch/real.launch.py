@@ -2,6 +2,7 @@ import os
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
+from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
@@ -16,6 +17,17 @@ def generate_launch_description():
                      'host/driver - e.g. /dev/ttyACM0 on some machines).'
     )
     serial_port = LaunchConfiguration('serial_port')
+
+    vision_arg = DeclareLaunchArgument(
+        'vision',
+        default_value='true',
+        description='Bring up camera_node + yolo_detector. Set false for '
+                     'sessions that only need drive/steer/telemetry (e.g. '
+                     'motor PID bench-tuning) - drops real camera/YOLO CPU '
+                     'load on the Pi that a hardware-only session does not '
+                     'need. Usage: pixi run real vision:=false'
+    )
+    vision = LaunchConfiguration('vision')
 
     urdf_file = os.path.join(pkg_description, 'urdf', 'mini_akm_real_robot.urdf')
     with open(urdf_file, 'r') as infp:
@@ -88,6 +100,7 @@ def generate_launch_description():
                                     # cv_bridge's bgr8 conversion in yolo_detector.py cleanly
             'camera_info_url': 'package://mdp_yolo/config/imx219_640x480.yaml',
         }],
+        condition=IfCondition(vision),
         output='screen'
     )
 
@@ -95,11 +108,13 @@ def generate_launch_description():
         package='mdp_yolo',
         executable='yolo_detector.py',
         parameters=[{'camera_topic': '/camera/image_raw'}],
+        condition=IfCondition(vision),
         output='screen'
     )
 
     return LaunchDescription([
         serial_port_arg,
+        vision_arg,
         robot_state_publisher,
         controller_manager,
         joint_state_broadcaster_spawner,
