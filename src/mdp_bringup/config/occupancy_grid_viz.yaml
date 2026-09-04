@@ -1,0 +1,57 @@
+# Visualization settings for task1_runner's Foxglove output (grid lines,
+# obstacle markers, path markers). Loaded as ROS2 parameters at startup.
+#
+# NOTE on scope: this controls VISUALIZATION only - topic names, colors,
+# line widths. The actual grid MATH (cell size, search margin, obstacle
+# inflation) is still defined in mdp_algorithm/occupancy_map.py as plain
+# Python constants (CELL_SIZE_CM, GRID_MARGIN_CM, INFLATION_CELLS,
+# ARENA_SIZE_CM), not here - those are imported by deep, non-node planning
+# modules (hamiltonian.py, hybrid_astar.py) that aren't ROS parameterized.
+# Making those truly dynamic would mean threading a config object through
+# every ported planning function - a bigger refactor, not done here. If you
+# change CELL_SIZE_CM/GRID_MARGIN_CM/etc. in occupancy_map.py, this file's
+# values stay visually correct automatically (task1_runner reads the actual
+# grid array's shape at runtime, not a hardcoded size) - only the *style*
+# settings below are yours to edit.
+#
+# Obstacle positions themselves are a SEPARATE file:
+# mdp_bringup/config/test_obstacles.yaml (dev/testing stand-in for the
+# tablet/Bluetooth setup message - see publish_test_obstacles.py).
+
+task1_runner:
+  ros__parameters:
+    # --- Topic names ---
+    # Split into one topic per marker type (was all crammed onto
+    # /obstacle_markers, including the path line-strip - confirmed
+    # confusing when read back: "why is there a path in the obstacle
+    # marker topic"). /occupancy_grid and /planned_path are unaffected
+    # (nav_msgs types, not MarkerArray, already their own topics).
+    occupancy_grid_topic: /occupancy_grid
+    obstacle_markers_topic: /obstacle_markers
+    grid_line_markers_topic: /grid_markers
+    path_markers_topic: /path_markers
+    planned_path_topic: /planned_path
+    checkpoint_markers_topic: /checkpoint_markers
+
+    # --- Grid lines (/grid_markers) ---
+    grid_line_width_m: 0.003
+    grid_line_color: [0.3, 0.4, 0.5, 0.5]        # [r, g, b, a]
+    zone_outline_width_m: 0.015
+    zone_outline_color: [0.3, 0.75, 1.0, 0.95]   # highlights the nominal 200x200cm placement zone
+
+    # --- Obstacles (/obstacle_markers) ---
+    obstacle_color: [0.9, 0.5, 0.1, 0.9]
+    obstacle_label_color: [1.0, 1.0, 1.0, 1.0]
+    obstacle_label_height_m: 0.20   # z-height above the obstacle cube the text label floats at
+
+    # --- Planned path (/path_markers) ---
+    path_line_width_m: 0.02
+    path_color: [0.1, 0.6, 1.0, 0.9]
+
+    # --- Checkpoints (/checkpoint_markers) ---
+    # The actual stand-off pose each leg's path was planned toward (see
+    # collision_aware_planner.plan_route()'s checkpoints_m) - distinct from
+    # the obstacle marker itself, which only marks the target, not where
+    # the robot plans to stop/face to scan it.
+    checkpoint_color: [0.2, 1.0, 0.4, 0.95]
+    checkpoint_arrow_length_m: 0.15

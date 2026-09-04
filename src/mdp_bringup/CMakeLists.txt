@@ -11,6 +11,7 @@ install(
 install(PROGRAMS
   scripts/task1_runner.py
   scripts/task2_runner.py
+  scripts/publish_test_obstacles.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

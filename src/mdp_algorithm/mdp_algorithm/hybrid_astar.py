@@ -17,16 +17,29 @@ docstring) - x_0/y_0/x_f/y_f are the REAR AXLE position, matching the
 teammate's original convention.
 """
 
-from queue import PriorityQueue
-from typing import List, Optional, Tuple
+import heapq
+import math
+from typing import Callable, List, Optional, Tuple
 
 import numpy as np
 
 from . import geometry_utils as utils
 from . import reeds_shepp_curves as rs
 from .motion_primitives import Gear, Steering
-from .occupancy_map import GRID_SIZE, OccupancyMap
+from .occupancy_map import GRID_SIZE, OccupancyMap, coords_to_grid
 from .planning_constants import REAR_AXLE_TO_CENTER_CM
+
+
+# How far off the checkpoint's exact heading is still "close enough" to
+# count as arrived, for Node.__eq__'s goal check below. The camera has a
+# real field of view - it doesn't need to be perfectly perpendicular to the
+# obstacle's image to capture it, so the goal doesn't need to be that
+# precise either. 20deg per direct user instruction (2026-09-04) - was
+# 7.5deg (pi/24), which forced Hybrid A* to hunt for a near-exact heading
+# match that was never actually required by the camera itself. A looser
+# tolerance also gives the search more valid final poses to land on, which
+# should help the per-leg search time too, not just goal precision.
+GOAL_HEADING_TOLERANCE_RAD = math.pi / 9  # 20 degrees
 
 
 class Node:
@@ -43,15 +56,20 @@ class Node:
 
     @staticmethod
     def _discretize(x, y, theta, thetaBins=24):
-        x_g = int(x // (200 / GRID_SIZE))
-        y_g = int(y // (200 / GRID_SIZE))
-        theta_g = int(((theta * 180 / np.pi + 180) // (360 / thetaBins)))
+        # Was a duplicated inline copy of this formula (hardcoded 200/GRID_SIZE,
+        # no margin offset) - found during the 2026-09-04 arena-padding change
+        # (occupancy_map.py's module docstring) to silently drift out of sync:
+        # GRID_SIZE now refers to the padded array, and any pose planned in
+        # the new margin needs the offset coords_to_grid() applies, or this
+        # would produce a negative/wrapped array index into openList/closedList.
+        x_g, y_g = coords_to_grid(x, y)
+        theta_g = int(((theta * 180 / math.pi + 180) // (360 / thetaBins)))
         return x_g, y_g, theta_g
 
     def __eq__(self, other):
         return (abs(self.x - other.x) <= 3.5 and abs(self.y - other.y) <= 3.5
-                and (abs(self.theta - other.theta) <= np.pi / 24
-                     or abs(abs(self.theta - other.theta) - 2 * np.pi) <= np.pi / 24))
+                and (abs(self.theta - other.theta) <= GOAL_HEADING_TOLERANCE_RAD
+                     or abs(abs(self.theta - other.theta) - 2 * math.pi) <= GOAL_HEADING_TOLERANCE_RAD))
 
     def __lt__(self, other):
         return self.f < other.f
@@ -65,7 +83,9 @@ class HybridAStar:
                  simulate: bool = False, thetaBins: int = 24,
                  cost_mode: str = 'distance', forward_speed: float = 20.,
                  reverse_speed: float = 15., gear_change_time: float = .5,
-                 steering_change_time: float = .15):
+                 steering_change_time: float = .15,
+                 progress_callback: Optional[Callable[[List[Tuple[float, float]]], None]] = None,
+                 progress_interval: int = 200):
         """
         Args:
             map: OccupancyMap to search/collide against.
@@ -74,6 +94,17 @@ class HybridAStar:
             L: distance travelled per primitive step, cm.
             minR: minimum turning radius, cm - see planning_constants.py's
                 MIN_TURN_RADIUS_CM for how this is set for this chassis.
+            progress_callback: if given, called every `progress_interval`
+                node expansions with the full list of (x, y) points explored
+                SO FAR (cm, cheap - just the two floats per node, not the
+                whole Node object) - lets a caller (task1_runner.py)
+                publish live search progress to Foxglove instead of the
+                search being a black box until it returns. None (default)
+                adds no overhead - the list still gets built (cheap append),
+                just never handed anywhere.
+            progress_interval: how many node expansions between callback
+                calls - 200 is frequent enough to feel "live" without the
+                callback itself (a ROS publish) becoming the bottleneck.
         """
         self.map = map
         self.x, self.y, self.theta = x_0, y_0, theta_0
@@ -91,6 +122,8 @@ class HybridAStar:
         self.reverse_speed = reverse_speed
         self.gear_change_time = gear_change_time
         self.steering_change_time = steering_change_time
+        self.progress_callback = progress_callback
+        self.progress_interval = progress_interval
 
     def transition_cost(self, previous_action, action) -> float:
         if self.cost_mode == 'time':
@@ -139,17 +172,22 @@ class HybridAStar:
         startNode = Node(self.x, self.y, self.theta, (Gear.FORWARD, Steering.STRAIGHT))
         endNode = Node(self.x_f, self.y_f, self.theta_f, (Gear.FORWARD, Steering.STRAIGHT))
 
-        open_q: "PriorityQueue" = PriorityQueue()
+        # heapq, not queue.PriorityQueue - PriorityQueue's lock-per-push/pop
+        # is pure overhead here (single-threaded search), and this heap gets
+        # pushed to on every one of the up to 6 children of every expanded
+        # node, so that overhead was compounding across the whole search.
+        open_heap: List[Tuple[float, "Node"]] = []
         openList = 999999 * np.ones((GRID_SIZE, GRID_SIZE, self.thetaBins + 1))
         closedList = 999999 * np.ones((GRID_SIZE, GRID_SIZE, self.thetaBins + 1))
 
-        open_q.put((startNode.f, startNode))
+        heapq.heappush(open_heap, (startNode.f, startNode))
         pathFound = False
         nodesExpanded = 0
         currentNode = startNode
+        explored_points: List[Tuple[float, float]] = []   # (x, y) cm, one per expansion - for progress_callback
 
-        while not open_q.empty() and not pathFound:
-            currentNode = open_q.get()[1]
+        while open_heap and not pathFound:
+            currentNode = heapq.heappop(open_heap)[1]
             openList[currentNode.x_g, currentNode.y_g, currentNode.theta_g] = 999999
             nodesExpanded += 1
 
@@ -159,6 +197,11 @@ class HybridAStar:
 
             if self.simulate:
                 pathHistory.append(currentNode)
+
+            if self.progress_callback is not None:
+                explored_points.append((currentNode.x, currentNode.y))
+                if nodesExpanded % self.progress_interval == 0:
+                    self.progress_callback(explored_points)
 
             for choice in choices:
                 if choice[0] == -currentNode.prevAction[0] and choice[1] == -currentNode.prevAction[1]:
@@ -183,10 +226,13 @@ class HybridAStar:
                 if out_of_bounds or closedList[childNode.x_g, childNode.y_g, childNode.theta_g] <= childNode.g:
                     continue
 
-                open_q.put((childNode.f, childNode))
+                heapq.heappush(open_heap, (childNode.f, childNode))
                 openList[childNode.x_g, childNode.y_g, childNode.theta_g] = childNode.g
 
             closedList[currentNode.x_g, currentNode.y_g, currentNode.theta_g] = currentNode.g
+
+        if self.progress_callback is not None:
+            self.progress_callback(explored_points)   # final call - last partial batch + lets caller know it's done
 
         path = None
         if pathFound:

@@ -20,23 +20,31 @@ WHEELBASE_CM = 14.33
 #
 # wheelbase / tan(steering_angle) is the standard Ackermann relation, and
 # the tightest turn this vehicle can make is bounded by whichever side's
-# firmware steering clamp is smaller. As of 2026-09-03
-# (mdp_stm32/include/servo.h): SERVO_ANGLE_MAX_RIGHT_RAD = 18.3deg (the
-# TIGHTER, confirmed-conservative side - real hardware limit is further
-# out, not yet re-measured) vs SERVO_ANGLE_MAX_LEFT_RAD = 28.1deg. Hybrid
-# A*'s L/S/R primitives assume one symmetric minR for both turn
-# directions, so the more restrictive (right) side must be used - a plan
-# that never turns tighter than this radius is drivable on BOTH sides
-# today. Using the theoretical 32.5deg real-lock radius (~22.5cm) here
-# would generate paths the firmware currently clamps mid-turn on the
-# right, degrading path tracking rather than improving it.
+# firmware steering clamp is smaller. Hybrid A*'s L/S/R primitives assume
+# one symmetric minR for both turn directions, so the more restrictive
+# side must be used - a plan that never turns tighter than this radius is
+# drivable on BOTH sides.
 #
-# TODO: once mdp_stm32's right-side servo fine-sweep (flagged in
-# docs/stm32/tuning.md) finds the real right-side lock and
-# SERVO_ANGLE_MAX_RIGHT_RAD widens, recompute this and re-plan with a
-# tighter (more capable) minR.
-_STEERING_CLAMP_DEG = 18.3
-MIN_TURN_RADIUS_CM = WHEELBASE_CM / math.tan(math.radians(_STEERING_CLAMP_DEG))  # ~= 43.3cm
+# UPDATED 2026-09-05: the right-side fine-sweep this constant's old TODO
+# was waiting on has since happened - mdp_stm32/include/servo.h now has
+# SERVO_ANGLE_MAX_RIGHT_RAD confirmed at 24deg (real stall measured at
+# 26deg, clamped 2deg back for safety margin), replacing the earlier
+# provisional 18.3deg value this constant was still using. LEFT is 48deg
+# (2deg back from confirmed-clean 50deg), so RIGHT (24deg) is still the
+# tighter/binding side - unchanged reasoning, just an updated real number.
+# 24deg -> minR ~= 32.2cm, down from ~43.3cm - a real, measured reduction,
+# not an arbitrary tightening.
+_STEERING_CLAMP_DEG = 24.0
+
+# TEMPORARY OVERRIDE (2026-09-05, direct request - "put it to 25cm for now,
+# I'll adjust later"): hardcoded to 25.0 instead of the hardware-derived
+# ~32.2cm above. NOT currently drivable by the real servo clamp - 25cm
+# needs ~29.8deg of steering, past the confirmed 24deg right-side limit
+# (real stall measured at 26deg) - fine for planning-only testing (no
+# hardware in the loop yet), but swap back to the derived value (or update
+# _STEERING_CLAMP_DEG once the real limit is re-measured wider) before
+# trusting a plan to actually drive on the real chassis.
+MIN_TURN_RADIUS_CM = 25.0
 
 # Half the car's own front-to-back footprint length beyond the rear axle,
 # used by hybrid_astar.py/hamiltonian.py to collision-check the car's

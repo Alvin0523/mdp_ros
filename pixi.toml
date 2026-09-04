@@ -17,7 +17,7 @@ sim-task2 = "ros2 launch mdp_bringup task2_sim.launch.py"
 
 # Real hardware (Pi + STM32)
 real = "ros2 launch mdp_bringup real.launch.py serial_port:=/dev/ttyACM0"
-task1 = "ros2 run mdp_bringup task1_runner.py"
+task1 = "ros2 run mdp_bringup task1_runner.py --ros-args --params-file $(ros2 pkg prefix mdp_bringup)/share/mdp_bringup/config/occupancy_grid_viz.yaml"
 task2 = "ros2 run mdp_bringup task2_runner.py"
 teleop = "ros2 run teleop_twist_keyboard teleop_twist_keyboard --ros-args -p stamped:=true"
 
@@ -60,6 +60,11 @@ ros-jazzy-robot-localization = "*"
 # relying on it riding in transitively via scipy/opencv/ultralytics)
 scipy = "*"
 numpy = "*"
+# Used directly by publish_test_obstacles.py (mdp_bringup) - previously
+# only declared under [target.linux-aarch64.dependencies] as an incidental
+# camera_ros build dependency, not for this reason; declared here
+# explicitly since this script's need for it isn't aarch64-specific.
+pyyaml = "*"
 
 # Vision & camera stack
 ros-jazzy-cv-bridge = "*"
