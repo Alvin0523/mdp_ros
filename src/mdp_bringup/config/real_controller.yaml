@@ -11,8 +11,16 @@ controller_manager:
 ackermann_steering_controller:
   ros__parameters:
     reference_timeout: 10.0
-    steering_joints_names: ['left_joint', 'right_joint']
-    traction_joints_names: ['lb_joint', 'rb_joint']
+    # ackermann_steering_controller/steering_controllers_library expects
+    # RIGHT joint first, then LEFT (confirmed directly in
+    # steering_controllers_library_parameters.hpp's own parameter
+    # descriptor: "the expected order is: right joint, left joint") - both
+    # lists were backwards ([left, right]) until 2026-09-03, confirmed by
+    # hardware test: the inner wheel was spinning faster than the outer
+    # wheel during a turn, which is physically backwards (outer wheel must
+    # always be faster - same reason a car has a differential).
+    steering_joints_names: ['right_joint', 'left_joint']
+    traction_joints_names: ['rb_joint', 'lb_joint']
 
     wheelbase: 0.1433
     steering_track_width: 0.104
