@@ -73,7 +73,13 @@ class TestObstaclePublisher(Node):
 
 def main(args=None):
     rclpy.init(args=args)
-    config_path = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_CONFIG
+    # Drop ROS-injected args (--ros-args ...) that a launch Node action adds,
+    # so the optional positional config path works both standalone and in a
+    # launch file. First remaining token (if any) is the YAML path.
+    argv = sys.argv[1:]
+    if '--ros-args' in argv:
+        argv = argv[:argv.index('--ros-args')]
+    config_path = argv[0] if argv else DEFAULT_CONFIG
     node = TestObstaclePublisher(config_path)
     try:
         rclpy.spin(node)

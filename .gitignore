@@ -13,6 +13,10 @@ log/
 __pycache__/
 *.pyc
 
+# test caches (hypothesis' example database, pytest's cache)
+.hypothesis/
+.pytest_cache/
+
 
 # external projects, cloned directly per docs/pi-camera-vision.md -- not
 # vendored, not submodules

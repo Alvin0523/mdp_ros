@@ -1,0 +1,15 @@
+# MDP symbol panel quad for 38_ArrowRight (auto-generated, do not edit)
+mtllib 38_ArrowRight.mtl
+o panel_38_ArrowRight
+v -0.03050 0.0 -0.03050
+v 0.03050 0.0 -0.03050
+v 0.03050 0.0 0.03050
+v -0.03050 0.0 0.03050
+vt 0.0 0.0
+vt 1.0 0.0
+vt 1.0 1.0
+vt 0.0 1.0
+vn 0.0 1.0 0.0
+usemtl mat_38_ArrowRight
+f 1/1/1 2/2/1 3/3/1
+f 1/1/1 3/3/1 4/4/1

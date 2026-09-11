@@ -1,5 +1,23 @@
-# Test obstacle layout for development without the Android tablet/Bluetooth
-# in the loop - see publish_test_obstacles.py's docstring.
+# Test obstacle layout for the PLANNER, for development without the Android
+# tablet/Bluetooth in the loop - see publish_test_obstacles.py's docstring.
+#
+# SCOPE - this file affects the planner only, and nothing else.
+#   Read by publish_test_obstacles.py (`pixi run publish-obstacles`), which
+#   publishes id/x/y/facing on /obstacle_setup for task1_runner.py. That is the
+#   only consumer.
+#
+#   It does NOT drive the Gazebo sim. The sim's obstacles - positions, facings,
+#   and which symbol is on which face - live directly in
+#   mdp_description/worlds/task1_arena.sdf, which the sim launches load as-is.
+#   (An `image:` field per obstacle plus randomize_images/random_seed used to
+#   feed generate_arena_world.py; that script was deleted 2026-09-11 because
+#   nothing invoked it, so those fields were removed here too rather than left
+#   looking meaningful.)
+#
+#   CONSEQUENCE: the x/y/facing below and the poses in task1_arena.sdf are no
+#   longer generated from a single source, so keep them in step BY HAND. If they
+#   drift, the planner and the simulator disagree about where the obstacles are,
+#   which presents as a planning or localisation bug rather than a stale config.
 #
 # x/y: metres, matching this project's arena convention (start pose at
 #   (0.15, 0.15), bottom-left corner - see task1_runner.py). Arena is
@@ -8,10 +26,18 @@
 #   (the direction the robot must face to see it), per
 #   docs/assessment_checklist.md's Module B.1/C.5 convention.
 #
-# This is a made-up layout for testing the pipeline end-to-end (planner +
-# visualization), NOT the real competition layout - real obstacle
-# positions are supervisor-specified at setup time and come from the
-# tablet over Bluetooth in the actual run.
+# This is a made-up layout for testing the pipeline end-to-end, NOT the real
+# competition layout - real obstacle positions are supervisor-specified at setup
+# time and come from the tablet over Bluetooth in the actual run.
+#
+# Symbols currently in task1_arena.sdf, for cross-reference when editing:
+#   id 1 -> 20_AlphabetA   id 2 -> 11_One   id 3 -> 36_ArrowUp
+#   id 4 -> 40_Stop        id 5 -> 12_Two
+# (id 4 was 99_Bullseye; swapped out so the test layout uses only ordinary
+# recognition targets. The bullseye is a special marker rather than one of the
+# numbered/lettered symbols - note yolo_detector.py maps both 'bullseye' and
+# 'circle' to id 99.)
+
 obstacles:
   - id: 1
     x: 0.50

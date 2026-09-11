@@ -23,11 +23,11 @@ from typing import Callable, List, Optional, Tuple
 
 import numpy as np
 
-from . import geometry_utils as utils
+from ..common import geometry_utils as utils
 from . import reeds_shepp_curves as rs
-from .motion_primitives import Gear, Steering
+from ..common.motion_primitives import Gear, Steering
 from .occupancy_map import GRID_SIZE, OccupancyMap, coords_to_grid
-from .planning_constants import REAR_AXLE_TO_CENTER_CM
+from ..common.planning_constants import REAR_AXLE_TO_CENTER_CM
 
 
 # How far off the checkpoint's exact heading is still "close enough" to

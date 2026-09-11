@@ -45,8 +45,14 @@ class PurePursuitController:
     """ROS-free pure-pursuit path follower: feed it a path and a stream of
     pose updates, pull a (linear_x, angular_z) /cmd_vel command each tick."""
 
+    # max_steering_angle is a single symmetric bound, so it must use the
+    # TIGHTER of the two measured sides or it will command angles the chassis
+    # cannot reach in one direction. Measured with a protractor at the wheel
+    # (2026-09-11): left +35.0deg (0.6109 rad), right -29.5deg (0.5149 rad) -
+    # right binds. Was 0.5672 (32.5deg), a figure whose claimed measurement was
+    # never performed; see docs/stm32/tuning.md#what-the-earlier-record-got-wrong.
     def __init__(self, wheelbase: float = 0.1433, lookahead_dist: float = 0.25,
-                 max_steering_angle: float = 0.5672, target_speed: float = 0.5,
+                 max_steering_angle: float = 0.5149, target_speed: float = 0.5,
                  goal_tolerance: float = 0.05):
         self.wheelbase = wheelbase
         self.lookahead_dist = lookahead_dist
@@ -133,7 +139,20 @@ class PurePursuitController:
 class PurePursuitFollower(Node):
     """Standalone node wrapper - see module docstring. Not part of the
     default launch graph; task1_runner.py uses PurePursuitController
-    directly instead so there's only one /cmd_vel publisher during Task 1."""
+    directly instead so there's only one /cmd_vel publisher during Task 1.
+
+    FRAME SCOPE: this node is NOT arena-frame aware. `odom_cb` below feeds
+    `/odometry/filtered` straight into the controller, and that message reports in
+    the dead-reckoning frame, so the pose this node tracks against is a
+    dead-reckoning pose. Paths given to `set_path` must therefore be expressed in
+    that same dead-reckoning frame - an arena-coordinate path (what task 1's
+    planner produces) would be tracked with a constant rotation and offset equal
+    to the robot's start pose. task1_runner.py handles that case by looking the
+    transform up in TF before it calls `update_pose`; if this standalone node ever
+    needs to drive an arena-frame path, it needs the same treatment.
+
+    `PurePursuitController` itself is frame-agnostic: it only requires that the
+    pose and the path share one frame, whichever that is."""
 
     def __init__(self):
         super().__init__('pure_pursuit_follower')

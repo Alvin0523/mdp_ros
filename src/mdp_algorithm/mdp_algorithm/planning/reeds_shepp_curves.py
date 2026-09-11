@@ -16,8 +16,8 @@ import math
 from dataclasses import dataclass, replace
 from typing import List, Tuple
 
-from .geometry_utils import M, R, change_of_basis
-from .motion_primitives import Gear, Steering
+from ..common.geometry_utils import M, R, change_of_basis
+from ..common.motion_primitives import Gear, Steering
 
 Pose = Tuple[float, float, float]
 

@@ -25,20 +25,86 @@ except ImportError:
 # AutoBackend detects the model format from the directory name itself
 # (every export format has its own required suffix: *_ncnn_model/,
 # *_saved_model/, *_openvino_model/, ...), not from the files inside it.
-DEFAULT_MODEL_PATH = os.path.join(
-    get_package_share_directory('mdp_yolo'), 'models', 'yolo26n_ncnn_model')
+MODELS_DIR = os.path.join(get_package_share_directory('mdp_yolo'), 'models')
+
+# Default to the latest MDP-trained model (classes = Arrow/Letter/Number/
+# Circle - the actual task symbols), NOT the stock yolo26n COCO model
+# (person/car/...) which cannot detect any MDP symbol. Available models:
+#   best_ncnn_model_v2  - latest MDP model (default)
+#   best_ncnn_model_v1  - older MDP model (kept for comparison)
+#   yolo26n_ncnn_model  - stock YOLO26n COCO net (debug only)
+# Switch with the `model_path` parameter (see vision.launch.py /
+# task2_sim.launch.py `model:=` launch arg), which accepts either a bare
+# model-dir name under models/ or an absolute path.
+DEFAULT_MODEL = 'best_ncnn_model_v2'
+
+
+def resolve_model_path(value: str) -> str:
+    """Accept either a bare model name (e.g. 'best_ncnn_model', resolved under
+    the package models/ dir) or an absolute/relative path to a model dir."""
+    if os.path.isabs(value) or os.path.sep in value:
+        return value
+    return os.path.join(MODELS_DIR, value)
+
+
+# Official MDP Target IDs (the number the tablet/professor scores by, sent as
+# <Target_ID> in `TARGET,<Obstacle_ID>,<Target_ID>` - see
+# docs/assessment_checklist.md C.9 / A.2). These are the same numbers that
+# prefix the asset PNG filenames (e.g. 20_AlphabetA.png -> 20), so the ID is
+# authoritative regardless of what a given model happens to name its classes.
+#
+# The model's class NAMES vary (best_ncnn_model uses "Letter A"/"Number 1"/
+# "Arrow Up"/"Circle"; a raw dataset export might use "AlphabetA"/"One"/...),
+# so we map by a normalised key (lowercased, non-alphanumerics stripped)
+# rather than the exact string. Publishing the ID - not the name - is what
+# lets task1_runner forward a meaningful <Target_ID> to the tablet.
+MDP_TARGET_IDS = {
+    # digits 1-9 -> 11-19
+    'one': 11, 'number1': 11, 'two': 12, 'number2': 12, 'three': 13, 'number3': 13,
+    'four': 14, 'number4': 14, 'five': 15, 'number5': 15, 'six': 16, 'number6': 16,
+    'seven': 17, 'number7': 17, 'eight': 18, 'number8': 18, 'nine': 19, 'number9': 19,
+    # letters A-H -> 20-27
+    'alphabeta': 20, 'lettera': 20, 'alphabetb': 21, 'letterb': 21,
+    'alphabetc': 22, 'letterc': 22, 'alphabetd': 23, 'letterd': 23,
+    'alphabete': 24, 'lettere': 24, 'alphabetf': 25, 'letterf': 25,
+    'alphabetg': 26, 'letterg': 26, 'alphabeth': 27, 'letterh': 27,
+    # letters S,T,U,V,W,X,Y,Z -> 28-35
+    'alphabets': 28, 'letters': 28, 'alphabett': 29, 'lettert': 29,
+    'alphabetu': 30, 'letteru': 30, 'alphabetv': 31, 'letterv': 31,
+    'alphabetw': 32, 'letterw': 32, 'alphabetx': 33, 'letterx': 33,
+    'alphabety': 34, 'lettery': 34, 'alphabetz': 35, 'letterz': 35,
+    # arrows + stop -> 36-40
+    'arrowup': 36, 'up': 36, 'uparrow': 36,
+    'arrowdown': 37, 'down': 37, 'downarrow': 37,
+    'arrowright': 38, 'right': 38, 'rightarrow': 38,
+    'arrowleft': 39, 'left': 39, 'leftarrow': 39,
+    'stop': 40,
+    # bullseye -> 99
+    'bullseye': 99, 'circle': 99,
+}
+
+
+def _normalise_label(name: str) -> str:
+    """Lowercase and strip everything but a-z0-9, so 'Letter A', 'letter_a',
+    'AlphabetA' all collapse to 'lettera'/'alphabeta' consistently."""
+    return ''.join(ch for ch in name.lower() if ch.isalnum())
+
+
+def label_to_target_id(name: str):
+    """Model class name -> official MDP Target ID (int), or None if unknown."""
+    return MDP_TARGET_IDS.get(_normalise_label(name))
 
 class YoloDetector(Node):
     def __init__(self):
         super().__init__('yolo_detector')
 
         self.declare_parameter('camera_topic', '/image_raw')
-        self.declare_parameter('model_path', DEFAULT_MODEL_PATH)
+        self.declare_parameter('model_path', DEFAULT_MODEL)
         self.declare_parameter('result_topic', '/yolo_result')
         self.declare_parameter('annotated_topic', '/yolo_result/image_annotated')
 
         camera_topic = self.get_parameter('camera_topic').value
-        model_path = self.get_parameter('model_path').value
+        model_path = resolve_model_path(self.get_parameter('model_path').value)
         result_topic = self.get_parameter('result_topic').value
         annotated_topic = self.get_parameter('annotated_topic').value
 
@@ -97,11 +163,17 @@ class YoloDetector(Node):
         out_msg.header = header
         self.annotated_pub.publish(out_msg)
 
-    def publish_detection(self, detection: str):
+    def publish_detection(self, target_id: str, class_name: str = None):
+        # /yolo_result carries the official MDP Target ID string (e.g. "20"),
+        # which task1_runner forwards verbatim as TARGET,<obs>,<target_id>.
         msg = String()
-        msg.data = detection
+        msg.data = target_id
         self.result_pub.publish(msg)
-        self.get_logger().info(f"[mdp_yolo] YOLO Detected: {detection}")
+        if class_name is not None:
+            self.get_logger().info(
+                f"[mdp_yolo] YOLO Detected: {class_name} -> Target ID {target_id}")
+        else:
+            self.get_logger().info(f"[mdp_yolo] YOLO Detected Target ID {target_id}")
 
 def main(args=None):
     rclpy.init(args=args)

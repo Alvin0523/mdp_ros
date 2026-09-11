@@ -53,41 +53,11 @@
       </link>
     </model>
 
-    <!-- Obstacle 1 (10cm x 10cm x 20cm at x=1.0m, y=0.0m) -->
-    <model name="obstacle_1">
-      <static>true</static>
-      <pose>1.0 0.0 0.10 0 0 0</pose>
-      <link name="link">
-        <collision name="collision">
-          <geometry><box><size>0.10 0.10 0.20</size></box></geometry>
-        </collision>
-        <visual name="visual">
-          <geometry><box><size>0.10 0.10 0.20</size></box></geometry>
-          <material>
-            <ambient>0.8 0.2 0.2 1</ambient>
-            <diffuse>0.8 0.2 0.2 1</diffuse>
-          </material>
-        </visual>
-      </link>
-    </model>
-
-    <!-- Obstacle 2 (10cm x 30cm x 20cm at x=1.8m, y=0.0m) -->
-    <model name="obstacle_2">
-      <static>true</static>
-      <pose>1.8 0.0 0.10 0 0 0</pose>
-      <link name="link">
-        <collision name="collision">
-          <geometry><box><size>0.10 0.30 0.20</size></box></geometry>
-        </collision>
-        <visual name="visual">
-          <geometry><box><size>0.10 0.30 0.20</size></box></geometry>
-          <material>
-            <ambient>0.2 0.2 0.8 1</ambient>
-            <diffuse>0.2 0.2 0.8 1</diffuse>
-          </material>
-        </visual>
-      </link>
-    </model>
+    <!-- Obstacles are NOT hardcoded here. They are spawned at runtime by
+         mdp_bringup/scripts/spawn_obstacles.py from test_obstacles.yaml (with
+         a symbol-image decal on the `facing` side, and an optional randomize
+         switch). Keeping them out of the static world lets one YAML drive both
+         the Gazebo scene and the planner (/obstacle_setup) without drift. -->
 
   </world>
 </sdf>
