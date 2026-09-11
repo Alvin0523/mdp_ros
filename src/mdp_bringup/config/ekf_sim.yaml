@@ -1,0 +1,108 @@
+ekf_filter_node:
+  ros__parameters:
+    # SIM OVERLAY - a separate file from ekf.yaml on purpose.
+    #
+    # Hardware localization is out of scope for the frame fix, so config/ekf.yaml
+    # is not edited, not included and not layered under this file: the sim reads
+    # this one and only this one. Three things differ from hardware, and each of
+    # them is a property of the simulator rather than a tuning preference:
+    #
+    #   1. publish_tf: false     - the ackermann_steering_controller already owns
+    #                              odom -> base_footprint in sim
+    #   2. base_link_frame       - the sim URDF roots at base_footprint
+    #   3. no imu0               - nothing bridges an IMU out of Gazebo
+    #
+    # Everything else (rate, two_d_mode, odom0 fusion mask, rejection thresholds,
+    # covariances) is deliberately the same as hardware, so /odometry/filtered in
+    # sim behaves like the real thing.
+
+    # --- Timing ---
+    frequency: 100.0
+    two_d_mode: true      # ground vehicle - locks z/roll/pitch/vz/vroll/vpitch/az to 0
+
+    # The ackermann_steering_controller broadcasts odom -> base_footprint in sim
+    # (ackermann_controller.yaml, enable_odom_tf: true), and that edge may have
+    # exactly one owner. So this instance is a pure ESTIMATOR here: it publishes
+    # /odometry/filtered for task1_runner to consume and broadcasts nothing.
+    # On hardware the arrangement is inverted - the controller stands down
+    # (real_controller.yaml, enable_odom_tf: false) and the EKF owns the edge.
+    publish_tf: false
+    print_diagnostics: true
+
+    # Only one input is configured below, and Gazebo publishes it continuously,
+    # so this timeout is effectively never reached.
+    sensor_timeout: 0.5
+
+    # --- Frames ---
+    map_frame: map              # arena frame; the static map -> odom broadcaster owns that edge, not this node
+    odom_frame: odom
+    # base_footprint, NOT base_link: mini_akm_robot.urdf (sim) roots at
+    # base_footprint, and the controller reports its odometry against that same
+    # link (ackermann_controller.yaml, base_frame_id: base_footprint). The
+    # hardware URDF (mini_akm_real_robot.urdf) roots at base_link, which is why
+    # ekf.yaml names the other one.
+    base_link_frame: base_footprint
+    world_frame: odom           # single EKF instance operating in the odom frame (no map-fusion stage)
+
+    use_sim_time: true          # Gazebo's /clock, like every other node in the sim launch
+
+    # --- Input 0: wheel odometry (ackermann_steering_controller) ---
+    # Same mask as hardware: forward velocity and yaw rate only, never the
+    # controller's own dead-reckoned x/y/yaw.
+    odom0: /ackermann_steering_controller/odometry
+    odom0_config: [false, false, false,   # x,  y,  z
+                   false, false, false,   # roll, pitch, yaw
+                   true,  false, false,   # vx, vy, vz
+                   false, false, true,    # vroll, vpitch, vyaw
+                   false, false, false]   # ax, ay, az
+    odom0_differential: false
+    odom0_relative: false
+
+    # --- Deliberately NO imu0 ---
+    # Nothing bridges an IMU out of Gazebo (see the parameter_bridge arguments in
+    # task1_sim.launch.py - /clock, /tf and the camera, no /imu/data), so
+    # configuring imu0 here would register an input that never produces a
+    # message. robot_localization does not treat a silent input as absent: it
+    # waits on it, and combined with sensor_timeout that yields stretches where
+    # the filter runs prediction-only and /odometry/filtered drifts away from the
+    # controller's odometry for no reason visible in the sim. Omitting the input
+    # is the correct model of "this robot has no IMU right now".
+
+    # --- Outlier rejection ---
+    odom0_twist_rejection_threshold: 2.0
+
+    # --- Process/initial covariance ---
+    # Copied from ekf.yaml unchanged: the plant is the same chassis, and keeping
+    # them identical means sim behaviour is informative about hardware behaviour.
+    # Same caveat applies - an unvalidated starting point, not spec values.
+    process_noise_covariance: [0.05, 0.0,  0.0,  0.0,  0.0,  0.0,  0.0,   0.0,   0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                                0.0,  0.05, 0.0,  0.0,  0.0,  0.0,  0.0,   0.0,   0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                                0.0,  0.0,  0.06, 0.0,  0.0,  0.0,  0.0,   0.0,   0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                                0.0,  0.0,  0.0,  0.03, 0.0,  0.0,  0.0,   0.0,   0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                                0.0,  0.0,  0.0,  0.0,  0.03, 0.0,  0.0,   0.0,   0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                                0.0,  0.0,  0.0,  0.0,  0.0,  0.06, 0.0,   0.0,   0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                                0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.025, 0.0,   0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                                0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,   0.025, 0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                                0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,   0.0,   0.04, 0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                                0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,   0.0,   0.0,  0.01, 0.0,  0.0,  0.0,  0.0,  0.0,
+                                0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,   0.0,   0.0,  0.0,  0.01, 0.0,  0.0,  0.0,  0.0,
+                                0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,   0.0,   0.0,  0.0,  0.0,  0.02, 0.0,  0.0,  0.0,
+                                0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,   0.0,   0.0,  0.0,  0.0,  0.0,  0.01, 0.0,  0.0,
+                                0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,   0.0,   0.0,  0.0,  0.0,  0.0,  0.0,  0.01, 0.0,
+                                0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,   0.0,   0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.015]
+
+    initial_estimate_covariance: [1e-9, 0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                                   0.0,  1e-9, 0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                                   0.0,  0.0,  1e-9, 0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                                   0.0,  0.0,  0.0,  1e-9, 0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                                   0.0,  0.0,  0.0,  0.0,  1e-9, 0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                                   0.0,  0.0,  0.0,  0.0,  0.0,  1e-9, 0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                                   0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  1e-9, 0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                                   0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  1e-9, 0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                                   0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  1e-9, 0.0,  0.0,  0.0,  0.0,  0.0,  0.0,
+                                   0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  1e-9, 0.0,  0.0,  0.0,  0.0,  0.0,
+                                   0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  1e-9, 0.0,  0.0,  0.0,  0.0,
+                                   0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  1e-9, 0.0,  0.0,  0.0,
+                                   0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  1e-9, 0.0,  0.0,
+                                   0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  1e-9, 0.0,
+                                   0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  0.0,  1e-9]

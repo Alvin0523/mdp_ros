@@ -1,11 +1,21 @@
 import os
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import IncludeLaunchDescription, SetEnvironmentVariable
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, SetEnvironmentVariable
 from launch.launch_description_sources import PythonLaunchDescriptionSource
+from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
 def generate_launch_description():
+    # Which YOLO model the sim detector loads. Defaults to the latest MDP-
+    # trained model (best_ncnn_model_v2); override e.g.
+    # `model:=best_ncnn_model_v1` or `model:=yolo26n_ncnn_model` (stock COCO).
+    model_arg = DeclareLaunchArgument(
+        'model',
+        default_value='best_ncnn_model_v2',
+        description='YOLO model dir name under mdp_yolo/models/ or an absolute path'
+    )
+
     pkg_description = get_package_share_directory('mdp_description')
     pkg_bringup = get_package_share_directory('mdp_bringup')
     pkg_ros_gz_sim = get_package_share_directory('ros_gz_sim')
@@ -73,7 +83,10 @@ def generate_launch_description():
         executable='parameter_bridge',
         arguments=[
             '/clock@rosgraph_msgs/msg/Clock[gz.msgs.Clock',
-            '/cmd_vel@geometry_msgs/msg/Twist@gz.msgs.Twist',
+            # /cmd_vel NOT bridged - the runner publishes TwistStamped and the
+            # ackermann controller (gz_ros2_control, use_stamped_vel) subscribes
+            # to it in ROS directly. Bridging it as gz.msgs.Twist added a
+            # mismatched second advertiser. See task1_sim.launch.py note.
             '/tf@tf2_msgs/msg/TFMessage[gz.msgs.Pose_V',
             '/camera/image_raw@sensor_msgs/msg/Image[gz.msgs.Image',
             '/camera/camera_info@sensor_msgs/msg/CameraInfo[gz.msgs.CameraInfo'
@@ -82,30 +95,38 @@ def generate_launch_description():
         parameters=[{'use_sim_time': True}]
     )
 
-    joint_state_broadcaster_spawner = Node(
-        package='controller_manager',
-        executable='spawner',
-        arguments=['joint_state_broadcaster', '--controller-manager', '/controller_manager'],
-        output='screen'
-    )
-
-    ackermann_controller_spawner = Node(
-        package='controller_manager',
-        executable='spawner',
-        arguments=['ackermann_steering_controller', '--controller-manager', '/controller_manager'],
-        remappings=[
-            ('/ackermann_steering_controller/reference', '/cmd_vel')
-        ],
-        output='screen'
-    )
+    # NO controller spawner - the gz_ros2_control plugin in the URDF loads +
+    # activates both controllers itself from ackermann_controller.yaml (see
+    # the note in task1_sim.launch.py). A spawner is redundant and dies with
+    # "already loaded / Failed to configure".
 
     yolo_detector = Node(
         package='mdp_yolo',
         executable='yolo_detector.py',
-        parameters=[{'camera_topic': '/camera/image_raw'}],
+        parameters=[{
+            'camera_topic': '/camera/image_raw',
+            'model_path': LaunchConfiguration('model')
+        }],
         output='screen'
     )
 
+    # Spawns the obstacles (with symbol-image decals) from test_obstacles.yaml
+    # into the running Gazebo world - the camera/vision half (what YOLO sees).
+    # It waits on Gazebo's spawn service, so ordering against gz_sim_server is
+    # handled internally (no timing hack).
+    obstacles_config = os.path.join(pkg_bringup, 'config', 'test_obstacles.yaml')
+    spawn_obstacles = Node(
+        package='mdp_bringup',
+        executable='spawn_obstacles.py',
+        arguments=[obstacles_config, '--world', 'task2_arena'],
+        parameters=[{'use_sim_time': True}],
+        output='screen'
+    )
+
+    # Task 2 runner (the brain). Comes up idle (WAITING_FOR_START) - there is
+    # NO obstacle setup for task 2 (fixed slalom), so it just holds until
+    # `pixi run go` (the /start_run service). use_sim_time tracks Gazebo's
+    # /clock. So sim2 = this bring-up, then `go`.
     task2_runner = Node(
         package='mdp_bringup',
         executable='task2_runner.py',
@@ -114,6 +135,7 @@ def generate_launch_description():
     )
 
     return LaunchDescription([
+        model_arg,
         gz_resource_path,
         gz_plugin_path,
         ign_plugin_path,
@@ -122,8 +144,7 @@ def generate_launch_description():
         robot_state_publisher,
         spawn_robot,
         gz_bridge,
-        joint_state_broadcaster_spawner,
-        ackermann_controller_spawner,
         yolo_detector,
+        spawn_obstacles,
         task2_runner
     ])

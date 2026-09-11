@@ -59,22 +59,36 @@
     <parent link="base_link" />
     <child link="left_link" />
     <axis xyz="0 0 1" />
-    <!-- 0.5672 rad = 32.5deg - steering angle, physically measured with a
-         protractor at the wheel (not a servo/pulse-derived estimate).
-         Single shared servo/linkage driving both front wheels, servo
-         connects directly to the right wheel, right connects to left via
-         a tie-rod. 8 raw readings taken across 2 measurement sessions
-         (both wheels, at both firmware-clamped commanded extremes);
-         rounding each to the nearest 0.5deg and taking the mode gives
-         32.5deg (3 of 8 readings agree there, vs. 2 for the next-most-
-         common value) - confirmed independently using just the 4
-         right-wheel-only readings (right is the directly-driven side,
-         closer to the servo), which also mode to 32.5deg. See
-         docs/stm32/control_loop.md ("Servo range") for the full
-         precision analysis and reading-by-reading breakdown. Was 0.39 rad
-         (~22.35deg, the HWZ020 servo's bare datasheet spec) before
-         physical measurement. -->
-    <limit lower="-0.5672" upper="0.5672" effort="10.0" velocity="5.0" />
+    <!-- ASYMMETRIC, from protractor readings at the wheel (2026-09-11):
+           upper =  0.6109 rad =  35.0deg  (full left,  840us pulse)
+           lower = -0.5149 rad = -29.5deg  (full right, 2400us pulse)
+         Sign per REP-103: positive = CCW = left.
+
+         Single shared servo/linkage drives both front wheels - servo to the
+         right wheel's knuckle, then tie-rod across to the left.
+
+         REPLACES a previous symmetric +/-0.5672 rad (32.5deg) whose comment
+         described a detailed 8-reading, 2-session measurement that was never
+         actually performed. Treat that value as unfounded, not as a
+         second opinion. Before that it was +/-0.39 rad, the HWZ020 servo's
+         bare datasheet spec, which describes the servo's own internal travel
+         rather than the angle this linkage achieves at the wheel.
+
+         KNOWN LIMITATION - both joints currently carry the SAME pair of
+         limits, which is not strictly correct. Ackermann geometry steers the
+         inner wheel harder than the outer, so left_joint and right_joint
+         should differ. Which physical wheel each of the two readings above
+         came from was not recorded, so the 35.0/29.5 pair cannot yet be
+         split per wheel; it is possible that gap is itself inner-vs-outer
+         rather than left-vs-right. Resolving it needs four readings: both
+         wheels at both locks. Until then these are the measured envelope of
+         steering travel, applied to both joints.
+
+         Firmware side: mdp_stm32 servo.h SERVO_ANGLE_MAX_LEFT_RAD /
+         SERVO_ANGLE_MAX_RIGHT_RAD hold the same two values, and
+         servo_set_angle() now takes a REAL angle, so these agree by
+         construction. See docs/stm32/tuning.md. -->
+    <limit lower="-0.5149" upper="0.6109" effort="10.0" velocity="5.0" />
   </joint>
 
   <link name="right_link">
@@ -88,8 +102,10 @@
     <parent link="base_link" />
     <child link="right_link" />
     <axis xyz="0 0 1" />
-    <!-- See left_joint's comment above - same measured, mode-based value. -->
-    <limit lower="-0.5672" upper="0.5672" effort="10.0" velocity="5.0" />
+    <!-- Same measured values as left_joint - see its comment above, including
+         why both joints currently share one pair of limits when Ackermann
+         geometry says they should differ. -->
+    <limit lower="-0.5149" upper="0.6109" effort="10.0" velocity="5.0" />
   </joint>
 
   <ros2_control name="TopicBasedSystem" type="system">

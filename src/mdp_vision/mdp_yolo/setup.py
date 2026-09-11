@@ -13,8 +13,15 @@ setup(
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
         (os.path.join('share', package_name, 'launch'), glob('launch/*.launch.py')),
-        (os.path.join('share', package_name, 'models', 'yolo26n_ncnn_model'),
-            [f for f in glob('models/yolo26n_ncnn_model/*') if os.path.isfile(f)]),
+        # Install every exported model dir under models/ (best_ncnn_model =
+        # MDP-trained default, yolo26n_ncnn_model = stock COCO debug net), each
+        # to its own share/mdp_yolo/models/<name>/ so the detector's
+        # model_path=<name> switch can resolve any of them.
+        *[
+            (os.path.join('share', package_name, 'models', os.path.basename(d)),
+                [f for f in glob(os.path.join(d, '*')) if os.path.isfile(f)])
+            for d in glob('models/*') if os.path.isdir(d)
+        ],
         (os.path.join('share', package_name, 'config'), glob('config/*.yaml')),
     ],
     install_requires=['setuptools'],

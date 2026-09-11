@@ -18,7 +18,7 @@ from typing import Callable, List, Optional, Tuple
 from .hamiltonian import Hamiltonian, obstacle_to_checkpoint
 from .hybrid_astar import HybridAStar
 from .occupancy_map import Obstacle, OccupancyMap
-from .planning_constants import MIN_TURN_RADIUS_CM
+from ..common.planning_constants import MIN_TURN_RADIUS_CM
 
 CM_PER_M = 100.0
 
@@ -97,6 +97,78 @@ def plan_visiting_order(obstacles_grid: List[ObstacleSpec], start_pose_m: Pose,
         checkpoints_m.append((checkpoint[0] / CM_PER_M, checkpoint[1] / CM_PER_M, checkpoint[2]))
 
     return visiting_order, checkpoints_m, unreachable, occ_map
+
+
+def plan_visiting_order_min_time(
+        obstacles_grid: List[ObstacleSpec], start_pose_m: Pose,
+        theta_offset: float = 0.0, step_cm: float = 5.0,
+        min_turn_radius_cm: Optional[float] = None, theta_bins: int = 24,
+        forward_speed: float = 20.0, reverse_speed: float = 15.0,
+        gear_change_time: float = 0.5, steering_change_time: float = 0.15,
+        recognition_seconds: float = 1.0,
+        ) -> Tuple[List[int], List[Pose], List[int], OccupancyMap, List[List[Pose]]]:
+    """OPT-IN alternative to plan_visiting_order(): orders obstacle visits by
+    exact minimum DRIVE TIME instead of Reeds-Shepp distance.
+
+    Unlike plan_visiting_order() (cheap, distance-based, returns in ~ms so the
+    robot can start moving immediately), this runs a full collision-aware
+    Hybrid A* search for every ordered pair of {start, reachable checkpoints}
+    and a Held-Karp DP over those calibrated leg times to pick the order that
+    minimises actual drive time (a "near" obstacle behind a wall is correctly
+    costed as slow). See hamiltonian.Hamiltonian.find_shortest_time_order().
+
+    TRADEOFF (why this is opt-in, not the default): it must plan ALL N^2+N legs
+    up front before the order is known - several seconds of the robot sitting
+    still on Pi-class hardware - which fights the current "start driving after
+    the FIRST leg" async design. To avoid wasting that work, the dense leg
+    paths it already computed are RETURNED (5th element) in metres, in
+    visiting order, so the caller can load them straight into its follower
+    instead of calling plan_leg() again.
+
+    Returns the SAME first four elements as plan_visiting_order()
+    (visiting_order obstacle indices, checkpoints_m, unreachable, occ_map),
+    PLUS:
+        leg_paths_m: one dense List[Pose] (metres/radians) per visited
+            obstacle, same order as visiting_order - leg_paths_m[0] is
+            start->first target, leg_paths_m[i] is target[i-1]->target[i].
+            These are the exact paths plan_leg() would have produced for the
+            same endpoints (same step_cm/theta_bins/minR), so they are safe to
+            reuse directly. Never empty (only successfully-searched legs form a
+            complete route); if no complete route exists, visiting_order is
+            empty and every obstacle is reported unreachable.
+    """
+    minR = min_turn_radius_cm if min_turn_radius_cm is not None else MIN_TURN_RADIUS_CM
+
+    obstacles = [Obstacle(x_cm=x_cm, y_cm=y_cm, facing=facing, id=i)
+                 for i, (x_cm, y_cm, facing) in enumerate(obstacles_grid)]
+    occ_map = OccupancyMap(obstacles)
+
+    x0_cm = start_pose_m[0] * CM_PER_M
+    y0_cm = start_pose_m[1] * CM_PER_M
+    theta0 = start_pose_m[2]
+
+    tsp = Hamiltonian(occ_map, obstacles, x0_cm, y0_cm, theta0,
+                      theta_offset=theta_offset, metric='reeds-shepp', minR=minR)
+    order_obstacles, leg_node_paths, _total_time, unreachable_obs = tsp.find_shortest_time_order(
+        L=step_cm, thetaBins=theta_bins,
+        forward_speed=forward_speed, reverse_speed=reverse_speed,
+        gear_change_time=gear_change_time, steering_change_time=steering_change_time,
+        recognition_seconds=recognition_seconds)
+
+    unreachable = [o.id for o in unreachable_obs]
+    visiting_order = [o.id for o in order_obstacles]
+
+    checkpoints_m: List[Pose] = []
+    for obstacle in order_obstacles:
+        checkpoint = obstacle_to_checkpoint(occ_map, obstacle, theta_offset)
+        checkpoints_m.append((checkpoint[0] / CM_PER_M, checkpoint[1] / CM_PER_M, checkpoint[2]))
+
+    leg_paths_m: List[List[Pose]] = [
+        [(n.x / CM_PER_M, n.y / CM_PER_M, n.theta) for n in leg]
+        for leg in leg_node_paths
+    ]
+
+    return visiting_order, checkpoints_m, unreachable, occ_map, leg_paths_m
 
 
 def plan_leg(occ_map: OccupancyMap, start_pose_m: Pose, target_pose_m: Pose,
