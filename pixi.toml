@@ -6,25 +6,110 @@ platforms = ["linux-64", "linux-aarch64", "osx-arm64"]
 version = "0.1.0"
 
 [tasks]
-# Workspace
+
+# ---------------------------------------------------------------------------
+# Workspace lifecycle
+# ---------------------------------------------------------------------------
 build = "colcon build --symlink-install"
 test = "colcon test"
 clean = "rm -rf build install log"
 
-# Simulation (Gazebo)
+# ---------------------------------------------------------------------------
+# Simulation (Gazebo) - self-contained, mirrors the real flow minus the tablet.
+# Each sim* launch brings up the arena + robot + camera + YOLO + obstacle
+# decals + the task runner (idle), all use_sim_time:=true. Then `pixi run go`
+# starts the car. Pick the YOLO model with `model:=` (default
+# best_ncnn_model_v2; also best_ncnn_model_v1, yolo26n_ncnn_model for debug).
+# ---------------------------------------------------------------------------
+# Bare robot in an empty world (drive/controller bring-up, no arena, no task).
 sim = "ros2 launch mdp_bringup sim.launch.py"
-sim-task2 = "ros2 launch mdp_bringup task2_sim.launch.py"
+# TASK 1 sim (2x2 exploration arena, robot at planner start pose). Also
+# auto-feeds the obstacle layout to the planner (= real's `setup`, automatic),
+# so the runner plans and HOLDS. Then: pixi run go
+sim1 = "ros2 launch mdp_bringup task1_sim.launch.py"
+# TASK 2 sim (fixed slalom arena). No setup - runner just HOLDS. Then: pixi run go
+sim2 = "ros2 launch mdp_bringup task2_sim.launch.py"
 
-# Real hardware (Pi + STM32)
-real = "ros2 launch mdp_bringup real.launch.py serial_port:=/dev/ttyACM0"
-task1 = "ros2 run mdp_bringup task1_runner.py --ros-args --params-file $(ros2 pkg prefix mdp_bringup)/share/mdp_bringup/config/occupancy_grid_viz.yaml"
-task2 = "ros2 run mdp_bringup task2_runner.py"
+# ---------------------------------------------------------------------------
+# Real hardware (Pi + STM32) - tablet-driven flow. Hardware bringup is
+# identical for both tasks; `real`/`real2` only pick which runner comes up.
+# `go` (the /start_run service) is shared by both runners; `setup` is task1-only.
+# ---------------------------------------------------------------------------
+# TASK 1 (explore + recognise), 3 phases:
+#   1. pixi run real1  -> hardware + camera + YOLO + task1 runner (idle).
+#   2. pixi run setup  -> publish obstacles -> runner plans, then HOLDS.
+#   3. pixi run go     -> car drives.
+real1 = "ros2 launch mdp_bringup real.launch.py serial_port:=/dev/ttyACM0 task:=1"
+# TASK 2 (fixed slalom, no setup), 2 phases:
+#   1. pixi run real2  -> hardware + camera + YOLO + task2 runner (idle).
+#   2. pixi run go     -> car drives the slalom path.
+real2 = "ros2 launch mdp_bringup real.launch.py serial_port:=/dev/ttyACM0 task:=2"
+# Task 1 phase 2 (stand-in for the tablet sending obstacle positions/facings).
+setup = "ros2 run mdp_bringup publish_test_obstacles.py"
+# Shared move trigger (stand-in for the tablet's "start now"). Calls
+# /start_run; only accepted when the runner is ready, else prints why and
+# exits non-zero. Works for ALL of real1/real2/sim1/sim2 (any task1/task2 runner).
+go = "ros2 run mdp_bringup go.py"
 teleop = "ros2 run teleop_twist_keyboard teleop_twist_keyboard --ros-args -p stamped:=true"
+# Drive a straight line for a set distance, closed-loop on wheel odometry.
+# Needs real1/real2 up. Distance in metres, negative reverses:
+#   pixi run dist 2.0
+#   pixi run dist 2.0 --speed 0.1
+# Then TAPE-MEASURE what it actually travelled - that calibrates the distance
+# scale (wheel radius x ticks-per-rev), neither of which has been measured on
+# this chassis. See the script's docstring.
+dist = "ros2 run mdp_bringup drive_distance.py"
 
-# Vision & debugging
+# ---------------------------------------------------------------------------
+# Simulation symbol assets (obstacle decals) - see docs/rpi/sim_assets.md
+#
+# Gazebo needs THREE files per symbol, split by kind under
+# mdp_description/models/symbols/:
+#     panels/<stem>.obj + <stem>.mtl   geometry
+#     textures/<stem>.png              image
+# The world SDF names only the .obj; the chain is
+#     task1_arena.sdf -> .obj -> .mtl (map_Kd) -> ../textures/<stem>.png
+# so a PNG can be swapped with no SDF edit, as long as the name is unchanged.
+# ---------------------------------------------------------------------------
+# Regenerate the panel meshes. RUN THIS after adding or removing a symbol PNG -
+# nothing does it automatically, not even the build. Scans textures/ for *.png
+# and writes a matching .obj + .mtl into panels/ for each. Idempotent.
+panels = "python src/mdp_description/scripts/gen_symbol_meshes.py"
+# Import new source images as 512x512 RGB into textures/ (downscale + drop the
+# fully-opaque alpha channel), then follow with `pixi run panels`:
+#   pixi run import-symbols ~/Desktop/assets
+# The repo keeps ONLY the 512x512 result - no higher-res master - so keep the
+# original crops somewhere outside the tree.
+import-symbols = "python src/mdp_description/scripts/import_symbol_textures.py"
+
+# ---------------------------------------------------------------------------
+# Vision (YOLO)
+# ---------------------------------------------------------------------------
+# Real camera + detector. Switch model with `model:=` (default
+# best_ncnn_model_v2 = latest MDP symbols; best_ncnn_model_v1 = older;
+# yolo26n_ncnn_model = stock COCO debug net):
+#   pixi run vision model:=best_ncnn_model_v1
 vision = "ros2 launch mdp_yolo vision.launch.py"
+
+# ---------------------------------------------------------------------------
+# Test fixtures / dev helpers (no tablet-over-Bluetooth in the loop)
+# ---------------------------------------------------------------------------
+# Feed the PLANNER a made-up obstacle layout (id/x/y/facing only) from
+# config/test_obstacles.yaml, standing in for the tablet's /obstacle_setup.
+publish-obstacles = "ros2 run mdp_bringup publish_test_obstacles.py"
+# NOTE: this feeds the PLANNER only. The sim's obstacles are a separate thing -
+# they live directly in mdp_description/worlds/task1_arena.sdf, which sim1/sim2
+# load as-is. To change the sim layout or which symbol is on which face, edit
+# that SDF and relaunch; test_obstacles.yaml has no effect on the sim.
+# (It used to, via generate_arena_world.py - deleted 2026-09-11, nothing
+# invoked it. Keep the YAML's x/y/facing in step with the SDF by hand, or the
+# planner and the simulator will disagree about where the obstacles are.)
+
+# ---------------------------------------------------------------------------
+# Debugging / recording
+# ---------------------------------------------------------------------------
 # use_sim_time defaults false (real hardware has no /clock); when pairing
-# with `sim`/`sim-task2`, override with: pixi run foxglove use_sim_time:=true
+# with `sim`/`sim1`/`sim2`, override with: pixi run foxglove use_sim_time:=true
 foxglove = "ros2 launch foxglove_bridge foxglove_bridge_launch.xml"
 # records every topic into a timestamped dir under bags/. -a and explicit
 # topics are mutually exclusive in ros2 bag, so for specific topics only,
@@ -78,6 +163,7 @@ opencv = "*"
 libblas = { version = "*", build = "*openblas" }
 liblapack = { version = "*", build = "*openblas" }
 
+
 # Build tools (colcon-common-extensions provides the colcon CLI itself;
 # compilers + cmake are needed for the CMake-based packages: mdp_bridge,
 # mdp_bringup, mdp_description)
@@ -107,11 +193,8 @@ ros-jazzy-image-transport = "*"
 
 [pypi-dependencies]
 ultralytics = "*"
-# NCNN export/runtime: ultralytics needs these to export to and run the .ncnn
-# model format. NCNN doesn't route inference through torch's BLAS backend at
-# all, sidestepping the wrong-BLAS-variant/CUDA-wheel crashes hit trying to
-# run yolo_detector.py's .pt model directly on the Pi's Cortex-A72 -
-# see docs/pi-camera-vision.md "Known open issues" #1.
+torch = { version = "==2.8.0", index = "https://download.pytorch.org/whl/cpu" }
+torchvision = { version = "==0.23.0", index = "https://download.pytorch.org/whl/cpu" }
 ncnn = "*"
 pnnx = "*"
 
@@ -120,8 +203,4 @@ scripts = ["install/setup.bash"]
 
 [activation.env]
 ROS_DOMAIN_ID = "0"
-# Both names are read by libgz-sim8 itself (GZ_SIM_* is current, IGN_GAZEBO_*
-# is a legacy fallback it still checks) to find libgz_ros2_control-system.so,
-# which installs straight into lib/ rather than gz-sim's default plugin path.
 GZ_SIM_SYSTEM_PLUGIN_PATH = "$CONDA_PREFIX/lib"
-IGN_GAZEBO_SYSTEM_PLUGIN_PATH = "$CONDA_PREFIX/lib"

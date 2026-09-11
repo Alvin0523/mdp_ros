@@ -8,13 +8,22 @@ Ported from the teammate's mdp_algo package (pathfinding/hamiltonian.py) -
 includes their reachability fix (obstacles with no valid collision-free
 scan checkpoint are skipped, not crashed on). pygame/random-generation/
 print-grid demo helpers dropped (display-only, not planning logic).
-Deliberately NOT ported: find_shortest_time_hamiltonian()/path_travel_time()
-- the full permutation-of-Hybrid-A*-edges "exact minimum-time route" variant.
-It is correct in principle but runs a full HybridAStar search for every
-ordered pair of obstacles before even picking a visit order (expensive on
-Pi-class hardware for marginal benefit over the euclidean/reeds-shepp
-nearest-neighbour ordering here) - left as a possible future upgrade, not
-wired into collision_aware_planner.py.
+
+Two ordering families live here:
+  - Distance-based (find_brute_force_path/find_nearest_neighbor_path): cheap,
+    orders by straight-line or Reeds-Shepp distance between checkpoints. This
+    is the default fast path used by collision_aware_planner.plan_visiting_order().
+  - Time-based (find_shortest_time_order + path_travel_time): the exact
+    minimum-TIME route. It runs a full HybridAStar search (cost_mode='time')
+    for every ordered pair of {start, reachable checkpoints}, then a Held-Karp
+    DP over those calibrated leg times picks the optimal visit order. This
+    orders by ACTUAL collision-aware drive time (a "near" obstacle behind a
+    wall is correctly costed as slow), not straight-line distance - at the
+    price of N^2+N Hybrid A* searches up front before the order is known.
+    Opt-in only (see collision_aware_planner.plan_visiting_order_min_time()),
+    NOT the default, precisely because of that up-front cost on Pi-class
+    hardware. The leg node-paths it computes are returned so the caller can
+    reuse them instead of re-searching each leg.
 """
 
 from itertools import permutations
@@ -22,8 +31,9 @@ from typing import List, Optional, Tuple
 
 import numpy as np
 
-from . import geometry_utils as utils
+from ..common import geometry_utils as utils
 from . import reeds_shepp_curves as rs
+from ..common.motion_primitives import Gear, Steering
 from .occupancy_map import INFLATION_RADIUS_CM, Obstacle, OccupancyMap
 
 Checkpoint = Tuple[float, float, float, int]  # (x_cm, y_cm, theta_rad, obstacle_id)
@@ -156,6 +166,174 @@ class Hamiltonian:
             current_pos = self._checkpoint_cache[nearest.id]
 
         return path
+
+    def find_shortest_time_order(
+        self, L: float = 5.0, thetaBins: int = 24,
+        forward_speed: float = 20.0, reverse_speed: float = 15.0,
+        gear_change_time: float = 0.5, steering_change_time: float = 0.15,
+        recognition_seconds: float = 1.0,
+    ) -> Tuple[List[Obstacle], List[list], float, List[Obstacle]]:
+        """Exact minimum-TIME visit order via Held-Karp DP over collision-aware
+        Hybrid A* leg times (NOT straight-line distance - see module docstring).
+
+        Runs one HybridAStar search (cost_mode='time') for every ordered pair
+        of {start, reachable checkpoints}, costs each resulting path in
+        calibrated seconds (path_travel_time), then a Held-Karp dynamic program
+        (O(n^2 * 2^n), not O(n!)) finds the order minimising total drive time.
+        Adds recognition_seconds per obstacle to the reported total (it's a
+        constant, so it does not affect the chosen ORDER, only best_time).
+
+        Args:
+            L: arc length per Hybrid A* primitive step, cm (matches the
+                collision_aware_planner.plan_leg() step so reused legs are
+                identical to what plan_leg() would have produced).
+            thetaBins: heading discretisation for Hybrid A* (must match
+                plan_leg()'s default of 24 for reuse consistency).
+            forward_speed/reverse_speed: cm/s, for the time cost model.
+            gear_change_time/steering_change_time: seconds lost per gear /
+                steering change.
+            recognition_seconds: image-recognition dwell added per obstacle to
+                best_time (order-invariant).
+
+        Returns:
+            order: reachable Obstacles in optimal visit order (subset of
+                self.obstacles; unreachable ones excluded).
+            leg_paths: one list of HybridAStar Nodes per leg (cm poses), same
+                order as `order` - leg_paths[i] is start->order[0] for i==0,
+                else order[i-1]->order[i]. Empty legs never occur here (only
+                reachable, searched-successfully pairs are used).
+            total_time: calibrated seconds for the whole route incl.
+                recognition dwell, or inf if no full route exists.
+            unreachable: obstacles with no valid scan checkpoint (same as
+                self.unreachable_obstacles after this call).
+
+        Lazy-imports HybridAStar to avoid an import cycle (hybrid_astar.py
+        imports occupancy_map, which this module also imports)."""
+        from .hybrid_astar import HybridAStar
+
+        reachable = self._reachable_obstacles()
+        if not reachable:
+            return [], [], float('inf'), list(self.unreachable_obstacles)
+
+        n = len(reachable)
+
+        def _plan_leg(source: Tuple[float, float, float],
+                      destination: Checkpoint) -> Tuple[Optional[list], float]:
+            planner = HybridAStar(
+                self.map,
+                x_0=source[0], y_0=source[1], theta_0=source[2],
+                x_f=destination[0], y_f=destination[1], theta_f=destination[2],
+                theta_offset=self.theta_offset, L=L, minR=self.minR,
+                heuristic='euclidean', thetaBins=thetaBins, cost_mode='time',
+                forward_speed=forward_speed, reverse_speed=reverse_speed,
+                gear_change_time=gear_change_time,
+                steering_change_time=steering_change_time,
+            )
+            path, _ = planner.find_path()
+            if path is None:
+                return None, float('inf')
+            return path, path_travel_time(
+                path, L, forward_speed, reverse_speed,
+                gear_change_time, steering_change_time)
+
+        # Directed edge tables. Index convention: -1 == start; 0..n-1 map to
+        # reachable[i]. Store BOTH cost and node-path so the caller can reuse
+        # the exact leg Hybrid A* already computed (no second search).
+        edge_cost = {}
+        edge_path = {}
+        for j, obstacle in enumerate(reachable):
+            path, cost = _plan_leg(self.start, self._checkpoint_cache[obstacle.id])
+            edge_cost[(-1, j)] = cost
+            edge_path[(-1, j)] = path
+        for i, src_obs in enumerate(reachable):
+            for j, dst_obs in enumerate(reachable):
+                if i == j:
+                    continue
+                path, cost = _plan_leg(self._checkpoint_cache[src_obs.id],
+                                       self._checkpoint_cache[dst_obs.id])
+                edge_cost[(i, j)] = cost
+                edge_path[(i, j)] = path
+
+        # Held-Karp DP. best[(mask, last)] = (min time to start->...->last
+        # having visited exactly the obstacles in `mask`, ending at `last`,
+        # parent_last_or_None). mask is a bitset over reachable indices.
+        best: dict = {}
+        for j in range(n):
+            cost = edge_cost[(-1, j)]
+            if np.isfinite(cost):
+                best[(1 << j, j)] = (cost, None)
+
+        for mask in range(1, 1 << n):
+            for last in range(n):
+                state = best.get((mask, last))
+                if state is None:
+                    continue
+                base_time = state[0]
+                for nxt in range(n):
+                    if mask & (1 << nxt):
+                        continue
+                    step = edge_cost[(last, nxt)]
+                    if not np.isfinite(step):
+                        continue
+                    key = (mask | (1 << nxt), nxt)
+                    candidate = base_time + step
+                    if key not in best or candidate < best[key][0]:
+                        best[key] = (candidate, last)
+
+        full_mask = (1 << n) - 1
+        finishes = [(best[(full_mask, last)][0], last)
+                    for last in range(n) if (full_mask, last) in best]
+        if not finishes:
+            # No complete route reachable (some pair had no Hybrid A* path).
+            # Report every reachable obstacle as effectively unvisitable in a
+            # single route; caller falls back to distance ordering.
+            return [], [], float('inf'), list(self.unreachable_obstacles) + list(reachable)
+
+        total_time, last = min(finishes)
+
+        # Reconstruct the index order by walking parent pointers back.
+        order_idx: List[int] = []
+        mask = full_mask
+        while last is not None:
+            order_idx.append(last)
+            prev = best[(mask, last)][1]
+            mask ^= 1 << last
+            last = prev
+        order_idx.reverse()
+
+        order = [reachable[i] for i in order_idx]
+        leg_paths: List[list] = []
+        prev_idx = -1
+        for i in order_idx:
+            leg_paths.append(edge_path[(prev_idx, i)])
+            prev_idx = i
+
+        total_time += recognition_seconds * n
+        return order, leg_paths, total_time, list(self.unreachable_obstacles)
+
+
+def path_travel_time(path: list, L: float, forward_speed: float, reverse_speed: float,
+                     gear_change_time: float, steering_change_time: float) -> float:
+    """Calibrated traversal time (seconds) for a Hybrid A* node path.
+
+    Each node carries prevAction = (Gear, Steering) - the primitive that
+    reached it. Straight-line time is L/speed (forward vs reverse speed per
+    the gear); a gear change adds gear_change_time and a steering change adds
+    steering_change_time. Seed the previous action as (FORWARD, STRAIGHT) so
+    the first node's own gear/steering choice is charged a change if it
+    differs from that resting state (matches the newalgo original)."""
+    total = 0.0
+    previous_action = (Gear.FORWARD, Steering.STRAIGHT)
+    for node in path:
+        action = node.prevAction
+        speed = forward_speed if action[0] == Gear.FORWARD else reverse_speed
+        total += L / speed
+        if action[0] != previous_action[0]:
+            total += gear_change_time
+        if action[1] != previous_action[1]:
+            total += steering_change_time
+        previous_action = action
+    return total
 
 
 def obstacle_to_checkpoint(map: OccupancyMap, obstacle: Obstacle, theta_offset: float) -> Optional[Checkpoint]:

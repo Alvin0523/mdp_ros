@@ -20,6 +20,21 @@
 
 task1_runner:
   ros__parameters:
+    # --- Frames ---
+    # The ARENA frame: origin at the arena's bottom-left corner, axes matching
+    # the planner's coordinates - the frame the occupancy grid, grid lines,
+    # obstacle cubes, checkpoint arrows and planned path have always been
+    # expressed in. `map` per REP-105, and Foxglove's/RViz's default fixed
+    # frame, so the arena is the display root with no panel configuration.
+    #
+    # NOT `odom`: that is the dead-reckoning frame, created wherever the robot
+    # powered on, so stamping arena coordinates with it drew the whole arena
+    # rotated and offset by the start pose (the 90-degree heading offset).
+    # The map -> odom edge itself is broadcast by the launch files, derived from
+    # the start pose - see task1_sim.launch.py / real.launch.py. Only change
+    # this if the whole TF tree is renamed to match.
+    arena_frame: map
+
     # --- Topic names ---
     # Split into one topic per marker type (was all crammed onto
     # /obstacle_markers, including the path line-strip - confirmed

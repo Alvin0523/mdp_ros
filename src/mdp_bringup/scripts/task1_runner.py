@@ -29,16 +29,21 @@ from rclpy.node import Node
 from rclpy.qos import QoSDurabilityPolicy, QoSProfile
 from enum import Enum, auto
 from geometry_msgs.msg import TwistStamped, PoseStamped, Point
+import tf2_ros
+# Imported for its side effect: registering the geometry_msgs type conversions
+# tf2 dispatches on. `do_transform_pose` is called through the module below.
+import tf2_geometry_msgs
 from nav_msgs.msg import Odometry, OccupancyGrid, Path
 from std_msgs.msg import Header, String
+from std_srvs.srv import Trigger
 from visualization_msgs.msg import Marker, MarkerArray
 
-from mdp_algorithm.collision_aware_planner import plan_leg, plan_visiting_order
-from mdp_algorithm.occupancy_map import (
+from mdp_algorithm.planning.collision_aware_planner import plan_leg, plan_visiting_order
+from mdp_algorithm.planning.occupancy_map import (
     ARENA_SIZE_CM, CELL_SIZE_CM, GRID_MARGIN_CM, OBSTACLE_SIZE_CM,
     Obstacle, OccupancyMap,
 )
-from mdp_algorithm.pure_pursuit_follower import PurePursuitController, yaw_from_quaternion
+from mdp_algorithm.control.pure_pursuit_follower import PurePursuitController, yaw_from_quaternion
 
 # Task 1's physical camera is mounted facing the car's LEFT side, not
 # forward - confirmed by the user, not modeled in mini_akm_robot.urdf's
@@ -71,6 +76,11 @@ START_BOX_SIZE_CM = 40.0
 class State(Enum):
     WAITING_FOR_SETUP = auto()
     PLANNING_PATH = auto()
+    # After planning completes the car does NOT drive automatically - it holds
+    # here until the `go` trigger (the /start_run service) fires, mirroring the
+    # real competition where the tablet sends a separate "start" command once
+    # the supervisor is ready. Only then -> NAVIGATING_TO_TARGET.
+    WAITING_FOR_GO = auto()
     NAVIGATING_TO_TARGET = auto()
     PAUSE_FOR_SCAN = auto()
     FINISHED = auto()
@@ -87,6 +97,20 @@ class Task1Runner(Node):
         # mdp_bringup/config/occupancy_grid_viz.yaml for the full set and
         # its scope note (visualization only, not the underlying grid math).
         self._declare_viz_params()
+
+        # Frame every arena-referenced publisher below stamps (see
+        # _declare_viz_params for the convention). Read once - it is fixed for
+        # the life of the node.
+        self.arena_frame = self.get_parameter('arena_frame').value
+
+        # Where the robot starts in the arena frame. Supplied by the launch file
+        # that also broadcasts map -> odom from the same numbers (sim: the Gazebo
+        # spawn pose; hardware: the placement in the 40x40cm start box), so the
+        # planned route starts where the car actually is. The defaults match the
+        # documented placement for a bare `ros2 run`.
+        self.declare_parameter('start_x', 0.15)
+        self.declare_parameter('start_y', 0.15)
+        self.declare_parameter('start_yaw', math.pi / 2.0)
 
         # Publishers & Subscribers
         # /cmd_vel is the correct target: real.launch.py and sim.launch.py both
@@ -139,6 +163,22 @@ class Task1Runner(Node):
         self.create_subscription(String, '/yolo_result', self.yolo_callback, 10)
         self.create_subscription(Odometry, '/odometry/filtered', self.odom_callback, 10)
 
+        # `go` trigger: a service (not a topic) so the caller gets a clear
+        # accepted/rejected acknowledgement - matches the tablet's one-shot
+        # "start now" command. Only accepted while WAITING_FOR_GO (i.e. after
+        # setup + planning); rejected with a reason otherwise.
+        self.start_run_srv = self.create_service(
+            Trigger, '/start_run', self.start_run_callback)
+
+        # TF buffer/listener - same pattern task2_runner uses. Needed because
+        # /odometry/filtered reports in `odom` (the dead-reckoning frame, created
+        # wherever the robot started) while everything this node plans and
+        # publishes is in the arena frame. odom_callback below converts one to the
+        # other instead of assuming they coincide, which they only do for a
+        # (0, 0, 0) start pose.
+        self.tf_buffer = tf2_ros.Buffer()
+        self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
+
         # Control Loop @ 20Hz
         self.timer = self.create_timer(0.05, self.control_loop)
 
@@ -176,6 +216,16 @@ class Task1Runner(Node):
         defaults that file documents, so this node runs sensibly even if
         launched without that config (e.g. ros2 run directly, as done for
         local testing) - the YAML overrides these when loaded via launch."""
+        # The ARENA frame: origin at the arena's bottom-left corner with axes
+        # matching the planner's coordinates, i.e. the frame every number this
+        # node publishes has always been expressed in. `map` per REP-105, which
+        # is also Foxglove's and RViz's default fixed frame. NOT `odom` - that is
+        # the dead-reckoning frame, created wherever the robot happened to start,
+        # and stamping arena coordinates with it drew the whole arena rotated and
+        # offset by the start pose. The map -> odom edge is broadcast by the
+        # launch files (see task1_sim.launch.py / real.launch.py).
+        self.declare_parameter('arena_frame', 'map')
+
         self.declare_parameter('occupancy_grid_topic', '/occupancy_grid')
         self.declare_parameter('obstacle_markers_topic', '/obstacle_markers')
         self.declare_parameter('grid_line_markers_topic', '/grid_markers')
@@ -198,12 +248,59 @@ class Task1Runner(Node):
         self.declare_parameter('checkpoint_color', [0.2, 1.0, 0.4, 0.95])
         self.declare_parameter('checkpoint_arrow_length_m', 0.15)
 
+    def get_start_pose(self):
+        """The robot's `(x, y, yaw)` start pose in the arena frame, in metres/rad.
+
+        Read from parameters rather than hardcoded, so this node, the Gazebo spawn
+        and the static map -> odom transform all quote the same pose - see the
+        `start_x`/`start_y`/`start_yaw` declarations in __init__.
+        """
+        return (float(self.get_parameter('start_x').value),
+                float(self.get_parameter('start_y').value),
+                float(self.get_parameter('start_yaw').value))
+
     def get_now_sec(self) -> float:
         return self.get_clock().now().nanoseconds / 1e9
 
     def odom_callback(self, msg: Odometry) -> None:
-        p = msg.pose.pose.position
-        yaw = yaw_from_quaternion(msg.pose.pose.orientation)
+        """Convert the incoming odometry pose into the arena frame, then store it.
+
+        `/odometry/filtered` is an `odom`-frame message (that is its contract, and
+        it stays that way - nothing here republishes it). The planned path,
+        checkpoints and every marker this node emits are in `self.arena_frame`, so
+        the pose handed to the follower has to be converted, not passed through:
+        `odom` is created at the robot's start pose with identity orientation, so
+        consuming it raw applies a constant rotation of `start_yaw` and a constant
+        offset of `(start_x, start_y)` to every tracking error.
+
+        The transform comes from TF rather than from the start-pose parameters so
+        there is exactly one authority for it (the launch file's `map -> odom`
+        broadcaster) - if a real localization source ever replaces that static
+        broadcaster, this code does not change.
+
+        On lookup failure the previous pose is KEPT and the update is dropped.
+        Falling back to the raw pose would be worse than stale data: it would
+        silently reintroduce the 90 degree error for as long as TF was unavailable,
+        intermittently and without a symptom in the logs.
+        """
+        pose_in = PoseStamped()
+        pose_in.header = msg.header
+        pose_in.pose = msg.pose.pose
+
+        try:
+            tf = self.tf_buffer.lookup_transform(
+                self.arena_frame, msg.header.frame_id, msg.header.stamp)
+        except (tf2_ros.LookupException, tf2_ros.ConnectivityException,
+                tf2_ros.ExtrapolationException, tf2_ros.TransformException) as exc:
+            self.get_logger().warn(
+                f"No {self.arena_frame} <- {msg.header.frame_id} transform yet "
+                f"({exc}); keeping previous pose {self.current_pose}",
+                throttle_duration_sec=2.0)
+            return
+
+        pose_arena = tf2_geometry_msgs.do_transform_pose(pose_in.pose, tf)
+        p = pose_arena.position
+        yaw = yaw_from_quaternion(pose_arena.orientation)
         self.current_pose = (p.x, p.y, yaw)
         self.follower.update_pose(p.x, p.y, yaw)
 
@@ -226,6 +323,29 @@ class Task1Runner(Node):
         if self.state == State.PAUSE_FOR_SCAN and self.detected_target_id is None:
             self.detected_target_id = msg.data.strip()
             self.get_logger().info(f"YOLO26 Identified Target: {self.detected_target_id}")
+
+    def start_run_callback(self, request, response):
+        """`/start_run` service (the `go` trigger). Only starts the run if we
+        have finished planning and are holding in WAITING_FOR_GO; otherwise
+        rejects with a reason so the caller knows why nothing happened."""
+        if self.state == State.WAITING_FOR_GO:
+            self.state = State.NAVIGATING_TO_TARGET
+            self.state_start_time = self.get_now_sec()
+            response.success = True
+            response.message = "Run started - navigating to targets."
+            self.get_logger().info("Received `go` - starting navigation.")
+        elif self.state == State.WAITING_FOR_SETUP:
+            response.success = False
+            response.message = "Not ready: no obstacle setup received yet."
+        elif self.state == State.PLANNING_PATH:
+            response.success = False
+            response.message = "Not ready: still planning the path."
+        else:
+            response.success = False
+            response.message = f"Ignored: run already in progress ({self.state.name})."
+        if not response.success:
+            self.get_logger().warn(f"`go` rejected: {response.message}")
+        return response
 
     def send_cmd(self, linear_x: float, angular_z: float):
         msg = TwistStamped()
@@ -262,6 +382,11 @@ class Task1Runner(Node):
             self._publish_occupancy_grid()
             self._publish_obstacle_markers()
 
+            # From the start_x/start_y/start_yaw parameters the launch file also
+            # derives the static map -> odom transform from, so the route starts
+            # where the robot actually is (it used to be a third independent
+            # literal here, which is how the arena and the robot drifted apart).
+            #
             # NOT (0.0, 0.0, ...): confirmed by direct testing that a rear-axle
             # start pose literally at the arena's inside corner is physically
             # unreachable for Hybrid A* to escape - the car's own front bumper
@@ -275,7 +400,7 @@ class Task1Runner(Node):
             # marked start box," but is NOT verified against the actual
             # competition start-box convention/size. Confirm against the real
             # starting setup before trusting this for a run.
-            start_pose = (0.15, 0.15, math.pi / 2)
+            start_pose = self.get_start_pose()
 
             # Only the visiting order + checkpoints (Hamiltonian TSP, cheap -
             # see collision_aware_planner.plan_visiting_order()) are computed
@@ -301,8 +426,14 @@ class Task1Runner(Node):
 
             self.leg_paths = [None] * len(self.visiting_order)
             self.current_target_idx = 0
-            self.state = State.NAVIGATING_TO_TARGET
+            # Do NOT drive yet: hold in WAITING_FOR_GO until the `go` trigger
+            # (/start_run service). Leg planning still runs in the background
+            # NOW, so by the time `go` fires the legs are ready (or nearly) -
+            # the car just isn't allowed to move until then.
+            self.state = State.WAITING_FOR_GO
             self.state_start_time = now
+            self.get_logger().info(
+                "Planning complete. Holding - waiting for `go` (/start_run service).")
 
             # Plans every leg back-to-back, in the background, starting NOW
             # - not gated on the robot physically reaching each checkpoint
@@ -313,6 +444,10 @@ class Task1Runner(Node):
             self._planning_thread = threading.Thread(
                 target=self._plan_all_legs_worker, args=(start_pose,), daemon=True)
             self._planning_thread.start()
+
+        # STATE 1b: Planning done, car held until `go` (see start_run_callback).
+        elif self.state == State.WAITING_FOR_GO:
+            self.send_cmd(0.0, 0.0)
 
         # STATE 2: Navigating to current target standoff pose - now actually
         # tracks the Hybrid A*-planned path via PurePursuitController,
@@ -394,7 +529,7 @@ class Task1Runner(Node):
 
         msg = OccupancyGrid()
         msg.header.stamp = self.get_clock().now().to_msg()
-        msg.header.frame_id = 'odom'
+        msg.header.frame_id = self.arena_frame
         msg.info.resolution = CELL_SIZE_CM / 100.0
         height, width = self.occ_map.occupancy_grid.shape
         msg.info.width = width
@@ -432,7 +567,7 @@ class Task1Runner(Node):
 
         lines = Marker()
         lines.header.stamp = header_stamp
-        lines.header.frame_id = 'odom'
+        lines.header.frame_id = self.arena_frame
         lines.ns = 'grid_lines'
         lines.id = 0
         lines.type = Marker.LINE_LIST
@@ -451,7 +586,7 @@ class Task1Runner(Node):
 
         zone = Marker()
         zone.header.stamp = header_stamp
-        zone.header.frame_id = 'odom'
+        zone.header.frame_id = self.arena_frame
         zone.ns = 'placement_zone_outline'
         zone.id = 0
         zone.type = Marker.LINE_STRIP
@@ -480,7 +615,7 @@ class Task1Runner(Node):
         start_box_size_m = START_BOX_SIZE_CM / 100.0
         start_box = Marker()
         start_box.header.stamp = header_stamp
-        start_box.header.frame_id = 'odom'
+        start_box.header.frame_id = self.arena_frame
         start_box.ns = 'start_box_outline'
         start_box.id = 0
         start_box.type = Marker.LINE_STRIP
@@ -525,7 +660,7 @@ class Task1Runner(Node):
 
             cube = Marker()
             cube.header.stamp = header_stamp
-            cube.header.frame_id = 'odom'
+            cube.header.frame_id = self.arena_frame
             cube.ns = 'obstacles'
             cube.id = idx
             cube.type = Marker.CUBE
@@ -542,7 +677,7 @@ class Task1Runner(Node):
 
             text = Marker()
             text.header.stamp = header_stamp
-            text.header.frame_id = 'odom'
+            text.header.frame_id = self.arena_frame
             text.ns = 'obstacle_labels'
             text.id = 100 + idx
             text.type = Marker.TEXT_VIEW_FACING
@@ -588,7 +723,7 @@ class Task1Runner(Node):
 
             arrow = Marker()
             arrow.header.stamp = header_stamp
-            arrow.header.frame_id = 'odom'
+            arrow.header.frame_id = self.arena_frame
             arrow.ns = 'checkpoints'
             arrow.id = i
             arrow.type = Marker.ARROW
@@ -606,7 +741,7 @@ class Task1Runner(Node):
 
             text = Marker()
             text.header.stamp = header_stamp
-            text.header.frame_id = 'odom'
+            text.header.frame_id = self.arena_frame
             text.ns = 'checkpoint_labels'
             text.id = 100 + i
             text.type = Marker.TEXT_VIEW_FACING
@@ -648,7 +783,7 @@ class Task1Runner(Node):
 
         header = Header()
         header.stamp = self.get_clock().now().to_msg()
-        header.frame_id = 'odom'
+        header.frame_id = self.arena_frame
 
         # Thick line strip alongside the raw Path - easier to spot in
         # Foxglove's 3D panel (same reasoning as task2_runner.py). Own topic
@@ -681,7 +816,7 @@ class Task1Runner(Node):
         (if) the search finishes."""
         msg = Marker()
         msg.header.stamp = self.get_clock().now().to_msg()
-        msg.header.frame_id = 'odom'
+        msg.header.frame_id = self.arena_frame
         msg.ns = 'search_progress'
         msg.id = 0
         msg.type = Marker.POINTS
@@ -771,7 +906,7 @@ class Task1Runner(Node):
         the displayed path always reflects everything planned up to now."""
         msg = Path()
         msg.header.stamp = self.get_clock().now().to_msg()
-        msg.header.frame_id = 'odom'
+        msg.header.frame_id = self.arena_frame
         for path in self.leg_paths:
             if not path:
                 continue
