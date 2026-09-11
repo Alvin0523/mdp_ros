@@ -1,0 +1,15 @@
+# MDP symbol panel quad for 29_AlphabetT (auto-generated, do not edit)
+mtllib 29_AlphabetT.mtl
+o panel_29_AlphabetT
+v -0.03050 0.0 -0.03050
+v 0.03050 0.0 -0.03050
+v 0.03050 0.0 0.03050
+v -0.03050 0.0 0.03050
+vt 0.0 0.0
+vt 1.0 0.0
+vt 1.0 1.0
+vt 0.0 1.0
+vn 0.0 1.0 0.0
+usemtl mat_29_AlphabetT
+f 1/1/1 2/2/1 3/3/1
+f 1/1/1 3/3/1 4/4/1

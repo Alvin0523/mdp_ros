@@ -1,0 +1,282 @@
+<?xml version="1.0" ?>
+<!--
+  Task 1 arena: 2.0m x 2.0m exploration grid - floor, zones, lights, plugins,
+  and the obstacles. Loaded as-is by task1_sim.launch.py (`pixi run sim1`).
+
+  THIS FILE IS HAND-MAINTAINED AND IS THE SINGLE SOURCE OF TRUTH for the sim.
+  Edit obstacles directly here; see the block comment above the obstacle models
+  for the geometry rules (height, decal placement, rotation per facing).
+
+  It was previously generated from test_obstacles.yaml by
+  generate_arena_world.py, with a separate task1_arena_base.sdf holding the
+  no-obstacle scenery. Both were deleted 2026-09-11: nothing invoked the
+  generator (the launches always loaded this file), and re-running it would have
+  silently overwritten the hand-tuned obstacle geometry.
+
+  test_obstacles.yaml still exists but now feeds ONLY the planner, via
+  publish_test_obstacles.py -> /obstacle_setup, and only its id/x/y/facing.
+  Keep its x/y/facing in step with the poses here by hand.
+
+  COORDINATE CONVENTION (matches the planner): arena (0,0) is the BOTTOM-LEFT
+  corner, x/y run 0 -> 2.0m; world origin = that corner.
+-->
+<sdf version="1.8">
+  <world name="task1_arena">
+    <physics name="1ms" type="ignored">
+      <max_step_size>0.001</max_step_size>
+      <real_time_factor>1.0</real_time_factor>
+    </physics>
+    <plugin filename="gz-sim-physics-system" name="gz::sim::systems::Physics"/>
+    <plugin filename="gz-sim-user-commands-system" name="gz::sim::systems::UserCommands"/>
+    <plugin filename="gz-sim-scene-broadcaster-system" name="gz::sim::systems::SceneBroadcaster"/>
+    <plugin filename="gz-sim-sensors-system" name="gz::sim::systems::Sensors">
+      <render_engine>ogre2</render_engine>
+    </plugin>
+
+    <light type="directional" name="sun">
+      <cast_shadows>true</cast_shadows>
+      <pose>1 1 10 0 0 0</pose>
+      <diffuse>0.8 0.8 0.8 1</diffuse>
+      <specular>0.2 0.2 0.2 1</specular>
+      <direction>-0.5 0.1 -0.9</direction>
+    </light>
+
+    <model name="ground_plane">
+      <static>true</static>
+      <link name="link">
+        <collision name="collision">
+          <geometry><plane><normal>0 0 1</normal><size>6 6</size></plane></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><plane><normal>0 0 1</normal><size>6 6</size></plane></geometry>
+          <material>
+            <ambient>0.75 0.75 0.75 1</ambient>
+            <diffuse>0.75 0.75 0.75 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- 2.0m x 2.0m placement zone, corner at world (0,0). -->
+    <model name="arena_zone">
+      <static>true</static>
+      <pose>1.0 1.0 0.0005 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>2.0 2.0 0.001</size></box></geometry>
+          <material>
+            <ambient>0.85 0.85 0.88 1</ambient>
+            <diffuse>0.85 0.85 0.88 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- 40cm x 40cm start box, corner at world (0,0). -->
+    <model name="carpark_zone">
+      <static>true</static>
+      <pose>0.20 0.20 0.001 0 0 0</pose>
+      <link name="link">
+        <visual name="visual">
+          <geometry><box><size>0.4 0.4 0.002</size></box></geometry>
+          <material>
+            <ambient>0.2 0.8 0.2 0.5</ambient>
+            <diffuse>0.2 0.8 0.2 0.5</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+  
+    <!-- =====================================================================
+         OBSTACLES - THIS FILE IS THE SINGLE SOURCE OF TRUTH. Edit them here.
+
+         Previously generated from config/test_obstacles.yaml by
+         generate_arena_world.py; that script and its task1_arena_base.sdf
+         input were deleted 2026-09-11 because nothing invoked them (the sim
+         launches load this file as-is) and re-running one would have silently
+         overwritten the hand-tuned geometry below.
+
+         test_obstacles.yaml still exists but now feeds ONLY the planner, via
+         publish_test_obstacles.py -> /obstacle_setup, and only its
+         id/x/y/facing fields. Its x/y/facing values and the poses here are no
+         longer generated from one source, so keep them in step by hand - if
+         they drift, the planner and the simulator disagree about where the
+         obstacles are, which looks like a planning or localisation bug rather
+         than a stale config.
+
+         GEOMETRY, for anyone editing or adding an obstacle:
+
+         Obstacle - 10cm x 10cm footprint, 15cm tall. The model <pose> z is
+         height/2 = 0.075 so the box rests on the floor, which also makes the
+         link origin the cube's centre; everything below is relative to that.
+
+         Symbol decal - the quad in models/symbols/<symbol>.obj, which
+         is already modelled at the real 6.1cm printed size (half-extent
+         0.0305), so <scale> is 1 1 1. Do not scale it.
+           * Face offset 0.0515 = 0.05 (half the 10cm width) + 0.001 (half the
+             2mm panel) + 0.0005 clearance, so it sits just proud of the face
+             and does not z-fight the cube.
+           * z = 0.0445 = 0.075 - 0.061/2, putting the decal FLUSH WITH THE TOP
+             of the obstacle rather than centred on the face.
+           * Rotation is YAW ONLY (roll=0, pitch=0):
+                 N -> yaw  0         E -> yaw -pi/2
+                 S -> yaw  pi        W -> yaw +pi/2
+             The panel quad is built standing upright in the XZ plane with its
+             normal on +Y and image-up already on world +Z, so it needs no roll
+             or pitch - it starts out facing North, correctly oriented, and yaw
+             about the vertical axis swings it to any face without ever
+             disturbing image-up.
+
+             Getting this wrong is easy and the failure is subtle: a rotation
+             that merely aims the normal outward leaves a free spin about that
+             normal, which produced symbols upright on one face only (E 90deg
+             clockwise, W 90deg anticlockwise, N 180deg - "11_One" on a West
+             face read 90deg anticlockwise in sim). Because the panel quads are
+             pre-oriented, yaw alone cannot reintroduce that.
+
+         File layout - one set only, split by kind:
+             models/symbols/    <symbol>.obj + <symbol>.mtl  (geometry)
+             models/symbols/textures/  <symbol>.png                (images)
+         The .mtl sits beside the .obj and points at ../textures/<symbol>.png.
+         A duplicate obj/mtl set that used to live in textures/ was removed
+         2026-09-11 - two sets that can drift apart is a trap, and only these
+         are referenced.
+
+         <uri> uses model:// so the world stays portable; it resolves through
+         GZ_SIM_RESOURCE_PATH, which the sim launches point at
+         <install>/mdp_description/share. The PNG is never named here: the chain
+         is this SDF -> .obj -> .mtl (map_Kd) -> .png.
+
+         Obstacles must be present at world load. Spawning them afterwards
+         leaves the decal rendering black - the texture never binds in ogre2.
+         That is why they are baked in here rather than spawned at runtime.
+         ===================================================================== -->
+    <model name="obstacle_1">
+      <static>true</static>
+      <pose>0.5 1.0 0.075 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry><box><size>0.1 0.1 0.15</size></box></geometry>
+        </collision>
+        <visual name="body">
+          <geometry><box><size>0.1 0.1 0.15</size></box></geometry>
+          <material>
+            <ambient>0.15 0.15 0.15 1</ambient>
+            <diffuse>0.2 0.2 0.2 1</diffuse>
+          </material>
+        </visual>
+        <visual name="symbol">
+          <pose>0.0 -0.051500000000000004 0.0445 0.0 0.0 3.141592653589793</pose>
+          <geometry>
+            <mesh>
+              <uri>model://mdp_description/models/symbols/20_AlphabetA.obj</uri>
+              <scale>1 1 1</scale>
+            </mesh>
+          </geometry>
+        </visual>
+      </link>
+    </model>
+    <model name="obstacle_2">
+      <static>true</static>
+      <pose>1.2 0.4 0.075 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry><box><size>0.1 0.1 0.15</size></box></geometry>
+        </collision>
+        <visual name="body">
+          <geometry><box><size>0.1 0.1 0.15</size></box></geometry>
+          <material>
+            <ambient>0.15 0.15 0.15 1</ambient>
+            <diffuse>0.2 0.2 0.2 1</diffuse>
+          </material>
+        </visual>
+        <visual name="symbol">
+          <pose>-0.051500000000000004 0.0 0.0445 0.0 0.0 1.5707963267948966</pose>
+          <geometry>
+            <mesh>
+              <uri>model://mdp_description/models/symbols/11_One.obj</uri>
+              <scale>1 1 1</scale>
+            </mesh>
+          </geometry>
+        </visual>
+      </link>
+    </model>
+    <model name="obstacle_3">
+      <static>true</static>
+      <pose>1.7 1.5 0.075 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry><box><size>0.1 0.1 0.15</size></box></geometry>
+        </collision>
+        <visual name="body">
+          <geometry><box><size>0.1 0.1 0.15</size></box></geometry>
+          <material>
+            <ambient>0.15 0.15 0.15 1</ambient>
+            <diffuse>0.2 0.2 0.2 1</diffuse>
+          </material>
+        </visual>
+        <visual name="symbol">
+          <pose>0.0 0.051500000000000004 0.0445 0.0 0.0 0.0</pose>
+          <geometry>
+            <mesh>
+              <uri>model://mdp_description/models/symbols/36_ArrowUp.obj</uri>
+              <scale>1 1 1</scale>
+            </mesh>
+          </geometry>
+        </visual>
+      </link>
+    </model>
+    <model name="obstacle_4">
+      <static>true</static>
+      <pose>0.9 1.8 0.075 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry><box><size>0.1 0.1 0.15</size></box></geometry>
+        </collision>
+        <visual name="body">
+          <geometry><box><size>0.1 0.1 0.15</size></box></geometry>
+          <material>
+            <ambient>0.15 0.15 0.15 1</ambient>
+            <diffuse>0.2 0.2 0.2 1</diffuse>
+          </material>
+        </visual>
+        <visual name="symbol">
+          <pose>0.051500000000000004 0.0 0.0445 0.0 0.0 -1.5707963267948966</pose>
+          <geometry>
+            <mesh>
+              <uri>model://mdp_description/models/symbols/40_Stop.obj</uri>
+              <scale>1 1 1</scale>
+            </mesh>
+          </geometry>
+        </visual>
+      </link>
+    </model>
+    <model name="obstacle_5">
+      <static>true</static>
+      <pose>1.5 0.9 0.075 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry><box><size>0.1 0.1 0.15</size></box></geometry>
+        </collision>
+        <visual name="body">
+          <geometry><box><size>0.1 0.1 0.15</size></box></geometry>
+          <material>
+            <ambient>0.15 0.15 0.15 1</ambient>
+            <diffuse>0.2 0.2 0.2 1</diffuse>
+          </material>
+        </visual>
+        <visual name="symbol">
+          <pose>0.0 -0.051500000000000004 0.0445 0.0 0.0 3.141592653589793</pose>
+          <geometry>
+            <mesh>
+              <uri>model://mdp_description/models/symbols/12_Two.obj</uri>
+              <scale>1 1 1</scale>
+            </mesh>
+          </geometry>
+        </visual>
+      </link>
+    </model>
+
+  </world>
+</sdf>

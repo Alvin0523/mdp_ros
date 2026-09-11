@@ -1,0 +1,15 @@
+# MDP symbol panel quad for 35_AlphabetZ (auto-generated, do not edit)
+mtllib 35_AlphabetZ.mtl
+o panel_35_AlphabetZ
+v -0.03050 0.0 -0.03050
+v 0.03050 0.0 -0.03050
+v 0.03050 0.0 0.03050
+v -0.03050 0.0 0.03050
+vt 0.0 0.0
+vt 1.0 0.0
+vt 1.0 1.0
+vt 0.0 1.0
+vn 0.0 1.0 0.0
+usemtl mat_35_AlphabetZ
+f 1/1/1 2/2/1 3/3/1
+f 1/1/1 3/3/1 4/4/1

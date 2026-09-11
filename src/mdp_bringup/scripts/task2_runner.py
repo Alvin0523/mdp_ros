@@ -15,9 +15,10 @@ from sensor_msgs.msg import JointState
 from nav_msgs.msg import Odometry, Path
 from visualization_msgs.msg import Marker, MarkerArray
 from std_msgs.msg import String
+from std_srvs.srv import Trigger
 import tf2_ros
 
-from mdp_algorithm.spline_planner import SplinePathPlanner
+from mdp_algorithm.planning.spline_planner import SplinePathPlanner
 
 class State(Enum):
     WAITING_FOR_START = auto()
@@ -40,6 +41,14 @@ class Task2Runner(Node):
         self.create_subscription(String, '/yolo_result', self.arrow_callback, 10)
         self.create_subscription(JointState, '/joint_states', self.joint_states_callback, 10)
         self.create_subscription(Odometry, '/ackermann_steering_controller/odometry', self.odom_callback, 10)
+
+        # `go` trigger: start driving on an explicit command (the /start_run
+        # service, called by `pixi run go`), NOT a fixed timer - the run must
+        # be deterministic. Mirrors the tablet's "start now" command. Set by
+        # the service callback; the WAITING_FOR_START state waits on it.
+        self.go_received = False
+        self.start_run_srv = self.create_service(
+            Trigger, '/start_run', self.start_run_callback)
         
         # TF Buffer & Listener for Ground Truth Gazebo Pose
         self.tf_buffer = tf2_ros.Buffer()
@@ -51,7 +60,14 @@ class Task2Runner(Node):
         # Ackermann Kinematics Specs (must match ackermann_controller.yaml)
         self.wheelbase = 0.1433      # L = 0.1433 m
         self.wheel_radius = 0.0325   # R = 0.0325 m
-        self.max_steering = 0.39     # HWZ020 limit (22.35 deg)
+        # Measured at the wheel with a protractor (2026-09-11): left +35.0deg
+        # (0.6109 rad), right -29.5deg (0.5149 rad). This is a single symmetric
+        # bound, so it takes the TIGHTER side or it would plan curvature the
+        # chassis cannot deliver turning right. Was 0.39 (22.35deg), the HWZ020
+        # datasheet figure - that describes the servo's own internal travel, not
+        # the angle this linkage achieves at the wheel. See
+        # docs/stm32/tuning.md#servo-range-steering-calibration.
+        self.max_steering = 0.5149   # right side binds: 29.5 deg
         self.lookahead = 0.30        # Pure Pursuit Lookahead distance (30cm)
         self.min_turn_radius = self.wheelbase / math.tan(self.max_steering)
         self.kappa_max = math.tan(self.max_steering) / self.wheelbase  # max path curvature (1/R_min)
@@ -95,7 +111,7 @@ class Task2Runner(Node):
         self.waypoints: List[Tuple[float, float]] = []
         self.current_wpt_idx = 0
         self.state_start_time = self.get_now_sec()
-        self.get_logger().info("Task 2 Adaptive Cornering Runner Initialized! Waiting 6s for bringup...")
+        self.get_logger().info("Task 2 Runner Initialized! Holding - waiting for `go` (/start_run service)...")
 
     def get_now_sec(self) -> float:
         return self.get_clock().now().nanoseconds / 1e9
@@ -108,6 +124,20 @@ class Task2Runner(Node):
         else:
             self.arrow2 = direction
             self.get_logger().info(f"Arrow 2 Set to: {self.arrow2}")
+
+    def start_run_callback(self, request, response):
+        """`/start_run` service (the `go` trigger). Accepts only while still
+        waiting to start; rejects (with a reason) once the run is underway."""
+        if self.state == State.WAITING_FOR_START:
+            self.go_received = True
+            response.success = True
+            response.message = "Run started - driving slalom path."
+            self.get_logger().info("Received `go` - starting Task 2 path.")
+        else:
+            response.success = False
+            response.message = f"Ignored: run already in progress ({self.state.name})."
+            self.get_logger().warn(f"`go` rejected: {response.message}")
+        return response
 
     def odom_callback(self, msg: Odometry):
         self.odom_x = msg.pose.pose.position.x
@@ -289,10 +319,11 @@ class Task2Runner(Node):
 
         self.update_ground_truth_tf()
 
-        # STATE 0: Waiting for bringup (6s)
+        # STATE 0: Held until the `go` trigger (/start_run). No fixed timer -
+        # the run only begins on an explicit command, so it's deterministic.
         if self.state == State.WAITING_FOR_START:
             self.send_cmd(0.0, 0.0)
-            if elapsed > 6.0:
+            if self.go_received:
                 self.waypoints = self.generate_task2_slalom_waypoints()
                 # Plan a single curvature-feasible path through all waypoints up front
                 # (Dubins, constrained to self.min_turn_radius) instead of beelining

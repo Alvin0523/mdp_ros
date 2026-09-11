@@ -18,16 +18,17 @@ setup(
     description='Path planning building blocks for the Mini Ackermann Robot',
     license='Apache-2.0',
     extras_require={
-        'test': ['pytest'],
+        # hypothesis drives the property-based tests in test/; pytest is the
+        # runner colcon test invokes for ament_python packages.
+        'test': ['pytest', 'hypothesis'],
     },
+    # mdp_algorithm is a pure planning library - its modules are imported by
+    # the task runners in mdp_bringup (e.g. collision_aware_planner,
+    # pure_pursuit_follower's PurePursuitController class, spline_planner's
+    # SplinePathPlanner class), not launched as standalone nodes. No
+    # console_scripts: the previous entries pointed at demo/no-op main()s
+    # that nothing ran (and reeds_shepp_planner, now removed, was dead).
     entry_points={
-        'console_scripts': [
-            'pure_pursuit_follower = mdp_algorithm.pure_pursuit_follower:main',
-            'pure_pursuit_follower.py = mdp_algorithm.pure_pursuit_follower:main',
-            'reeds_shepp_planner = mdp_algorithm.reeds_shepp_planner:main',
-            'reeds_shepp_planner.py = mdp_algorithm.reeds_shepp_planner:main',
-            'spline_planner = mdp_algorithm.spline_planner:main',
-            'spline_planner.py = mdp_algorithm.spline_planner:main',
-        ],
+        'console_scripts': [],
     },
 )
