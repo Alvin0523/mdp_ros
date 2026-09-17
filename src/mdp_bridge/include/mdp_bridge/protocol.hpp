@@ -45,6 +45,9 @@ struct TelemetryPacket
   uint8_t imu_ready;
   uint8_t estop;
   float battery_v;
+  uint16_t ir_raw;
+  float ir_voltage;
+  float ir_distance_cm;
   uint32_t uptime_ms;
   uint8_t checksum;
 };
