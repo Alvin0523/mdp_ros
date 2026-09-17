@@ -42,6 +42,28 @@ ackermann_steering_controller:
     publish_limited_velocity: true
     use_stamped_vel: true
 
+    # steering_controllers_library's own hardcoded default is
+    # [0.0, 7.0, 14.0, 21.0, 28.0, 35.0] (vx, vy, vz, vroll, vpitch, vyaw) -
+    # not a computed sensor-noise estimate, just index-numbered placeholder
+    # values nobody had overridden. Confirmed live in sim (2026-09-17, same
+    # controller code path real hardware uses): this made ekf.yaml's EKF
+    # report near-zero confidence in wheel-derived vyaw (covariance 35 = huge
+    # uncertainty) and near-infinite confidence in vx (covariance 0), so the
+    # fused yaw estimate barely tracks a real, sustained slow turn at all -
+    # it leans almost entirely on the IMU input instead, regardless of what
+    # the wheels are actually doing. Placeholder trust values below, same
+    # "unvalidated starting point" caveat as this project's other covariance
+    # numbers (see ekf.yaml) - not measured against this chassis's actual
+    # encoder noise. Re-verify on real hardware once it's up again.
+    #
+    # Left uniform here rather than trusting vyaw more than the IMU the way
+    # ackermann_controller.yaml (sim) does: that rebalancing relies on sim's
+    # wheel-derived vyaw coming from ideal kinematics with no real slip to
+    # model, which does not hold on real hardware. Real encoder noise vs.
+    # real ICM-20948 gyro noise needs its own bench comparison before
+    # trusting one over the other here.
+    twist_covariance_diagonal: [0.01, 0.01, 0.01, 0.01, 0.01, 0.01]
+
     gains:
       left_joint: {p: 100.0, i: 0.1, d: 5.0}
       right_joint: {p: 100.0, i: 0.1, d: 5.0}

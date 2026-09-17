@@ -25,6 +25,19 @@ CM_PER_M = 100.0
 Pose = Tuple[float, float, float]           # (x, y, theta) - metres/radians
 ObstacleSpec = Tuple[float, float, str]     # (x_cm, y_cm, facing) - continuous centre position, cm
 
+# (x, y, theta, gear) - a dense path point PLUS which direction the vehicle
+# was moving to reach it (motion_primitives.Gear: FORWARD=1, REVERSE=-1).
+# BUG FIX (2026-09-17): plan_leg() used to return bare Pose tuples, silently
+# dropping HybridAStar's own per-node gear choice (it explicitly searches
+# both Gear.FORWARD and Gear.REVERSE - see hybrid_astar.py's gearChoices).
+# pure_pursuit_follower.py always drove forward regardless, so any leg
+# genuinely requiring a reverse maneuver got driven forward along a curve
+# only valid in reverse - sending the car roughly the wrong direction
+# entirely instead of backing toward the checkpoint. Confirmed live: the
+# car turned, then drove straight into an obstacle instead of reversing to
+# waypoint 1.
+DensePose = Tuple[float, float, float, int]
+
 
 def plan_visiting_order(obstacles_grid: List[ObstacleSpec], start_pose_m: Pose,
                          theta_offset: float = 0.0, min_turn_radius_cm: Optional[float] = None,
@@ -175,7 +188,7 @@ def plan_leg(occ_map: OccupancyMap, start_pose_m: Pose, target_pose_m: Pose,
              theta_offset: float = 0.0, step_cm: float = 5.0,
              min_turn_radius_cm: Optional[float] = None,
              progress_callback: Optional[Callable[[List[Tuple[float, float]]], None]] = None,
-             progress_interval: int = 200) -> List[Pose]:
+             progress_interval: int = 200) -> List[DensePose]:
     """Phase 2 of planning a route: ONE leg's dense, collision-checked
     Hybrid A* path from start_pose_m to target_pose_m (both metres/radians),
     against an OccupancyMap already built by plan_visiting_order(). This is
@@ -193,12 +206,17 @@ def plan_leg(occ_map: OccupancyMap, start_pose_m: Pose, target_pose_m: Pose,
         progress instead of the search being an invisible black box for
         however long it takes.
 
-    Returns a dense List[Pose] in METRES/radians, ready for
-    pure_pursuit_follower.set_path() - or an empty list if Hybrid A* found
-    no path to target_pose_m (shouldn't happen for a checkpoint the
+    Returns a dense List[DensePose] (x, y, theta, gear) in METRES/radians,
+    ready for pure_pursuit_follower.set_path() - or an empty list if Hybrid
+    A* found no path to target_pose_m (shouldn't happen for a checkpoint the
     reachability filter already validated as collision-free, but map/start-
     pose edge cases could still starve the search - caller should treat an
     empty leg as "skip this obstacle" rather than crash).
+
+    gear is Gear.FORWARD/REVERSE (see motion_primitives.py) as a plain int
+    (+1/-1) - the direction HybridAStar actually drove to reach that node,
+    not just its (x, y, theta). Dropping this used to send the car forward
+    along paths only valid in reverse - see DensePose's own comment above.
     """
     minR = min_turn_radius_cm if min_turn_radius_cm is not None else MIN_TURN_RADIUS_CM
 
@@ -217,7 +235,7 @@ def plan_leg(occ_map: OccupancyMap, start_pose_m: Pose, target_pose_m: Pose,
     nodes, _ = planner.find_path()
     if nodes is None:
         return []
-    return [(n.x / CM_PER_M, n.y / CM_PER_M, n.theta) for n in nodes]
+    return [(n.x / CM_PER_M, n.y / CM_PER_M, n.theta, int(n.prevAction[0])) for n in nodes]
 
 
 def plan_route(obstacles_grid: List[ObstacleSpec], start_pose_m: Pose,

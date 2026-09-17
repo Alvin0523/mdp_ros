@@ -32,6 +32,7 @@
     <plugin filename="gz-sim-sensors-system" name="gz::sim::systems::Sensors">
       <render_engine>ogre2</render_engine>
     </plugin>
+    <plugin filename="gz-sim-imu-system" name="gz::sim::systems::Imu"/>
 
     <light type="directional" name="sun">
       <cast_shadows>true</cast_shadows>
@@ -221,31 +222,6 @@
           <geometry>
             <mesh>
               <uri>model://mdp_description/models/symbols/36_ArrowUp.obj</uri>
-              <scale>1 1 1</scale>
-            </mesh>
-          </geometry>
-        </visual>
-      </link>
-    </model>
-    <model name="obstacle_4">
-      <static>true</static>
-      <pose>0.9 1.8 0.075 0 0 0</pose>
-      <link name="link">
-        <collision name="collision">
-          <geometry><box><size>0.1 0.1 0.15</size></box></geometry>
-        </collision>
-        <visual name="body">
-          <geometry><box><size>0.1 0.1 0.15</size></box></geometry>
-          <material>
-            <ambient>0.15 0.15 0.15 1</ambient>
-            <diffuse>0.2 0.2 0.2 1</diffuse>
-          </material>
-        </visual>
-        <visual name="symbol">
-          <pose>0.051500000000000004 0.0 0.0445 0.0 0.0 -1.5707963267948966</pose>
-          <geometry>
-            <mesh>
-              <uri>model://mdp_description/models/symbols/40_Stop.obj</uri>
               <scale>1 1 1</scale>
             </mesh>
           </geometry>

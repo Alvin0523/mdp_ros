@@ -25,11 +25,14 @@ def generate_launch_description():
 
     config_file = os.path.join(pkg_bringup, 'config', 'ackermann_controller.yaml')
 
+    # Camera stays forward-facing for Task 2 (arrow detection ahead) - matches
+    # real hardware's default mount; Task 1 overrides this URDF placeholder to
+    # face left instead, see mini_akm_robot.urdf's camera_joint comment.
     with open(urdf_file, 'r') as infp:
         robot_desc = infp.read().replace(
             'package://mdp_bringup/config/ackermann_controller.yaml',
             config_file
-        )
+        ).replace('CAMERA_YAW_RAD', '0.0')
 
     # Environment variables for Gazebo meshes & system plugins
     gz_resource_path = SetEnvironmentVariable(
@@ -78,6 +81,62 @@ def generate_launch_description():
         output='screen'
     )
 
+    # map -> odom, the arena frame's only link to the robot's dead-reckoned
+    # pose - same reasoning as task1_sim.launch.py's map_to_odom. This task
+    # spawns at the arena origin facing +X (no -Y given above, so yaw 0),
+    # which is the value task2_runner.py's own arena_frame conversion now
+    # depends on (see that file's odom_callback).
+    map_to_odom = Node(
+        package='tf2_ros',
+        executable='static_transform_publisher',
+        name='map_to_odom_static_tf',
+        arguments=[
+            '--x', '0.0', '--y', '0.0', '--z', '0.0',
+            '--yaw', '0.0', '--pitch', '0.0', '--roll', '0.0',
+            '--frame-id', 'map', '--child-frame-id', 'odom'
+        ],
+        parameters=[{'use_sim_time': True}],
+        output='screen'
+    )
+
+    # gz-sim's IMU/camera sensor plugins stamp their own auto-generated scoped
+    # frame_id into message headers with no TF parent - see the identical
+    # comment in task1_sim.launch.py for why a static identity transform from
+    # the real URDF link is the fix rather than an SDF-level override.
+    camera_frame_tf = Node(
+        package='tf2_ros',
+        executable='static_transform_publisher',
+        name='camera_sensor_frame_tf',
+        arguments=[
+            '--frame-id', 'camera_link',
+            '--child-frame-id', 'mini_akm_robot/base_footprint/camera'
+        ],
+        parameters=[{'use_sim_time': True}],
+        output='screen'
+    )
+    imu_frame_tf = Node(
+        package='tf2_ros',
+        executable='static_transform_publisher',
+        name='imu_sensor_frame_tf',
+        arguments=[
+            '--frame-id', 'base_link',
+            '--child-frame-id', 'mini_akm_robot/base_footprint/imu_sensor'
+        ],
+        parameters=[{'use_sim_time': True}],
+        output='screen'
+    )
+
+    # Fuses wheel odometry + the simulated IMU into /odometry/filtered, which
+    # task2_runner.py now consumes (see that file's odom_callback) instead of
+    # a Gazebo-only ground-truth TF - same estimator role as task1_sim's EKF.
+    ekf_node = Node(
+        package='robot_localization',
+        executable='ekf_node',
+        name='ekf_filter_node',
+        parameters=[os.path.join(pkg_bringup, 'config', 'ekf_sim.yaml')],
+        output='screen'
+    )
+
     gz_bridge = Node(
         package='ros_gz_bridge',
         executable='parameter_bridge',
@@ -89,16 +148,37 @@ def generate_launch_description():
             # mismatched second advertiser. See task1_sim.launch.py note.
             '/tf@tf2_msgs/msg/TFMessage[gz.msgs.Pose_V',
             '/camera/image_raw@sensor_msgs/msg/Image[gz.msgs.Image',
-            '/camera/camera_info@sensor_msgs/msg/CameraInfo[gz.msgs.CameraInfo'
+            '/camera/camera_info@sensor_msgs/msg/CameraInfo[gz.msgs.CameraInfo',
+            # Simulated IMU (mini_akm_robot.urdf's base_link sensor) -> same
+            # topic name real hardware's mdp_bridge publishes, so ekf_sim.yaml
+            # can fuse it exactly like ekf.yaml does on real hardware.
+            '/imu/data@sensor_msgs/msg/Imu[gz.msgs.IMU'
         ],
         output='screen',
         parameters=[{'use_sim_time': True}]
     )
 
-    # NO controller spawner - the gz_ros2_control plugin in the URDF loads +
-    # activates both controllers itself from ackermann_controller.yaml (see
-    # the note in task1_sim.launch.py). A spawner is redundant and dies with
-    # "already loaded / Failed to configure".
+    # ONE spawner loads + activates BOTH controllers - matches
+    # task1_sim.launch.py's fix. Relying on the gz_ros2_control plugin to
+    # auto-load them itself proved unreliable here too: verified live,
+    # controller_manager initializes and activates the GazeboSimSystem
+    # hardware component, but never logs "Loading controller" for either
+    # controller, so `ros2 control list_controllers` reports none loaded and
+    # /cmd_vel never reaches the wheels. The /cmd_vel remap goes on the
+    # ackermann controller node via --controller-ros-args.
+    controller_spawner = Node(
+        package='controller_manager',
+        executable='spawner',
+        arguments=[
+            'joint_state_broadcaster',
+            'ackermann_steering_controller',
+            '--controller-manager', '/controller_manager',
+            '--controller-manager-timeout', '60',
+            '--controller-ros-args',
+            '-r /ackermann_steering_controller/reference:=/cmd_vel',
+        ],
+        output='screen'
+    )
 
     yolo_detector = Node(
         package='mdp_yolo',
@@ -110,18 +190,9 @@ def generate_launch_description():
         output='screen'
     )
 
-    # Spawns the obstacles (with symbol-image decals) from test_obstacles.yaml
-    # into the running Gazebo world - the camera/vision half (what YOLO sees).
-    # It waits on Gazebo's spawn service, so ordering against gz_sim_server is
-    # handled internally (no timing hack).
-    obstacles_config = os.path.join(pkg_bringup, 'config', 'test_obstacles.yaml')
-    spawn_obstacles = Node(
-        package='mdp_bringup',
-        executable='spawn_obstacles.py',
-        arguments=[obstacles_config, '--world', 'task2_arena'],
-        parameters=[{'use_sim_time': True}],
-        output='screen'
-    )
+    # Obstacles (with arrow decals) are baked directly into task2_arena.sdf -
+    # same reasoning as task1_arena.sdf, see that file's header comment. No
+    # runtime spawner needed.
 
     # Task 2 runner (the brain). Comes up idle (WAITING_FOR_START) - there is
     # NO obstacle setup for task 2 (fixed slalom), so it just holds until
@@ -143,8 +214,12 @@ def generate_launch_description():
         gz_sim_gui,
         robot_state_publisher,
         spawn_robot,
+        map_to_odom,
+        camera_frame_tf,
+        imu_frame_tf,
+        ekf_node,
         gz_bridge,
+        controller_spawner,
         yolo_detector,
-        spawn_obstacles,
         task2_runner
     ])

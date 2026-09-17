@@ -4,17 +4,19 @@ ekf_filter_node:
     #
     # Hardware localization is out of scope for the frame fix, so config/ekf.yaml
     # is not edited, not included and not layered under this file: the sim reads
-    # this one and only this one. Three things differ from hardware, and each of
+    # this one and only this one. Two things differ from hardware, and each of
     # them is a property of the simulator rather than a tuning preference:
     #
     #   1. publish_tf: false     - the ackermann_steering_controller already owns
     #                              odom -> base_footprint in sim
     #   2. base_link_frame       - the sim URDF roots at base_footprint
-    #   3. no imu0               - nothing bridges an IMU out of Gazebo
     #
-    # Everything else (rate, two_d_mode, odom0 fusion mask, rejection thresholds,
-    # covariances) is deliberately the same as hardware, so /odometry/filtered in
-    # sim behaves like the real thing.
+    # A simulated IMU (mini_akm_robot.urdf's base_link sensor, bridged to
+    # /imu/data by the sim launch files) means imu0 below is no longer omitted
+    # - it now exercises the same fusion path as hardware, not just wheel
+    # odometry. Everything else (rate, two_d_mode, odom0/imu0 fusion masks,
+    # rejection thresholds, covariances) is deliberately the same as hardware,
+    # so /odometry/filtered in sim behaves like the real thing.
 
     # --- Timing ---
     frequency: 100.0
@@ -29,8 +31,8 @@ ekf_filter_node:
     publish_tf: false
     print_diagnostics: true
 
-    # Only one input is configured below, and Gazebo publishes it continuously,
-    # so this timeout is effectively never reached.
+    # Both inputs below are published continuously by Gazebo, so this timeout
+    # is effectively never reached in sim.
     sensor_timeout: 0.5
 
     # --- Frames ---
@@ -58,18 +60,25 @@ ekf_filter_node:
     odom0_differential: false
     odom0_relative: false
 
-    # --- Deliberately NO imu0 ---
-    # Nothing bridges an IMU out of Gazebo (see the parameter_bridge arguments in
-    # task1_sim.launch.py - /clock, /tf and the camera, no /imu/data), so
-    # configuring imu0 here would register an input that never produces a
-    # message. robot_localization does not treat a silent input as absent: it
-    # waits on it, and combined with sensor_timeout that yields stretches where
-    # the filter runs prediction-only and /odometry/filtered drifts away from the
-    # controller's odometry for no reason visible in the sim. Omitting the input
-    # is the correct model of "this robot has no IMU right now".
+    # --- Input 1: simulated IMU (mini_akm_robot.urdf's base_link sensor) ---
+    # Same mask as hardware (ekf.yaml): fuse vyaw only, never orientation - a
+    # simulated IMU has no integration-drift problem the way the real ICM-20948
+    # does, but keeping the mask identical is what makes this sim run exercise
+    # the same fusion logic (including the redundant vyaw-from-both-sources
+    # behavior) that real hardware relies on.
+    imu0: /imu/data
+    imu0_config: [false, false, false,   # x,  y,  z
+                  false, false, false,   # roll, pitch, yaw
+                  false, false, false,   # vx, vy, vz
+                  false, false, true,    # vroll, vpitch, vyaw
+                  false, false, false]   # ax, ay, az
+    imu0_differential: false
+    imu0_relative: false
+    imu0_remove_gravitational_acceleration: true
 
     # --- Outlier rejection ---
     odom0_twist_rejection_threshold: 2.0
+    imu0_twist_rejection_threshold: 1.542
 
     # --- Process/initial covariance ---
     # Copied from ekf.yaml unchanged: the plant is the same chassis, and keeping
