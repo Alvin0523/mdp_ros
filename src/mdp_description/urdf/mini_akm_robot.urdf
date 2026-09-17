@@ -264,59 +264,6 @@
       xyz="0 0 0" />
   </joint>
   <link
-    name="laser_link">
-    <inertial>
-      <origin
-        xyz="0.00196458631092469 -3.57895453832374E-06 -0.000201831632616292"
-        rpy="0 0 0" />
-      <mass
-        value="0.0477519163756088" />
-      <inertia
-        ixx="3.38461999756745E-05"
-        ixy="-2.19897168323003E-09"
-        ixz="1.07118468678157E-06"
-        iyy="3.94150415873187E-05"
-        iyz="6.83978024968062E-10"
-        izz="5.60787042126573E-05" />
-    </inertial>
-    <visual>
-      <origin
-        xyz="0 0 0"
-        rpy="0 0 0" />
-      <geometry>
-        <mesh
-          filename="package://mdp_description/meshes/mini_akm_robot_meshes/laser.STL" />
-      </geometry>
-      <material
-        name="">
-        <color
-          rgba="0.376470588235294 0.376470588235294 0.376470588235294 1" />
-      </material>
-    </visual>
-    <collision>
-      <origin
-        xyz="0 0 0"
-        rpy="0 0 0" />
-      <geometry>
-        <mesh
-          filename="package://mdp_description/meshes/mini_akm_robot_meshes/laser.STL" />
-      </geometry>
-    </collision>
-  </link>
-  <joint
-    name="laser_joint"
-    type="fixed">
-    <origin
-      xyz="0.051343 -1.2576E-05 0.094524"
-      rpy="0 0 3.1416" />
-    <parent
-      link="base_link" />
-    <child
-      link="laser_link" />
-    <axis
-      xyz="0 0 0" />
-  </joint>
-  <link
     name="camera_link">
     <inertial>
       <origin
@@ -359,9 +306,27 @@
   <joint
     name="camera_joint"
     type="fixed">
+    <!-- CAMERA_YAW_RAD is a launch-time placeholder, not a valid float - every
+         sim launch file substitutes it (same robot_desc.replace() pattern
+         already used for the controller config path below). Task 1's
+         physical camera is mounted facing the car's LEFT side, not forward
+         (see TASK1_CAMERA_THETA_OFFSET_RAD in task1_runner.py for the
+         planner-side half); Task 2 and bare sim keep it forward, matching
+         real hardware's default mount. One shared URDF can't hardcode both,
+         since all three sim launches load this same file.
+
+         task1_sim.launch.py substitutes +pi/2 for "left" (REP-103: positive
+         yaw = left). The <camera> sensor's boresight is always local +X of
+         its own pose regardless of camera_link's decorative visual mesh, so
+         judge this against actual /camera/image_raw content, not the mesh
+         or a TF axis gizmo (camera frames conventionally use
+         Z-forward/X-right/Y-down optical convention, not REP-103 body
+         convention - a gizmo arrow "pointing right" is not necessarily
+         wrong). See task1_sim.launch.py's substitution comment for the
+         2026-09-17 back-and-forth on this sign - it's settled on +pi/2. -->
     <origin
       xyz="0.11365 0.00016542 0.076204"
-      rpy="0 0 0" />
+      rpy="0 0 CAMERA_YAW_RAD" />
     <parent
       link="base_link" />
     <child
@@ -658,6 +623,40 @@
         <remapping>/ackermann_steering_controller/reference:=/cmd_vel</remapping>
       </ros>
     </plugin>
+  </gazebo>
+
+  <gazebo reference="base_link">
+    <!-- Simulated IMU, matching what mdp_stm32's ICM-20948 publishes on real
+         hardware (/imu/data, angular_velocity.z fused by the EKF - see
+         mdp_bringup/config/ekf_sim.yaml). update_rate matches ekf_sim.yaml's
+         100Hz frequency and the real STM32's own telemetry rate. -->
+    <sensor name="imu_sensor" type="imu">
+      <always_on>true</always_on>
+      <update_rate>100</update_rate>
+      <topic>imu/data</topic>
+      <!-- Gazebo only populates the published covariance matrix when a
+           <noise> model is given - with none (as before), it reports all
+           zeros. robot_localization treats a zero covariance as PERFECT
+           certainty (Kalman gain -> infinite trust), so the EKF was pulling
+           its yaw estimate hard toward every noisy IMU sample regardless of
+           actual quality, fighting the (better-behaved) wheel odometry
+           instead of properly blending with it. stddev is a placeholder
+           MEMS-gyro-plausible noise floor, not a measured ICM-20948 value -
+           same "unvalidated starting point" caveat as this project's other
+           sim covariance numbers (see ekf_sim.yaml). -->
+      <imu>
+        <angular_velocity>
+          <x><noise type="gaussian"><mean>0.0</mean><stddev>0.01</stddev></noise></x>
+          <y><noise type="gaussian"><mean>0.0</mean><stddev>0.01</stddev></noise></y>
+          <z><noise type="gaussian"><mean>0.0</mean><stddev>0.01</stddev></noise></z>
+        </angular_velocity>
+        <linear_acceleration>
+          <x><noise type="gaussian"><mean>0.0</mean><stddev>0.05</stddev></noise></x>
+          <y><noise type="gaussian"><mean>0.0</mean><stddev>0.05</stddev></noise></y>
+          <z><noise type="gaussian"><mean>0.0</mean><stddev>0.05</stddev></noise></z>
+        </linear_acceleration>
+      </imu>
+    </sensor>
   </gazebo>
 
   <gazebo reference="camera_link">

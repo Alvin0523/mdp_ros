@@ -46,23 +46,27 @@ from mdp_algorithm.planning.occupancy_map import (
 from mdp_algorithm.control.pure_pursuit_follower import PurePursuitController, yaw_from_quaternion
 
 # Task 1's physical camera is mounted facing the car's LEFT side, not
-# forward - confirmed by the user, not modeled in mini_akm_robot.urdf's
-# camera_joint (rpy="0 0 0", forward-facing - that matches Task 2's own
-# camera config instead, see task2_runner.py). This is what
+# forward - confirmed by the user. Modeled in mini_akm_robot.urdf's
+# camera_joint via the CAMERA_YAW_RAD launch-time substitution (task1_sim
+# uses +pi/2 = left; task2_sim/bare sim use 0.0 = forward, matching
+# task2_runner.py). This constant is what
 # hamiltonian.obstacle_to_checkpoint()'s theta_offset corrects for: the
 # checkpoint's body heading is chosen so the CAMERA (not the front
 # bumper) ends up pointed at the obstacle's face.
 #
-# SIGN FLIPPED 2026-09-04: +pi/2 (the naive "positive=left/REP-103" guess)
-# produced checkpoints that visually pointed the RIGHT side at the
-# obstacle in Foxglove, confirmed by direct observation - the
-# obstacle_to_checkpoint() formula's theta = image_bearing - theta_offset
-# resolves the opposite way round from that naive guess. -pi/2 is the
-# corrected value; re-verify against Foxglove (checkpoint arrow direction
-# vs. which physical side the camera is on) before trusting this for a
-# real run - this was flipped once already on inherited-formula guesswork,
-# not re-derived from scratch.
-TASK1_CAMERA_THETA_OFFSET_RAD = -math.pi / 2.0
+# DERIVATION (re-derived from scratch 2026-09-17, replacing an earlier
+# -pi/2 value that was picked from a single Foxglove eyeball check, not
+# derived): obstacle_to_checkpoint() sets body_theta =
+# facing_rad + pi - theta_offset. A camera fixed at local body-frame offset
+# phi has world bearing body_theta + phi. Requiring that to equal the
+# straight-at-the-obstacle bearing (facing_rad + pi) and solving gives
+# phi = theta_offset exactly - the camera's local mounting offset and this
+# constant must be the same value, not opposites. Per REP-103
+# (positive yaw = left), a left-mounted camera is phi = +pi/2, so
+# theta_offset must also be +pi/2, not -pi/2. Re-verify against Foxglove
+# (checkpoint arrow direction vs. which physical side the camera is on)
+# before trusting this for a real run.
+TASK1_CAMERA_THETA_OFFSET_RAD = math.pi / 2.0
 
 # Physical start box the car may be placed anywhere within (per direct user
 # description) - 40x40cm, at the arena's own (0,0) corner. Visualization
@@ -797,7 +801,7 @@ class Task1Runner(Node):
         line.action = Marker.ADD
         line.scale.x = self.get_parameter('path_line_width_m').value
         line.color.r, line.color.g, line.color.b, line.color.a = self.get_parameter('path_color').value
-        for x, y, _ in path:
+        for x, y, *_ in path:   # *_ tolerates (x,y,theta) or (x,y,theta,gear)
             pt = Point()
             pt.x, pt.y, pt.z = float(x), float(y), 0.03
             line.points.append(pt)
@@ -910,7 +914,7 @@ class Task1Runner(Node):
         for path in self.leg_paths:
             if not path:
                 continue
-            for x, y, _ in path:
+            for x, y, *_ in path:   # *_ tolerates (x,y,theta) or (x,y,theta,gear)
                 p = PoseStamped()
                 p.header = msg.header
                 p.pose.position.x = float(x)

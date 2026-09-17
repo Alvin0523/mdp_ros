@@ -32,11 +32,17 @@
 #
 # Symbols currently in task1_arena.sdf, for cross-reference when editing:
 #   id 1 -> 20_AlphabetA   id 2 -> 11_One   id 3 -> 36_ArrowUp
-#   id 4 -> 40_Stop        id 5 -> 12_Two
-# (id 4 was 99_Bullseye; swapped out so the test layout uses only ordinary
-# recognition targets. The bullseye is a special marker rather than one of the
-# numbered/lettered symbols - note yolo_detector.py maps both 'bullseye' and
-# 'circle' to id 99.)
+#   id 5 -> 12_Two
+#
+# id 4 (0.90, 1.80, facing E, 40_Stop) was REMOVED 2026-09-17 - only 20cm from
+# the arena's top wall, and with the theta_offset sign fix (see
+# task1_runner.py's TASK1_CAMERA_THETA_OFFSET_RAD), its checkpoint required a
+# final heading pointing straight into that wall with less than one full
+# turning-radius (25.3cm) of clearance - Hybrid A* correctly reported
+# "NO PATH FOUND" for it. Dropped rather than relocated for now; re-add once
+# there's a layout position that's actually reachable. (It was also
+# previously 99_Bullseye before an earlier swap to 40_Stop - see git history
+# if that assignment matters again.)
 
 obstacles:
   - id: 1
@@ -51,10 +57,6 @@ obstacles:
     x: 1.70
     y: 1.50
     facing: N
-  - id: 4
-    x: 0.90
-    y: 1.80
-    facing: E
   - id: 5
     x: 1.50
     y: 0.90

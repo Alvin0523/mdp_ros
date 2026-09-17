@@ -58,11 +58,30 @@ def generate_launch_description():
     controller_config = os.path.join(pkg_bringup, 'config', 'ackermann_controller.yaml')
     obstacles_config = os.path.join(pkg_bringup, 'config', 'test_obstacles.yaml')
 
+    # Camera faces the car's LEFT side for Task 1, not forward - matches
+    # TASK1_CAMERA_THETA_OFFSET_RAD in task1_runner.py, which already assumes
+    # this facing when computing standoff checkpoints. See
+    # mini_akm_robot.urdf's camera_joint comment for why this is a launch-time
+    # substitution rather than hardcoded in the shared URDF.
+    #
+    # +pi/2 (REP-103: positive yaw = left). A visual mesh/gizmo read briefly
+    # suggested this was backwards and it was flipped to -pi/2
+    # (2026-09-17), then reverted back to +pi/2 the same day: the
+    # <camera> sensor's boresight is an SDF-level convention (always local
+    # +X of its own pose) independent of camera_link's decorative visual
+    # mesh, and task2's confirmed-working forward case (CAMERA_YAW_RAD=0.0,
+    # YOLO actually detecting the decal placed on the approached face) is
+    # solid evidence local +X really is the sensor's functional forward -
+    # rotating that by +pi/2 puts it on local +Y, which is left. Verify
+    # against actual /camera/image_raw content, not a mesh or TF axis
+    # gizmo (camera frames conventionally use Z-forward/X-right/Y-down
+    # optical convention, not REP-103 - an axis gizmo "pointing right" is
+    # not necessarily wrong).
     with open(urdf_file, 'r') as infp:
         robot_desc = infp.read().replace(
             'package://mdp_bringup/config/ackermann_controller.yaml',
             controller_config
-        )
+        ).replace('CAMERA_YAW_RAD', '1.5707963267948966')
 
     # Gazebo resource path (resolves package://mdp_description meshes + the
     # symbol textures the spawner references) and the gz_ros2_control plugin.
@@ -139,6 +158,38 @@ def generate_launch_description():
         output='screen'
     )
 
+    # gz-sim's IMU/camera sensor plugins stamp their own auto-generated scoped
+    # frame_id (e.g. "mini_akm_robot/base_footprint/imu_sensor") into message
+    # headers - there's no SDF-level override for this (checked: no frame_id
+    # element in sdformat's sensor.sdf schema for this gz-sim version), and
+    # nothing broadcasts a TF parent for that name, so it shows up orphaned
+    # in RViz/Foxglove. Identity static transforms from the real URDF links
+    # (which is where these sensors are physically mounted, per
+    # mini_akm_robot.urdf's <gazebo reference="..."> blocks) connect them
+    # into the tree instead of fighting gz-sim's internal naming.
+    camera_frame_tf = Node(
+        package='tf2_ros',
+        executable='static_transform_publisher',
+        name='camera_sensor_frame_tf',
+        arguments=[
+            '--frame-id', 'camera_link',
+            '--child-frame-id', 'mini_akm_robot/base_footprint/camera'
+        ],
+        parameters=[{'use_sim_time': True}],
+        output='screen'
+    )
+    imu_frame_tf = Node(
+        package='tf2_ros',
+        executable='static_transform_publisher',
+        name='imu_sensor_frame_tf',
+        arguments=[
+            '--frame-id', 'base_link',
+            '--child-frame-id', 'mini_akm_robot/base_footprint/imu_sensor'
+        ],
+        parameters=[{'use_sim_time': True}],
+        output='screen'
+    )
+
     # The publisher of /odometry/filtered, which task1_runner subscribes to. The
     # sim previously ran no EKF at all, so that subscription never fired and the
     # runner's pose sat at its constructor default for the whole run - the arena
@@ -178,7 +229,11 @@ def generate_launch_description():
             # TwistStamped never reaching the controller.
             '/tf@tf2_msgs/msg/TFMessage[gz.msgs.Pose_V',
             '/camera/image_raw@sensor_msgs/msg/Image[gz.msgs.Image',
-            '/camera/camera_info@sensor_msgs/msg/CameraInfo[gz.msgs.CameraInfo'
+            '/camera/camera_info@sensor_msgs/msg/CameraInfo[gz.msgs.CameraInfo',
+            # Simulated IMU (mini_akm_robot.urdf's base_link sensor) -> same
+            # topic name real hardware's mdp_bridge publishes, so ekf_sim.yaml
+            # can fuse it exactly like ekf.yaml does on real hardware.
+            '/imu/data@sensor_msgs/msg/Imu[gz.msgs.IMU'
         ],
         output='screen',
         parameters=[{'use_sim_time': True}]
@@ -258,6 +313,8 @@ def generate_launch_description():
         robot_state_publisher,
         spawn_robot,
         map_to_odom,
+        camera_frame_tf,
+        imu_frame_tf,
         ekf_node,
         gz_bridge,
         controller_spawner,

@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """
-True Odometry & Ground Truth Position-Reaching Task 2 Runner Node.
+Task 2 Runner Node - pure-pursuit slalom over a planned Dubins path, tracking
+against /odometry/filtered converted into the arena frame (same pattern as
+task1_runner.py), so this behaves identically on real hardware and sim.
 Features adaptive cornering speed reduction (reduces linear speed on sharp turns
 to allow full HWZ020 servo yaw rotation without overshooting).
 """
@@ -17,8 +19,10 @@ from visualization_msgs.msg import Marker, MarkerArray
 from std_msgs.msg import String
 from std_srvs.srv import Trigger
 import tf2_ros
+import tf2_geometry_msgs
 
 from mdp_algorithm.planning.spline_planner import SplinePathPlanner
+from mdp_algorithm.control.pure_pursuit_follower import yaw_from_quaternion
 
 class State(Enum):
     WAITING_FOR_START = auto()
@@ -40,7 +44,19 @@ class Task2Runner(Node):
         
         self.create_subscription(String, '/yolo_result', self.arrow_callback, 10)
         self.create_subscription(JointState, '/joint_states', self.joint_states_callback, 10)
-        self.create_subscription(Odometry, '/ackermann_steering_controller/odometry', self.odom_callback, 10)
+        # /odometry/filtered (EKF-fused), not raw wheel odometry - same source
+        # task1_runner.py uses, so this runner behaves identically on real
+        # hardware and sim instead of leaning on a Gazebo-only ground-truth TF
+        # that doesn't exist on the real robot.
+        self.create_subscription(Odometry, '/odometry/filtered', self.odom_callback, 10)
+
+        # Arena frame this runner's pose/markers are published in - see
+        # task1_runner.py's odom_callback docstring for the full reasoning:
+        # /odometry/filtered is an `odom`-frame message, and consuming it raw
+        # applies a constant rotation/offset equal to the start pose. The
+        # `map -> odom` transform (published by the launch file, real and sim
+        # alike) is what corrects for that.
+        self.declare_parameter('arena_frame', 'map')
 
         # `go` trigger: start driving on an explicit command (the /start_run
         # service, called by `pixi run go`), NOT a fixed timer - the run must
@@ -50,9 +66,11 @@ class Task2Runner(Node):
         self.start_run_srv = self.create_service(
             Trigger, '/start_run', self.start_run_callback)
         
-        # TF Buffer & Listener for Ground Truth Gazebo Pose
+        # TF Buffer & Listener - used to convert /odometry/filtered's `odom`-frame
+        # pose into self.arena_frame (see odom_callback).
         self.tf_buffer = tf2_ros.Buffer()
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
+        self.arena_frame = self.get_parameter('arena_frame').value
 
         # Control Loop @ 20Hz
         self.timer = self.create_timer(0.05, self.control_loop)
@@ -94,14 +112,10 @@ class Task2Runner(Node):
         self.obs2_x = 1.8
         self.sweep_offset = 0.50     # Lateral clearance offset (50 cm)
 
-        # Robot Positions
-        self.odom_x = 0.0
-        self.odom_y = 0.0
-        self.odom_yaw = 0.0
-
-        self.gt_x = 0.0
-        self.gt_y = 0.0
-        self.gt_yaw = 0.0
+        # Robot pose in the arena frame, updated by odom_callback from the
+        # fused /odometry/filtered - x, y, yaw. Default matches this task's
+        # spawn convention: carpark at (0,0) facing +X.
+        self.current_pose = (0.0, 0.0, 0.0)
 
         # State & Decisions
         self.state = State.WAITING_FOR_START
@@ -139,32 +153,43 @@ class Task2Runner(Node):
             self.get_logger().warn(f"`go` rejected: {response.message}")
         return response
 
-    def odom_callback(self, msg: Odometry):
-        self.odom_x = msg.pose.pose.position.x
-        self.odom_y = msg.pose.pose.position.y
-        q = msg.pose.pose.orientation
-        siny_cosp = 2 * (q.w * q.z + q.x * q.y)
-        cosy_cosp = 1 - 2 * (q.y * q.y + q.z * q.z)
-        self.odom_yaw = math.atan2(siny_cosp, cosy_cosp)
-        
-        pose_msg = PoseStamped()
-        pose_msg.header = msg.header
-        pose_msg.pose = msg.pose.pose
-        self.pose_pub.publish(pose_msg)
+    def odom_callback(self, msg: Odometry) -> None:
+        """Convert the incoming fused odometry pose into the arena frame, then
+        store it - same pattern as task1_runner.py's odom_callback (see that
+        file's docstring for the full derivation). `/odometry/filtered` is an
+        `odom`-frame message on both real hardware and sim; going through TF
+        instead of trusting it raw is what makes this runner behave the same
+        on both, since real hardware has no Gazebo-only ground-truth TF to
+        fall back on.
 
-    def update_ground_truth_tf(self):
+        On lookup failure the previous pose is KEPT and the update is dropped
+        (not a raw-pose fallback) - same reasoning as task1_runner.py.
+        """
+        pose_in = PoseStamped()
+        pose_in.header = msg.header
+        pose_in.pose = msg.pose.pose
+
         try:
-            t = self.tf_buffer.lookup_transform('odom', 'base_footprint', rclpy.time.Time())
-            self.gt_x = t.transform.translation.x
-            self.gt_y = t.transform.translation.y
-            q = t.transform.rotation
-            siny_cosp = 2 * (q.w * q.z + q.x * q.y)
-            cosy_cosp = 1 - 2 * (q.y * q.y + q.z * q.z)
-            self.gt_yaw = math.atan2(siny_cosp, cosy_cosp)
-        except Exception:
-            self.gt_x = self.odom_x
-            self.gt_y = self.odom_y
-            self.gt_yaw = self.odom_yaw
+            tf = self.tf_buffer.lookup_transform(
+                self.arena_frame, msg.header.frame_id, msg.header.stamp)
+        except (tf2_ros.LookupException, tf2_ros.ConnectivityException,
+                tf2_ros.ExtrapolationException, tf2_ros.TransformException) as exc:
+            self.get_logger().warn(
+                f"No {self.arena_frame} <- {msg.header.frame_id} transform yet "
+                f"({exc}); keeping previous pose {self.current_pose}",
+                throttle_duration_sec=2.0)
+            return
+
+        pose_arena = tf2_geometry_msgs.do_transform_pose(pose_in.pose, tf)
+        p = pose_arena.position
+        yaw = yaw_from_quaternion(pose_arena.orientation)
+        self.current_pose = (p.x, p.y, yaw)
+
+        pose_msg = PoseStamped()
+        pose_msg.header.stamp = msg.header.stamp
+        pose_msg.header.frame_id = self.arena_frame
+        pose_msg.pose = pose_arena
+        self.pose_pub.publish(pose_msg)
 
     def joint_states_callback(self, msg: JointState):
         pass
@@ -192,7 +217,7 @@ class Task2Runner(Node):
 
         path_msg = Path()
         path_msg.header.stamp = self.get_clock().now().to_msg()
-        path_msg.header.frame_id = 'odom'
+        path_msg.header.frame_id = self.arena_frame
 
         # Publish the actual dense, curvature-feasible path being followed
         # (falls back to the sparse waypoints if planning hasn't run yet)
@@ -298,26 +323,25 @@ class Task2Runner(Node):
     def find_lookahead_point(self) -> int:
         """Advances self.path_idx monotonically along the dense path (never chases
         backwards) and returns the index of the first point at/beyond lookahead
-        distance from the current ground-truth position."""
+        distance from the current fused position."""
+        gx, gy, _ = self.current_pose
         n = len(self.dense_path)
         while self.path_idx < n - 1:
             px, py, _ = self.dense_path[self.path_idx]
-            if math.hypot(px - self.gt_x, py - self.gt_y) < self.lookahead * 0.5:
+            if math.hypot(px - gx, py - gy) < self.lookahead * 0.5:
                 self.path_idx += 1
             else:
                 break
 
         for i in range(self.path_idx, n):
             px, py, _ = self.dense_path[i]
-            if math.hypot(px - self.gt_x, py - self.gt_y) >= self.lookahead:
+            if math.hypot(px - gx, py - gy) >= self.lookahead:
                 return i
         return n - 1
 
     def control_loop(self):
         now = self.get_now_sec()
         elapsed = now - self.state_start_time
-
-        self.update_ground_truth_tf()
 
         # STATE 0: Held until the `go` trigger (/start_run). No fixed timer -
         # the run only begins on an explicit command, so it's deterministic.
@@ -347,8 +371,10 @@ class Task2Runner(Node):
         elif self.state == State.DRIVING_PATH:
             self.publish_visualizations()
 
+            gx, gy, gyaw = self.current_pose
+
             final_x, final_y, _ = self.dense_path[-1]
-            dist_to_end = math.hypot(final_x - self.gt_x, final_y - self.gt_y)
+            dist_to_end = math.hypot(final_x - gx, final_y - gy)
 
             if self.path_idx >= len(self.dense_path) - 1 and dist_to_end < 0.10:
                 self.send_cmd(0.0, 0.0)
@@ -359,10 +385,10 @@ class Task2Runner(Node):
             target_idx = self.find_lookahead_point()
             target_x, target_y, _ = self.dense_path[target_idx]
 
-            dx = target_x - self.gt_x
-            dy = target_y - self.gt_y
-            local_x = dx * math.cos(-self.gt_yaw) - dy * math.sin(-self.gt_yaw)
-            local_y = dx * math.sin(-self.gt_yaw) + dy * math.cos(-self.gt_yaw)
+            dx = target_x - gx
+            dy = target_y - gy
+            local_x = dx * math.cos(-gyaw) - dy * math.sin(-gyaw)
+            local_y = dx * math.sin(-gyaw) + dy * math.cos(-gyaw)
 
             lookahead_actual = max(math.hypot(local_x, local_y), 0.05)
             curvature = (2.0 * local_y) / (lookahead_actual ** 2)
@@ -382,12 +408,10 @@ class Task2Runner(Node):
             # Milestone logging only (does not drive control anymore)
             if self.current_wpt_idx < len(self.waypoints):
                 wx, wy = self.waypoints[self.current_wpt_idx]
-                if math.hypot(wx - self.gt_x, wy - self.gt_y) < 0.15:
-                    odom_err = math.hypot(wx - self.odom_x, wy - self.odom_y)
+                if math.hypot(wx - gx, wy - gy) < 0.15:
                     self.get_logger().info(
                         f"[Wpt {self.current_wpt_idx}] Target({wx:.2f}, {wy:.2f}) | "
-                        f"Gazebo GT({self.gt_x:.2f}, {self.gt_y:.2f}) | "
-                        f"Odom ({self.odom_x:.2f}, {self.odom_y:.2f}) [Err: {odom_err:.2f}m]"
+                        f"Pose({gx:.2f}, {gy:.2f})"
                     )
                     self.current_wpt_idx += 1
 
