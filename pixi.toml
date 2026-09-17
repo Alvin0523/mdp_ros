@@ -122,18 +122,14 @@ ros-jazzy-ros-base = "*"
 ros-jazzy-xacro = "*"
 ros-jazzy-robot-state-publisher = "*"
 ros-jazzy-joint-state-publisher = "*"
-ros-jazzy-joint-state-publisher-gui = "*"
-ros-jazzy-rviz2 = "*"
 ros-jazzy-teleop-twist-keyboard = "*"
 
-# ros2_control stack (framework, controllers, simulation & real hardware plugins)
+# ros2_control stack (framework, controllers, real hardware plugins)
 ros-jazzy-ros2-control = "*"
 ros-jazzy-ros2-controllers = "*"
-ros-jazzy-gz-ros2-control = "*"
 ros-jazzy-topic-based-ros2-control = "*"
 
-# Visualization & bridge
-ros-jazzy-ros-gz = "*"
+# Visualization & bridge (lightweight WebSocket bridge for Foxglove Studio)
 ros-jazzy-foxglove-bridge = "*"
 
 # Sensor fusion (wheel odometry + IMU -> /odometry/filtered)
@@ -145,10 +141,6 @@ ros-jazzy-robot-localization = "*"
 # relying on it riding in transitively via scipy/opencv/ultralytics)
 scipy = "*"
 numpy = "*"
-# Used directly by publish_test_obstacles.py (mdp_bringup) - previously
-# only declared under [target.linux-aarch64.dependencies] as an incidental
-# camera_ros build dependency, not for this reason; declared here
-# explicitly since this script's need for it isn't aarch64-specific.
 pyyaml = "*"
 
 # Vision & camera stack
@@ -163,7 +155,6 @@ opencv = "*"
 libblas = { version = "*", build = "*openblas" }
 liblapack = { version = "*", build = "*openblas" }
 
-
 # Build tools (colcon-common-extensions provides the colcon CLI itself;
 # compilers + cmake are needed for the CMake-based packages: mdp_bridge,
 # mdp_bringup, mdp_description)
@@ -172,6 +163,29 @@ compilers = "*"
 cmake = "*"
 ninja = "*"
 
+# ---------------------------------------------------------------------------
+# Laptop-only targets (Simulation, GUI testing, Model conversion)
+# Never downloaded or installed on the Raspberry Pi.
+# ---------------------------------------------------------------------------
+[target.linux-64.dependencies]
+# Gazebo simulation stack (laptop-only, real hardware uses topic_based_ros2_control)
+ros-jazzy-ros-gz = "*"
+ros-jazzy-gz-ros2-control = "*"
+ros-jazzy-joint-state-publisher-gui = "*"
+
+[target.linux-64.pypi-dependencies]
+# PyTorch to NCNN model converter - run on laptop only, Pi only runs inference
+pnnx = "*"
+
+[target.osx-arm64.dependencies]
+ros-jazzy-joint-state-publisher-gui = "*"
+
+[target.osx-arm64.pypi-dependencies]
+pnnx = "*"
+
+# ---------------------------------------------------------------------------
+# Raspberry Pi target (Hardware camera drivers & build chain)
+# ---------------------------------------------------------------------------
 [target.linux-aarch64.dependencies]
 # libcamera + camera_ros build deps (Raspberry Pi camera capture, built from
 # source in src/ rather than as prebuilt ros-jazzy-camera-ros/-libcamera
@@ -196,7 +210,6 @@ ultralytics = "*"
 torch = { version = "==2.8.0", index = "https://download.pytorch.org/whl/cpu" }
 torchvision = { version = "==0.23.0", index = "https://download.pytorch.org/whl/cpu" }
 ncnn = "*"
-pnnx = "*"
 
 [activation]
 scripts = ["install/setup.bash"]
