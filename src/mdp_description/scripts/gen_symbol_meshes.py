@@ -63,6 +63,19 @@ def write_obj(stem: str):
     #   v2 ( H, 0, -H)  uv (1,0)
     #   v3 ( H, 0,  H)  uv (1,1)
     #   v4 (-H, 0,  H)  uv (0,1)
+    #
+    # Face winding below is v1,v3,v2 / v1,v4,v3 (NOT the more obvious
+    # v1,v2,v3 / v1,v3,v4) - confirmed by direct computation (2026-09-17):
+    # the "obvious" winding's face normal (Edge(v2-v1) x Edge(v3-v1))
+    # works out to -Y, the opposite of both this comment's claim and the
+    # declared `vn` below, despite reading as "CCW from +Y" at a glance.
+    # That made every symbol panel in the project front-face on -Y instead
+    # of +Y, so the SDF's documented yaw-only placement (this file's own
+    # docstring, task1_arena.sdf's header) was mounting every decal
+    # reversed - visible only as a mirrored/backwards image from the
+    # intended viewing direction. This winding is the one that actually
+    # produces a +Y-pointing normal; verify with a real capture before
+    # trusting a future "obvious-looking" edit here again.
     obj = f"""# MDP symbol panel quad for {stem} (auto-generated, do not edit)
 mtllib {stem}.mtl
 o panel_{stem}
@@ -76,8 +89,8 @@ vt 1.0 1.0
 vt 0.0 1.0
 vn 0.0 1.0 0.0
 usemtl {mtl_name}
-f 1/1/1 2/2/1 3/3/1
-f 1/1/1 3/3/1 4/4/1
+f 1/1/1 3/3/1 2/2/1
+f 1/1/1 4/4/1 3/3/1
 """
     mtl = f"""# auto-generated, do not edit
 newmtl {mtl_name}
