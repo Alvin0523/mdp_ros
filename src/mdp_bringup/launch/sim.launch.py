@@ -38,8 +38,13 @@ def generate_launch_description():
     with open(urdf_file, 'r') as infp:
         robot_desc = infp.read()
 
-    # Substitute controller config path for Gazebo plugin
-    processed_urdf = robot_desc.replace('package://mdp_bringup/config/ackermann_controller.yaml', controller_config)
+    # Substitute controller config path for Gazebo plugin, and the camera's
+    # placeholder yaw - forward, matching real hardware's default mount (see
+    # mini_akm_robot.urdf's camera_joint comment; only task1_sim.launch.py
+    # overrides this to face left).
+    processed_urdf = robot_desc.replace(
+        'package://mdp_bringup/config/ackermann_controller.yaml', controller_config
+    ).replace('CAMERA_YAW_RAD', '0.0')
     processed_urdf_path = '/tmp/mini_akm_robot_gazebo.urdf'
     with open(processed_urdf_path, 'w') as outfp:
         outfp.write(processed_urdf)

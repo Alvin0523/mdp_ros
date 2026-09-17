@@ -11,6 +11,7 @@
     <plugin filename="gz-sim-sensors-system" name="gz::sim::systems::Sensors">
       <render_engine>ogre2</render_engine>
     </plugin>
+    <plugin filename="gz-sim-imu-system" name="gz::sim::systems::Imu"/>
 
     <!-- Sun Light Source -->
     <light type="directional" name="sun">
@@ -53,11 +54,71 @@
       </link>
     </model>
 
-    <!-- Obstacles are NOT hardcoded here. They are spawned at runtime by
-         mdp_bringup/scripts/spawn_obstacles.py from test_obstacles.yaml (with
-         a symbol-image decal on the `facing` side, and an optional randomize
-         switch). Keeping them out of the static world lets one YAML drive both
-         the Gazebo scene and the planner (/obstacle_setup) without drift. -->
+    <!-- =====================================================================
+         OBSTACLES - baked in, same reasoning as task1_arena.sdf: obstacles
+         must exist at world load or the decal renders black (texture never
+         binds in ogre2), so there is no runtime spawner here.
+
+         Positions/sizes/colors mirror task2_runner.py's ARENA_GEOMETRY - keep
+         both in step by hand if either changes. Facing is WEST (yaw +pi/2):
+         the robot drives from the carpark at x=0 out toward +x, so the west
+         (-x) face of each obstacle is what its camera sees on approach.
+         Decal placement follows task1_arena.sdf's geometry rules (see that
+         file's header comment for the full derivation): offset = half-width
+         + 0.0015 clearance, flush with the top of the obstacle.
+         ===================================================================== -->
+    <model name="obstacle_1">
+      <static>true</static>
+      <pose>1.0 0.0 0.10 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry><box><size>0.10 0.10 0.20</size></box></geometry>
+        </collision>
+        <visual name="body">
+          <geometry><box><size>0.10 0.10 0.20</size></box></geometry>
+          <material>
+            <ambient>0.8 0.2 0.2 1</ambient>
+            <diffuse>0.8 0.2 0.2 1</diffuse>
+          </material>
+        </visual>
+        <visual name="symbol">
+          <!-- Arrow LEFT - matches task2_runner.py's default self.arrow1 -->
+          <pose>-0.0515 0.0 0.0695 0.0 0.0 1.5707963267948966</pose>
+          <geometry>
+            <mesh>
+              <uri>model://mdp_description/models/symbols/39_ArrowLeft.obj</uri>
+              <scale>1 1 1</scale>
+            </mesh>
+          </geometry>
+        </visual>
+      </link>
+    </model>
+    <model name="obstacle_2">
+      <static>true</static>
+      <pose>1.8 0.0 0.10 0 0 0</pose>
+      <link name="link">
+        <collision name="collision">
+          <geometry><box><size>0.10 0.30 0.20</size></box></geometry>
+        </collision>
+        <visual name="body">
+          <geometry><box><size>0.10 0.30 0.20</size></box></geometry>
+          <material>
+            <ambient>0.2 0.2 0.8 1</ambient>
+            <diffuse>0.2 0.2 0.8 1</diffuse>
+          </material>
+        </visual>
+        <visual name="symbol">
+          <!-- Arrow RIGHT - matches task2_runner.py's default self.arrow2 -->
+          <pose>-0.0515 0.0 0.0695 0.0 0.0 1.5707963267948966</pose>
+          <geometry>
+            <mesh>
+              <uri>model://mdp_description/models/symbols/38_ArrowRight.obj</uri>
+              <scale>1 1 1</scale>
+            </mesh>
+          </geometry>
+        </visual>
+      </link>
+    </model>
 
   </world>
 </sdf>

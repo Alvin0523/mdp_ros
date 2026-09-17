@@ -33,6 +33,10 @@ from geometry_msgs.msg import TwistStamped
 from nav_msgs.msg import Odometry
 
 Pose = Tuple[float, float, float]
+# (x, y, theta, gear) - gear is +1 forward / -1 reverse (motion_primitives.Gear).
+# Matches collision_aware_planner.DensePose; kept as a separate alias here
+# since this module is meant to be usable without importing the planner.
+DensePose = Tuple[float, float, float, int]
 
 
 def yaw_from_quaternion(q) -> float:
@@ -51,8 +55,32 @@ class PurePursuitController:
     # (2026-09-11): left +35.0deg (0.6109 rad), right -29.5deg (0.5149 rad) -
     # right binds. Was 0.5672 (32.5deg), a figure whose claimed measurement was
     # never performed; see docs/stm32/tuning.md#what-the-earlier-record-got-wrong.
-    def __init__(self, wheelbase: float = 0.1433, lookahead_dist: float = 0.25,
-                 max_steering_angle: float = 0.5149, target_speed: float = 0.5,
+    # lookahead_dist was 0.25 (25cm) - almost exactly MIN_TURN_RADIUS_CM
+    # (25.3cm, see planning_constants.py). Pure pursuit only converges to
+    # the path's true curvature when lookahead is meaningfully SMALLER than
+    # the turn radius being tracked; at lookahead ~= radius (the case on
+    # every corner-avoidance curve the planner produces, since those are
+    # planned right up against the vehicle's own turning limit), the
+    # controller systematically under-steers relative to the path and cuts
+    # the corner toward the outside. Confirmed live (2026-09-17): with
+    # 0.25, task1's leg 1 clipped obstacle 1's corner, Gazebo's physics
+    # exploded the interpenetration, and the robot flew ~56m off the arena
+    # at full commanded speed with no recovery (is_done() never triggers
+    # once genuinely lost - see the note in find_lookahead_point()).
+    # Reduced further (2026-09-17, second pass): 0.15 alone still wasn't
+    # enough - live-observed the car driving straight at a far point across
+    # a tight obstacle-avoidance curve, then snap-correcting, instead of a
+    # smooth arc (find_lookahead_point() searches by straight-line distance,
+    # not arc length, so on a tight curve a point on the FAR side can already
+    # be >= lookahead away after just 1-2 path points). 0.10 sits well under
+    # both MIN_TURN_RADIUS_CM (25.3cm) and the ~15-20cm scale of the actual
+    # avoidance curves around a 10cm obstacle cube with inflation margin.
+    # target_speed also cut 0.5 -> 0.2: at 20Hz control rate, 0.5 m/s only
+    # gives a correction every 2.5cm traveled; 0.2 m/s gives one every 1cm,
+    # which matters most exactly on the curves this lookahead cut is meant
+    # to track more faithfully.
+    def __init__(self, wheelbase: float = 0.1433, lookahead_dist: float = 0.10,
+                 max_steering_angle: float = 0.5149, target_speed: float = 0.2,
                  goal_tolerance: float = 0.05):
         self.wheelbase = wheelbase
         self.lookahead_dist = lookahead_dist
@@ -60,13 +88,19 @@ class PurePursuitController:
         self.target_speed = target_speed
         self.goal_tolerance = goal_tolerance
 
-        self.path: List[Pose] = []
+        self.path: List[DensePose] = []
         self.current_pose: Pose = (0.0, 0.0, 0.0)
         self.active = False
         self._search_idx = 0   # monotonic - never re-scans behind where we already passed
 
-    def set_path(self, path_waypoints: List[Pose]) -> None:
-        self.path = list(path_waypoints)
+    def set_path(self, path_waypoints: List[DensePose]) -> None:
+        """path_waypoints: (x, y, theta, gear) tuples - gear +1/-1. A bare
+        (x, y, theta) path (no gear) is auto-upgraded to all-forward for
+        backward compatibility with any caller that hasn't been updated."""
+        self.path = [
+            p if len(p) == 4 else (p[0], p[1], p[2], 1)
+            for p in path_waypoints
+        ]
         self._search_idx = 0
         self.active = bool(self.path)
 
@@ -76,26 +110,35 @@ class PurePursuitController:
     def is_done(self) -> bool:
         return not self.active
 
-    def find_lookahead_point(self) -> Optional[Tuple[float, float]]:
+    def find_lookahead_point(self) -> Optional[Tuple[float, float, int]]:
         """First path point at least lookahead_dist ahead of the current
         pose, starting the search from the last point found (monotonic, so
         the follower can't get stuck re-targeting a point it already
         passed). Falls back to the final waypoint once no point further out
         remains - lets calculate_pure_pursuit() home in on the exact goal
-        rather than overshooting past it."""
+        rather than overshooting past it. Returns (x, y, gear)."""
         if not self.path:
             return None
 
         for i in range(self._search_idx, len(self.path)):
-            px, py, _ = self.path[i]
+            px, py, _, gear = self.path[i]
             if math.hypot(px - self.current_pose[0], py - self.current_pose[1]) >= self.lookahead_dist:
                 self._search_idx = i
-                return px, py
+                return px, py, gear
 
         self._search_idx = len(self.path) - 1
-        return self.path[-1][0], self.path[-1][1]
+        px, py, _, gear = self.path[-1]
+        return px, py, gear
 
-    def calculate_pure_pursuit(self, target_point: Tuple[float, float]) -> float:
+    def calculate_pure_pursuit(self, target_point: Tuple[float, float], gear: int = 1) -> float:
+        """gear: +1 forward / -1 reverse (see set_path). BUG FIX
+        (2026-09-17): this used to always assume forward motion - any
+        REVERSE-gear path segment (HybridAStar genuinely plans these, see
+        collision_aware_planner.DensePose's comment) has its lookahead
+        target legitimately BEHIND the current heading, which the old
+        forward-only `if local_x <= 0: return 0.0` treated as an error and
+        drove straight through instead - sending the car forward along a
+        curve only valid in reverse."""
         dx = target_point[0] - self.current_pose[0]
         dy = target_point[1] - self.current_pose[1]
 
@@ -103,10 +146,24 @@ class PurePursuitController:
         local_x = dx * math.cos(-yaw) - dy * math.sin(-yaw)
         local_y = dx * math.sin(-yaw) + dy * math.cos(-yaw)
 
-        if local_x <= 0:
-            return 0.0
+        if gear >= 0:
+            # FORWARD: target must be ahead of current heading for the
+            # curvature formula below to mean anything; refuse to steer
+            # rather than compute nonsense for a behind-you point.
+            if local_x <= 0:
+                return 0.0
+            curvature = (2.0 * local_y) / (self.lookahead_dist ** 2)
+        else:
+            # REVERSE: the vehicle is moving toward -local_x, so a target
+            # that's actually ahead (local_x >= 0) is the anomalous case
+            # here instead. Curvature sign flips relative to forward for
+            # the same local_y - steering the front wheels toward one side
+            # swings the REAR (now the leading end while backing up) the
+            # OPPOSITE way compared to driving forward toward that side.
+            if local_x >= 0:
+                return 0.0
+            curvature = -(2.0 * local_y) / (self.lookahead_dist ** 2)
 
-        curvature = (2.0 * local_y) / (self.lookahead_dist ** 2)
         steering_angle = math.atan(self.wheelbase * curvature)
         return max(-self.max_steering_angle, min(self.max_steering_angle, steering_angle))
 
@@ -114,26 +171,50 @@ class PurePursuitController:
         """One control-loop tick. Returns (linear_x, angular_z) to publish
         to /cmd_vel, or None if there's nothing to do right now (inactive/
         no path) - caller should hold last command or stop in that case.
-        Sets is_done()==True once the final waypoint is reached."""
+        Sets is_done()==True once the final waypoint is reached.
+
+        BUG FIX (2026-09-17): the goal check used to run BEFORE
+        find_lookahead_point(), purely on straight-line distance to the
+        final waypoint - so any leg whose planned reverse segment covers
+        only the last ~20-30cm (see DensePose's comment - HybridAStar often
+        backs into the final checkpoint rather than looping around to face
+        it forward) could get marked done from tracking error alone: normal
+        lookahead-pursuit corner-cutting on the FORWARD portion is enough to
+        land within goal_tolerance (5cm) of the final point before the
+        reverse maneuver ever starts, silently skipping it - looks exactly
+        like "the car never reverses" even though the planner asked for it
+        (confirmed the planner+follower math itself is correct via a
+        perfect-tracking replay - this was the only place real-world
+        tracking noise could still substitute forward corner-cutting for a
+        planned reverse). Fixed by tying "done" to having actually
+        consumed the whole path (find_lookahead_point() exhausted, i.e.
+        it's returning the final waypoint itself because nothing farther
+        out remains) rather than just being spatially close to the end."""
         if not self.active or not self.path:
             return None
-
-        goal_x, goal_y, _ = self.path[-1]
-        if math.hypot(goal_x - self.current_pose[0], goal_y - self.current_pose[1]) <= self.goal_tolerance:
-            self.active = False
-            return 0.0, 0.0
 
         target = self.find_lookahead_point()
         if target is None:
             self.active = False
             return 0.0, 0.0
 
-        steering_angle = self.calculate_pure_pursuit(target)
+        goal_x, goal_y, _, _ = self.path[-1]
+        path_exhausted = self._search_idx >= len(self.path) - 1
+        if path_exhausted and math.hypot(goal_x - self.current_pose[0], goal_y - self.current_pose[1]) <= self.goal_tolerance:
+            self.active = False
+            return 0.0, 0.0
+
+        target_x, target_y, gear = target
+        steering_angle = self.calculate_pure_pursuit((target_x, target_y), gear)
+        speed = self.target_speed if gear >= 0 else -self.target_speed
         # ackermann_steering_controller's /cmd_vel takes body yaw rate
         # (angular.z = omega), not the steering angle itself - convert via
-        # the standard bicycle-model relation omega = v*tan(delta)/L.
-        angular_z = self.target_speed * math.tan(steering_angle) / self.wheelbase
-        return self.target_speed, angular_z
+        # the standard bicycle-model relation omega = v*tan(delta)/L. Using
+        # the signed `speed` here (not self.target_speed) is what makes
+        # reverse segments turn the correct way instead of mirroring a
+        # forward turn at negative speed.
+        angular_z = speed * math.tan(steering_angle) / self.wheelbase
+        return speed, angular_z
 
 
 class PurePursuitFollower(Node):
