@@ -31,6 +31,7 @@
 #include "sensor_msgs/msg/joint_state.hpp"
 #include "sensor_msgs/msg/range.hpp"
 #include "std_msgs/msg/bool.hpp"
+#include "std_msgs/msg/u_int16.hpp"
 
 #include "mdp_bridge/protocol.hpp"
 
@@ -61,6 +62,8 @@ public:
     battery_pub_ = create_publisher<sensor_msgs::msg::BatteryState>("/battery_state", 10);
     ultrasonic_pub_ = create_publisher<sensor_msgs::msg::Range>("/ultrasonic", 10);
     ir_pub_ = create_publisher<sensor_msgs::msg::Range>("/ir", 10);
+    steering_pwm_pub_ = create_publisher<std_msgs::msg::UInt16>(
+      "/hardware_bridge/steering_pwm_us", 10);
 
     joint_command_sub_ = create_subscription<sensor_msgs::msg::JointState>(
       "/joint_commands", 10,
@@ -440,6 +443,10 @@ private:
      * sensor can tell", not a literal measurement at that exact distance. */
     ir_range.range = pkt.ir_distance_cm / 100.0f;
     ir_pub_->publish(ir_range);
+
+    std_msgs::msg::UInt16 pwm_msg;
+    pwm_msg.data = pkt.servo_pwm_us;
+    steering_pwm_pub_->publish(pwm_msg);
   }
 
   int fd_ = -1;
@@ -453,6 +460,7 @@ private:
   rclcpp::Publisher<sensor_msgs::msg::BatteryState>::SharedPtr battery_pub_;
   rclcpp::Publisher<sensor_msgs::msg::Range>::SharedPtr ultrasonic_pub_;
   rclcpp::Publisher<sensor_msgs::msg::Range>::SharedPtr ir_pub_;
+  rclcpp::Publisher<std_msgs::msg::UInt16>::SharedPtr steering_pwm_pub_;
   rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr joint_command_sub_;
   rclcpp::TimerBase::SharedPtr link_watchdog_timer_;
   rclcpp::TimerBase::SharedPtr diag_timer_;
