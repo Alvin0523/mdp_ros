@@ -30,10 +30,23 @@ Deliberately subscribes to the CONTROLLER's raw odometry rather than
 distance scale we want the quantity that is a direct function of the encoder
 ticks and wheel radius, with nothing else mixed in.
 
+SECONDARY USE - steering-center calibration. servo_set_angle(0) is supposed
+to point the wheels dead straight (SERVO_PULSE_CENTER_US in
+mdp_stm32/include/servo.h, 1490us, measured by hand-pushing the car with the
+motors off). Under real driving load that static measurement can be off,
+which shows up here as the car curving during an otherwise-straight run.
+--steer-deg commands a small constant steering bias (through the same
+bicycle-model path ackermann_steering_controller and rotate_angle.py use, not
+a raw PWM override) so you can binary-search for the angle that actually
+cancels the curve against a real straight-edge on the floor, then convert
+that angle to a pulse offset and fix SERVO_PULSE_CENTER_US itself instead of
+carrying a trim flag forever.
+
 Usage:
     ros2 run mdp_bringup drive_distance.py 2.0
     ros2 run mdp_bringup drive_distance.py 2.0 --speed 0.1
     ros2 run mdp_bringup drive_distance.py -1.0          # reverse
+    ros2 run mdp_bringup drive_distance.py 2.0 --steer-deg -1.5   # trim test
 
 Requires the hardware bringup to be running (pixi run real1 / real2) and the
 motor switch to be on.
@@ -53,6 +66,8 @@ CMD_TOPIC = '/cmd_vel'
 ODOM_TOPIC = '/ackermann_steering_controller/odometry'
 PUBLISH_HZ = 20.0
 
+WHEELBASE_M = 0.1433  # WHEELTEC C30D Ackermann wheelbase - matches rotate_angle.py
+
 # Stop ramping down this far out so the car coasts onto the target rather than
 # overshooting it - the drivetrain cannot stop instantly.
 SLOWDOWN_MARGIN_M = 0.10
@@ -60,13 +75,15 @@ MIN_SPEED_MPS = 0.05
 
 
 class DriveDistance(Node):
-    def __init__(self, target_m: float, speed_mps: float, timeout_s: float):
+    def __init__(self, target_m: float, speed_mps: float, timeout_s: float,
+                 steer_deg: float = 0.0):
         super().__init__('drive_distance')
 
         self.target_m = abs(target_m)
         self.direction = 1.0 if target_m >= 0.0 else -1.0
         self.speed_mps = abs(speed_mps)
         self.timeout_s = timeout_s
+        self.steer_rad = math.radians(steer_deg)
 
         self.start_xy = None
         self.travelled_m = 0.0
@@ -86,7 +103,8 @@ class DriveDistance(Node):
         self.get_logger().info(
             f'target {self.target_m:.3f} m '
             f'{"forward" if self.direction > 0 else "reverse"} '
-            f'at {self.speed_mps:.2f} m/s, odom from {ODOM_TOPIC}')
+            f'at {self.speed_mps:.2f} m/s, steer trim {math.degrees(self.steer_rad):+.1f} deg, '
+            f'odom from {ODOM_TOPIC}')
 
     def _on_odom(self, msg: Odometry) -> None:
         x = msg.pose.pose.position.x
@@ -107,7 +125,11 @@ class DriveDistance(Node):
         msg = TwistStamped()
         msg.header.stamp = self.get_clock().now().to_msg()
         msg.twist.linear.x = vx
-        msg.twist.angular.z = 0.0
+        # Bicycle model, same as rotate_angle.py - vx already carries the
+        # direction sign, so a trim commanded for forward driving flips the
+        # correct way in reverse too.
+        msg.twist.angular.z = (
+            vx * math.tan(self.steer_rad) / WHEELBASE_M if self.steer_rad else 0.0)
         self.cmd_pub.publish(msg)
 
     def _tick(self) -> None:
@@ -167,10 +189,14 @@ def main() -> int:
                         help='m/s, default 0.15')
     parser.add_argument('--timeout', type=float, default=60.0,
                         help='seconds before giving up, default 60')
+    parser.add_argument('--steer-deg', type=float, default=0.0,
+                        help='constant steering trim in degrees for '
+                             'straight-line calibration, default 0 '
+                             '(positive = left, per REP-103)')
     args, ros_args = parser.parse_known_args()
 
     rclpy.init(args=ros_args)
-    node = DriveDistance(args.distance, args.speed, args.timeout)
+    node = DriveDistance(args.distance, args.speed, args.timeout, args.steer_deg)
     try:
         while rclpy.ok() and not node.finished:
             rclpy.spin_once(node, timeout_sec=0.1)
