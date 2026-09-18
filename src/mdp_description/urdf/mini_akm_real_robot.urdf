@@ -108,6 +108,29 @@
     <limit lower="-0.5149" upper="0.6109" effort="10.0" velocity="5.0" />
   </joint>
 
+  <link name="imu_link" />
+  <joint name="imu_joint" type="fixed">
+    <!-- ICM-20948, onboard the WHEELTEC C30D control board (see docs/hardware.md),
+         which sits on the acrylic protector plate rigidly fixed to the chassis.
+         xyz measured off the physical robot relative to base_link's origin
+         (2026-09-18): 6.07cm behind, 2.28cm right of centerline, 8.97cm above.
+         Doesn't actually change anything the EKF fuses today - it only
+         consumes angular_velocity.z (see ekf.yaml's imu0_config), and angular
+         velocity is identical everywhere on a rigid body regardless of
+         translation - but matters once linear_acceleration is ever fused.
+
+         rpy is 0 0 0 for a different reason: mdp_stm32/src/imu.c reads the
+         ICM-20948's raw axes straight off the bus with no remap (see gyro_x/y/z
+         in imu_update()), i.e. it assumes the chip's own X/Y/Z already line up
+         with the chassis's forward/left/up. This joint's identity rotation is
+         that same assumption made explicit here instead of silently baked into
+         the firmware - if the board is ever found to be mounted rotated, fix it
+         in exactly one of these two places, not both. -->
+    <origin xyz="-0.0607 -0.0228 0.0897" rpy="0 0 0" />
+    <parent link="base_link" />
+    <child link="imu_link" />
+  </joint>
+
   <ros2_control name="TopicBasedSystem" type="system">
     <hardware>
       <plugin>topic_based_ros2_control/TopicBasedSystem</plugin>

@@ -35,6 +35,14 @@ WHEELBASE_M = 0.1433  # WHEELTEC C30D Ackermann wheelbase
 DEFAULT_STEER_DEG = 28.0  # Safely inside chassis lock (left +35 deg, right -29.5 deg)
 SLOWDOWN_MARGIN_DEG = 15.0
 MIN_SPEED_MPS = 0.05
+PROGRESS_LOG_HZ = 2.0
+# Progress falling this far past zero, and staying there, means the tracked
+# angle is growing the wrong way (e.g. the EKF fell back to raw wheel
+# odometry with a sign convention opposite this node's) - the arc will only
+# circle wider, not close in on the target, so stop instead of burning the
+# full timeout.
+SIGN_INVERSION_DEG = 10.0
+SIGN_INVERSION_TICKS = int(0.5 * PUBLISH_HZ)
 
 
 def yaw_from_quaternion(q) -> float:
@@ -60,6 +68,8 @@ class RotateAngle(Node):
         self.accumulated_rad = 0.0
         self.finished = False
         self.start_time = self.get_clock().now()
+        self.last_log_time = self.start_time
+        self.inversion_ticks = 0
 
         self.cmd_pub = self.create_publisher(TwistStamped, CMD_TOPIC, 10)
 
@@ -116,12 +126,35 @@ class RotateAngle(Node):
         progress = self.progress_rad()
         remaining_rad = self.target_rad - progress
         remaining_deg = math.degrees(remaining_rad)
+        progress_deg = math.degrees(progress)
 
         if remaining_deg <= 0.0:
-            final_deg = math.degrees(progress)
+            final_deg = progress_deg
             self._stop(f'DONE - completed rotation of {final_deg:.1f} deg '
                        f'(target {self.target_deg:.1f} deg, error {final_deg - self.target_deg:+.1f} deg)')
             return
+
+        if progress_deg < -SIGN_INVERSION_DEG:
+            self.inversion_ticks += 1
+            if self.inversion_ticks >= SIGN_INVERSION_TICKS:
+                self._stop(
+                    f'ABORT - tracked angle is going backwards '
+                    f'({progress_deg:.1f} deg after {elapsed:.1f}s instead of '
+                    f'increasing toward {self.target_deg:.1f} deg). Likely a sign '
+                    f'mismatch between this node\'s direction convention and '
+                    f'{self.odom_topic}\'s yaw, or the EKF fusing bad/absent IMU '
+                    f'data and falling back to wheel odometry.')
+                return
+        else:
+            self.inversion_ticks = 0
+
+        now = self.get_clock().now()
+        if (now - self.last_log_time).nanoseconds / 1e9 >= 1.0 / PROGRESS_LOG_HZ:
+            self.last_log_time = now
+            raw_yaw = self.prev_yaw if self.prev_yaw is not None else 0.0
+            self.get_logger().info(
+                f'Progress: {progress_deg:+.1f} deg / {self.target_deg:.1f} deg '
+                f'(raw yaw: {raw_yaw:+.2f} rad, remaining: {remaining_deg:.1f} deg)')
 
         # Slowdown profiling near completion
         speed = self.speed_mps
