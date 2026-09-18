@@ -2,7 +2,7 @@ import os
 from glob import glob
 from setuptools import find_packages, setup
 
-package_name = 'mdp_yolo'
+package_name = 'mdp_vision'
 
 setup(
     name=package_name,
@@ -15,7 +15,7 @@ setup(
         (os.path.join('share', package_name, 'launch'), glob('launch/*.launch.py')),
         # Install every exported model dir under models/ (best_ncnn_model =
         # MDP-trained default, yolo26n_ncnn_model = stock COCO debug net), each
-        # to its own share/mdp_yolo/models/<name>/ so the detector's
+        # to its own share/mdp_vision/models/<name>/ so the detector's
         # model_path=<name> switch can resolve any of them.
         *[
             (os.path.join('share', package_name, 'models', os.path.basename(d)),
@@ -35,10 +35,12 @@ setup(
     },
     entry_points={
         'console_scripts': [
-            'camera_publisher = mdp_yolo.camera_publisher:main',
-            'camera_publisher.py = mdp_yolo.camera_publisher:main',
-            'yolo_detector = mdp_yolo.yolo_detector:main',
-            'yolo_detector.py = mdp_yolo.yolo_detector:main',
+            'camera_publisher = mdp_vision.camera_publisher:main',
+            'camera_publisher.py = mdp_vision.camera_publisher:main',
+            'rpi_cam_publisher = mdp_vision.rpi_cam_publisher:main',
+            'rpi_cam_publisher.py = mdp_vision.rpi_cam_publisher:main',
+            'yolo_detector = mdp_vision.yolo_detector:main',
+            'yolo_detector.py = mdp_vision.yolo_detector:main',
         ],
     },
 )
