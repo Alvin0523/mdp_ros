@@ -60,6 +60,7 @@ public:
     link_ok_pub_ = create_publisher<std_msgs::msg::Bool>("/hardware_bridge/link_ok", 10);
     battery_pub_ = create_publisher<sensor_msgs::msg::BatteryState>("/battery_state", 10);
     ultrasonic_pub_ = create_publisher<sensor_msgs::msg::Range>("/ultrasonic", 10);
+    ir_pub_ = create_publisher<sensor_msgs::msg::Range>("/ir", 10);
 
     joint_command_sub_ = create_subscription<sensor_msgs::msg::JointState>(
       "/joint_commands", 10,
@@ -402,25 +403,43 @@ private:
     battery.power_supply_health = sensor_msgs::msg::BatteryState::POWER_SUPPLY_HEALTH_UNKNOWN;
     battery_pub_->publish(battery);
 
-    sensor_msgs::msg::Range range;
-    range.header.stamp = stamp;
+    sensor_msgs::msg::Range ultrasonic_range;
+    ultrasonic_range.header.stamp = stamp;
     /* No dedicated ultrasonic_link exists in the URDF yet (unlike imu_link) -
      * base_link is a coarse simplification, fine for a near-field obstacle
      * check but not precise for anything that cares about the sensor's
      * actual mount offset. */
-    range.header.frame_id = "base_link";
-    range.radiation_type = sensor_msgs::msg::Range::ULTRASOUND;
+    ultrasonic_range.header.frame_id = "base_link";
+    ultrasonic_range.radiation_type = sensor_msgs::msg::Range::ULTRASOUND;
     /* HC-SR04 typical spec, not measured on this unit. */
-    range.field_of_view = 0.26f; /* ~15 deg, radians */
-    range.min_range = 0.02f;     /* matches ultrasonic.c's own 2cm validity floor */
-    range.max_range = 4.0f;      /* matches ultrasonic.c's own 400cm validity ceiling */
+    ultrasonic_range.field_of_view = 0.26f; /* ~15 deg, radians */
+    ultrasonic_range.min_range = 0.02f; /* matches ultrasonic.c's own 2cm validity floor */
+    ultrasonic_range.max_range = 4.0f;  /* matches ultrasonic.c's own 400cm validity ceiling */
     /* pkt.ultrasonic_cm < 0 means no valid echo (disabled, out of range, or
      * stale >300ms) - publish +Inf rather than a fabricated distance, the
      * conventional way sensor_msgs/Range signals "no detection". */
-    range.range = (pkt.ultrasonic_cm >= 0.0f)
+    ultrasonic_range.range = (pkt.ultrasonic_cm >= 0.0f)
       ? pkt.ultrasonic_cm / 100.0f
       : std::numeric_limits<float>::infinity();
-    ultrasonic_pub_->publish(range);
+    ultrasonic_pub_->publish(ultrasonic_range);
+
+    sensor_msgs::msg::Range ir_range;
+    ir_range.header.stamp = stamp;
+    /* Same base_link simplification as ultrasonic above - no dedicated
+     * ir_link either. */
+    ir_range.header.frame_id = "base_link";
+    ir_range.radiation_type = sensor_msgs::msg::Range::INFRARED;
+    /* Sharp GP2Y0A21YK typical spec, not measured on this unit. */
+    ir_range.field_of_view = 0.1f; /* ~6 deg, radians - narrow analog IR beam */
+    ir_range.min_range = 0.10f;    /* matches ir_sensor.c's IR_DISTANCE_MIN_CM */
+    ir_range.max_range = 0.80f;    /* matches ir_sensor.c's IR_DISTANCE_MAX_CM */
+    /* Unlike ultrasonic, ir_sensor_raw_to_distance_cm() always returns a
+     * clamped value in [MIN,MAX] - it has no "invalid/no detection" sentinel
+     * to check, so there is no +Inf case here. A reading pinned exactly at
+     * the min or max bound may mean "actually closer/farther than the
+     * sensor can tell", not a literal measurement at that exact distance. */
+    ir_range.range = pkt.ir_distance_cm / 100.0f;
+    ir_pub_->publish(ir_range);
   }
 
   int fd_ = -1;
@@ -433,6 +452,7 @@ private:
   rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr link_ok_pub_;
   rclcpp::Publisher<sensor_msgs::msg::BatteryState>::SharedPtr battery_pub_;
   rclcpp::Publisher<sensor_msgs::msg::Range>::SharedPtr ultrasonic_pub_;
+  rclcpp::Publisher<sensor_msgs::msg::Range>::SharedPtr ir_pub_;
   rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr joint_command_sub_;
   rclcpp::TimerBase::SharedPtr link_watchdog_timer_;
   rclcpp::TimerBase::SharedPtr diag_timer_;
