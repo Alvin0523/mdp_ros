@@ -1,7 +1,7 @@
 <?xml version="1.0"?>
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" type="application/xml" schematypens="http://download.ros.org/schema/package_format3.xsd"?>
 <package format="3">
-  <name>mdp_yolo</name>
+  <name>mdp_vision</name>
   <version>0.1.0</version>
   <description>Vision stack for MDP robot</description>
 

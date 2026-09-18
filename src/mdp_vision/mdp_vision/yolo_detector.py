@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Ultralytics YOLO ROS2 Detector Node.
-Located in mdp_yolo package (mdp_vision/mdp_yolo).
+Located in the mdp_vision package.
 Subscribes to camera feed (/image_raw), runs YOLO inference,
 and publishes detected target/arrow string to /yolo_result.
 """
@@ -26,7 +26,7 @@ except ImportError:
 # AutoBackend detects the model format from the directory name itself
 # (every export format has its own required suffix: *_ncnn_model/,
 # *_saved_model/, *_openvino_model/, ...), not from the files inside it.
-MODELS_DIR = os.path.join(get_package_share_directory('mdp_yolo'), 'models')
+MODELS_DIR = os.path.join(get_package_share_directory('mdp_vision'), 'models')
 
 # Default to the latest MDP-trained model (classes = Arrow/Letter/Number/
 # Circle - the actual task symbols), NOT the stock yolo26n COCO model
@@ -140,10 +140,10 @@ class YoloDetector(Node):
             # crashing (SIGILL, exit -4) on the Pi's Cortex-A72 with a .pt
             # model - see docs/pi-camera-vision.md "Known open issues" #1.
             self.model = YOLO(model_path, task='detect')
-            self.get_logger().info(f"[mdp_yolo] Ultralytics YOLO loaded successfully from {model_path}!")
+            self.get_logger().info(f"[mdp_vision] Ultralytics YOLO loaded successfully from {model_path}!")
         else:
             self.model = None
-            self.get_logger().warn("[mdp_yolo] Ultralytics library not installed. Simulation fallback mode active.")
+            self.get_logger().warn("[mdp_vision] Ultralytics library not installed. Simulation fallback mode active.")
 
     def image_callback(self, msg: Image):
         try:
@@ -191,9 +191,9 @@ class YoloDetector(Node):
         self.result_pub.publish(msg)
         if class_name is not None:
             self.get_logger().info(
-                f"[mdp_yolo] YOLO Detected: {class_name} -> Target ID {target_id}")
+                f"[mdp_vision] YOLO Detected: {class_name} -> Target ID {target_id}")
         else:
-            self.get_logger().info(f"[mdp_yolo] YOLO Detected Target ID {target_id}")
+            self.get_logger().info(f"[mdp_vision] YOLO Detected Target ID {target_id}")
 
 def main(args=None):
     rclpy.init(args=args)

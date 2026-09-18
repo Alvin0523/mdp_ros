@@ -434,9 +434,9 @@ private:
     ir_range.radiation_type = sensor_msgs::msg::Range::INFRARED;
     /* Sharp GP2Y0A21YK typical spec, not measured on this unit. */
     ir_range.field_of_view = 0.1f; /* ~6 deg, radians - narrow analog IR beam */
-    ir_range.min_range = 0.10f;    /* matches ir_sensor.c's IR_DISTANCE_MIN_CM */
-    ir_range.max_range = 0.80f;    /* matches ir_sensor.c's IR_DISTANCE_MAX_CM */
-    /* Unlike ultrasonic, ir_sensor_raw_to_distance_cm() always returns a
+    ir_range.min_range = 0.10f;    /* matches ir.c's IR_DISTANCE_MIN_CM */
+    ir_range.max_range = 0.80f;    /* matches ir.c's IR_DISTANCE_MAX_CM */
+    /* Unlike ultrasonic, ir_raw_to_distance_cm() always returns a
      * clamped value in [MIN,MAX] - it has no "invalid/no detection" sentinel
      * to check, so there is no +Inf case here. A reading pinned exactly at
      * the min or max bound may mean "actually closer/farther than the

@@ -49,7 +49,7 @@ def generate_launch_description():
     model_arg = DeclareLaunchArgument(
         'model',
         default_value='best_ncnn_model_v2',
-        description='YOLO model dir name under mdp_yolo/models/ or an absolute path'
+        description='YOLO model dir name under mdp_vision/models/ or an absolute path'
     )
 
     urdf_file = os.path.join(pkg_description, 'urdf', 'mini_akm_robot.urdf')
@@ -261,7 +261,7 @@ def generate_launch_description():
     )
 
     yolo_detector = Node(
-        package='mdp_yolo',
+        package='mdp_vision',
         executable='yolo_detector.py',
         parameters=[{
             'camera_topic': '/camera/image_raw',

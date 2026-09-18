@@ -6,7 +6,7 @@ from launch_ros.actions import Node
 
 
 def generate_launch_description():
-    # Which YOLO model to load. Bare dir name under mdp_yolo/models/ (or an
+    # Which YOLO model to load. Bare dir name under mdp_vision/models/ (or an
     # absolute path). Defaults to the latest MDP-trained model, NOT stock COCO.
     #   best_ncnn_model_v2 -> MDP symbols, latest (default)
     #   best_ncnn_model_v1 -> MDP symbols, older
@@ -14,11 +14,11 @@ def generate_launch_description():
     model_arg = DeclareLaunchArgument(
         'model',
         default_value='best_ncnn_model_v2',
-        description='YOLO model dir name under mdp_yolo/models/ or an absolute path'
+        description='YOLO model dir name under mdp_vision/models/ or an absolute path'
     )
 
     camera_node = Node(
-        package='mdp_yolo',
+        package='mdp_vision',
         executable='camera_publisher.py',
         name='camera_publisher',
         output='screen',
@@ -32,7 +32,7 @@ def generate_launch_description():
     )
 
     yolo_node = Node(
-        package='mdp_yolo',
+        package='mdp_vision',
         executable='yolo_detector.py',
         name='yolo_detector',
         output='screen',
