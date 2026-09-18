@@ -48,6 +48,7 @@ struct TelemetryPacket
   uint16_t ir_raw;
   float ir_voltage;
   float ir_distance_cm;
+  float ultrasonic_cm;  /* negative = no valid echo, see mdp_stm32/include/protocol.h */
   uint32_t uptime_ms;
   uint8_t checksum;
 };
