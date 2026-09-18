@@ -42,6 +42,7 @@ struct TelemetryPacket
   float gyro_y;
   float gyro_z;
   float yaw_deg;
+  uint16_t servo_pwm_us;  /* live PWM readback, see mdp_stm32/include/protocol.h */
   uint8_t imu_ready;
   uint8_t estop;
   float battery_v;
