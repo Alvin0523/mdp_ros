@@ -341,6 +341,10 @@ private:
 
     sensor_msgs::msg::Imu imu;
     imu.header.stamp = stamp;
+    /* mini_akm_real_robot.urdf now carries an imu_link fixed joint (see
+     * that file) so this resolves through TF - it previously didn't exist
+     * anywhere in the URDF, so ekf_node's imu_link -> base_link lookup
+     * failed and it silently dropped every /imu/data message. */
     imu.header.frame_id = "imu_link";
     imu.angular_velocity.x = pkt.gyro_x * M_PI / 180.0;
     imu.angular_velocity.y = pkt.gyro_y * M_PI / 180.0;
@@ -360,6 +364,17 @@ private:
       1e6, 0, 0,
       0, 1e6, 0,
       0, 0, 0.05
+    };
+    /* Left at the default-constructed all-zero array before this - an
+     * all-zero covariance is nonphysical and robot_localization does not
+     * treat it as "perfectly certain", so the fused vyaw measurement went in
+     * with effectively undefined confidence. Placeholder MEMS-gyro-plausible
+     * noise floor, not a measured ICM-20948 value - matches ekf_sim.yaml's
+     * simulated stddev; refine once real drift/noise data is available. */
+    imu.angular_velocity_covariance = {
+      0.01, 0, 0,
+      0, 0.01, 0,
+      0, 0, 0.01
     };
     if (!pkt.imu_ready) {
       imu.angular_velocity_covariance[0] = -1; /* signal "data invalid" */
