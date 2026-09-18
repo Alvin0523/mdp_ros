@@ -11,6 +11,7 @@ import os
 import rclpy
 from ament_index_python.packages import get_package_share_directory
 from rclpy.node import Node
+from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 from sensor_msgs.msg import Image
 from std_msgs.msg import String
 from cv_bridge import CvBridge
@@ -117,7 +118,20 @@ class YoloDetector(Node):
         # Published every frame regardless of whether anything was detected,
         # same as any other live camera feed.
         self.annotated_pub = self.create_publisher(Image, annotated_topic, 10)
-        self.create_subscription(Image, camera_topic, self.image_callback, 10)
+        # BEST_EFFORT + depth 1 (KEEP_LAST): if inference falls even slightly
+        # behind the camera's frame rate, a reliable depth-10 subscription
+        # queues up a backlog and the callback works through stale frames
+        # forever, so what's on screen keeps drifting further behind live.
+        # Depth 1 makes the middleware always hand the callback the newest
+        # frame and silently drop anything older, so the feed stays live
+        # instead of catching up. camera_ros's default publisher QoS is
+        # RELIABLE, which is compatible with a BEST_EFFORT subscriber.
+        image_qos = QoSProfile(
+            depth=1,
+            reliability=ReliabilityPolicy.BEST_EFFORT,
+            history=HistoryPolicy.KEEP_LAST,
+        )
+        self.create_subscription(Image, camera_topic, self.image_callback, image_qos)
 
         if ULTRALYTICS_AVAILABLE:
             # NCNN (exported via `model.export(format='ncnn')`) rather than a
@@ -149,6 +163,12 @@ class YoloDetector(Node):
                     return
 
     def publish_annotated(self, result, header):
+        # Drawing boxes/labels and re-encoding a full frame costs real CPU on
+        # the same core doing inference - skip it entirely when nobody's
+        # actually subscribed (e.g. no Foxglove/rviz open during a real run).
+        if self.annotated_pub.get_subscription_count() == 0:
+            return
+
         # result.plot() returns a BGR numpy array (same convention as the
         # cv_image this all started from) with boxes/labels/confidences
         # already drawn by Ultralytics - no manual cv2.rectangle/putText
