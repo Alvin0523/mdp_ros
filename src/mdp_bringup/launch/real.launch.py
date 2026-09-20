@@ -68,6 +68,27 @@ def generate_launch_description():
     )
     vision = LaunchConfiguration('vision')
 
+    bluetooth_arg = DeclareLaunchArgument(
+        'bluetooth',
+        default_value='true',
+        description='Bring up bluetooth_bridge_node (the Android tablet '
+                     'RFCOMM link). bluetooth_bridge_node has no reconnect '
+                     'tolerance yet - it exits if bluetooth_port is not '
+                     'already open, taking the whole launch down with it - '
+                     'so set false for bench sessions where the tablet '
+                     'is not paired/bound. Usage: pixi run real bluetooth:=false'
+    )
+    bluetooth = LaunchConfiguration('bluetooth')
+
+    bluetooth_port_arg = DeclareLaunchArgument(
+        'bluetooth_port',
+        default_value='/dev/rfcomm0',
+        description='RFCOMM device for the Android tablet Bluetooth bridge '
+                     '(bind with e.g. `sudo rfcomm bind rfcomm0 <MAC> 1` '
+                     'before launch).'
+    )
+    bluetooth_port = LaunchConfiguration('bluetooth_port')
+
     # Which task runner (the brain) to bring up. Hardware bringup is identical
     # for both tasks; only the runner differs (task1 = explore + recognise
     # with obstacle setup; task2 = fixed slalom, no setup). Selected here so
@@ -153,6 +174,14 @@ def generate_launch_description():
         output='screen'
     )
 
+    bluetooth_bridge = Node(
+        package='mdp_bridge',
+        executable='bluetooth_bridge_node',
+        parameters=[{'bluetooth_port': bluetooth_port}],
+        condition=IfCondition(bluetooth),
+        output='screen'
+    )
+
     ekf_node = Node(
         package='robot_localization',
         executable='ekf_node',
@@ -235,12 +264,15 @@ def generate_launch_description():
     return LaunchDescription([
         serial_port_arg,
         vision_arg,
+        bluetooth_arg,
+        bluetooth_port_arg,
         task_arg,
         *start_pose_args,
         robot_state_publisher,
         controller_manager,
         controller_spawner,
         serial_bridge,
+        bluetooth_bridge,
         ekf_node,
         map_to_odom,
         camera_node,
