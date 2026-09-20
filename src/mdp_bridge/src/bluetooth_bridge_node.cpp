@@ -1,39 +1,55 @@
 /**
  * @file bluetooth_bridge_node.cpp
- * @brief Bridges the Android tablet's Bluetooth RFCOMM link to ROS2 topics.
+ * @brief Runs a BlueZ RFCOMM server socket that accepts the Android
+ *        tablet's Bluetooth connection and bridges it to ROS 2.
  *
- * Unlike serial_bridge_node's link to the STM32 (a fixed binary protocol
- * over a USB-serial cable that's expected to be present for the node's
- * whole lifetime), the RFCOMM device node here comes and goes with the
- * tablet's Bluetooth connection - the app can disconnect/reconnect at any
- * time (out of range, backgrounded, re-paired, rfcomm daemon restarted).
- * So this node never throws on a failed/lost open; it just keeps retrying
- * in the background at reconnect_interval_ms and reports link_ok = false
- * meanwhile.
+ * Unlike the earlier /dev/rfcommN approach (which required something
+ * outside this node - `rfcomm bind`/`rfcomm listen` run by hand - to
+ * already have accepted the phone's connection before the node could even
+ * open the device file), this node owns the connection itself: it opens a
+ * kernel Bluetooth socket, bind()s it to rfcomm_channel, and listen()s for
+ * the tablet to connect. No pairing/bind step is required beyond the
+ * devices being paired at the OS level.
  *
- * The app-facing message format is not yet finalized, so the interface is
- * intentionally a raw passthrough: '\n'-terminated text lines read from the
- * port are republished on /bluetooth_bridge/app_rx, and any String
- * published to /bluetooth_bridge/app_tx is written out to the port
- * ('\n'-terminated). Once the actual command/status line format is
- * settled, parsing/formatting should move into (or alongside) this node
- * rather than the raw String topics being consumed directly.
+ * NOTE ON DISCOVERY: this binds a fixed RFCOMM channel but does not
+ * register an SDP service record, so it only works if the Android side
+ * connects with a fixed-channel BluetoothSocket (e.g. via
+ * `BluetoothDevice.createRfcommSocket(channel)` through reflection,
+ * channel matching rfcomm_channel below - the same fixed-channel
+ * convention the old `rfcomm bind rfcomm0 <MAC> 1` setup used). If the
+ * app instead uses `createRfcommSocketToServiceRecord(uuid)` (SDP
+ * lookup), this socket won't be discovered - registering an SDP record
+ * (via BlueZ's D-Bus profile API or `sdptool`) would additionally be
+ * needed, and isn't included here as the app's exact connection method
+ * wasn't known at the time this was written.
+ *
+ * Android -> Raspberry Pi:
+ *   newline-terminated text messages over the RFCOMM connection
+ *
+ * Raspberry Pi -> Android:
+ *   newline-terminated text messages from /android/status
+ *
+ * Example:
+ *   Android sends:  MOVE,1,0\n
+ *   ROS publishes: /android/command = "MOVE,1,0"
+ *
+ *   ROS publishes: /android/status = "ROBOT,MOVING"
+ *   Android receives: ROBOT,MOVING\n
  */
 
 #include <atomic>
-#include <cerrno>
 #include <chrono>
 #include <cstring>
 #include <mutex>
 #include <string>
 #include <thread>
 
-#include <fcntl.h>
-#include <termios.h>
+#include <bluetooth/bluetooth.h>
+#include <bluetooth/rfcomm.h>
+#include <sys/socket.h>
 #include <unistd.h>
 
 #include "rclcpp/rclcpp.hpp"
-#include "std_msgs/msg/bool.hpp"
 #include "std_msgs/msg/string.hpp"
 
 namespace mdp_bridge
@@ -45,238 +61,264 @@ public:
   BluetoothBridgeNode()
   : Node("bluetooth_bridge_node")
   {
-    declare_parameter<std::string>("serial_port", "/dev/rfcomm0");
-    declare_parameter<int>("reconnect_interval_ms", 2000);
-    /* Longer than serial_bridge_node's 500ms STM32 fail-safe window - the
-     * app has no obligation to send anything periodically (it's an idle
-     * text link, not a fixed-rate telemetry stream), so link_ok should only
-     * flip false once the port itself has actually gone away for a while,
-     * not merely because the app has been quiet. */
-    declare_parameter<int>("link_timeout_ms", 5000);
+    declare_parameter<int>("rfcomm_channel", 1);
+    const int channel = get_parameter("rfcomm_channel").as_int();
 
-    port_ = get_parameter("serial_port").as_string();
-    reconnect_interval_ms_ = std::chrono::milliseconds(
-      get_parameter("reconnect_interval_ms").as_int());
-    link_timeout_ns_ = std::chrono::milliseconds(
-      get_parameter("link_timeout_ms").as_int()).count() * 1'000'000LL;
+    server_fd_ = socket(AF_BLUETOOTH, SOCK_STREAM, BTPROTO_RFCOMM);
+    if (server_fd_ < 0) {
+      RCLCPP_FATAL(
+        get_logger(),
+        "Failed to create RFCOMM socket - is a Bluetooth adapter present and BlueZ running?");
+      throw std::runtime_error("RFCOMM socket creation failed");
+    }
 
-    app_rx_pub_ = create_publisher<std_msgs::msg::String>("/bluetooth_bridge/app_rx", 10);
-    link_ok_pub_ = create_publisher<std_msgs::msg::Bool>("/bluetooth_bridge/link_ok", 10);
-    app_tx_sub_ = create_subscription<std_msgs::msg::String>(
-      "/bluetooth_bridge/app_tx", 10,
-      std::bind(&BluetoothBridgeNode::onAppTx, this, std::placeholders::_1));
+    sockaddr_rc local_addr{};
+    local_addr.rc_family = AF_BLUETOOTH;
+    local_addr.rc_bdaddr = {}; /* all-zero = BDADDR_ANY, bind to the local adapter */
+    local_addr.rc_channel = static_cast<uint8_t>(channel);
 
-    link_watchdog_timer_ = create_wall_timer(
-      std::chrono::milliseconds(250),
-      std::bind(&BluetoothBridgeNode::checkLinkHealth, this));
+    if (bind(server_fd_, reinterpret_cast<sockaddr *>(&local_addr), sizeof(local_addr)) < 0) {
+      RCLCPP_FATAL(get_logger(), "Failed to bind RFCOMM socket on channel %d", channel);
+      close(server_fd_);
+      throw std::runtime_error("RFCOMM bind failed");
+    }
+
+    if (listen(server_fd_, 1) < 0) {
+      RCLCPP_FATAL(get_logger(), "Failed to listen on RFCOMM socket");
+      close(server_fd_);
+      throw std::runtime_error("RFCOMM listen failed");
+    }
 
     RCLCPP_INFO(
-      get_logger(), "bluetooth_bridge_node starting, target port %s", port_.c_str());
+      get_logger(),
+      "Listening for Android Bluetooth connection on RFCOMM channel %d",
+      channel);
+
+    command_pub_ =
+      create_publisher<std_msgs::msg::String>(
+        "/android/command",
+        10);
+
+    status_sub_ =
+      create_subscription<std_msgs::msg::String>(
+        "/android/status",
+        10,
+        std::bind(
+          &BluetoothBridgeNode::onStatus,
+          this,
+          std::placeholders::_1));
 
     running_ = true;
-    read_thread_ = std::thread(&BluetoothBridgeNode::readLoop, this);
+
+    accept_thread_ =
+      std::thread(
+        &BluetoothBridgeNode::acceptLoop,
+        this);
   }
 
   ~BluetoothBridgeNode() override
   {
     running_ = false;
-    if (read_thread_.joinable()) {
-      read_thread_.join();
+
+    /* Unblock a thread parked in accept()/read() so the join below can't
+     * hang, since neither call otherwise notices running_ going false. */
+    if (server_fd_ >= 0) {
+      shutdown(server_fd_, SHUT_RDWR);
+      close(server_fd_);
     }
-    std::lock_guard<std::mutex> lock(fd_mutex_);
-    closeLocked();
+    {
+      std::lock_guard<std::mutex> lock(client_mutex_);
+      if (client_fd_ >= 0) {
+        shutdown(client_fd_, SHUT_RDWR);
+        close(client_fd_);
+      }
+    }
+
+    if (accept_thread_.joinable()) {
+      accept_thread_.join();
+    }
   }
 
 private:
-  /* Caller must hold fd_mutex_. Leaves fd_ untouched (-1) on failure so the
-   * read loop just retries after reconnect_interval_ms_. */
-  void openLocked()
-  {
-    int fd = open(port_.c_str(), O_RDWR | O_NOCTTY | O_NDELAY);
-    if (fd < 0) {
-      return;
-    }
 
-    termios tty{};
-    if (tcgetattr(fd, &tty) == 0) {
-      cfsetispeed(&tty, B115200);
-      cfsetospeed(&tty, B115200);
-
-      tty.c_cflag &= ~PARENB;
-      tty.c_cflag &= ~CSTOPB;
-      tty.c_cflag &= ~CSIZE;
-      tty.c_cflag |= CS8;
-      tty.c_cflag &= ~CRTSCTS;
-      tty.c_cflag |= CREAD | CLOCAL;
-
-      tty.c_lflag &= ~ICANON;
-      tty.c_lflag &= ~ECHO;
-      tty.c_lflag &= ~ECHOE;
-      tty.c_lflag &= ~ISIG;
-      tty.c_iflag &= ~(IXON | IXOFF | IXANY);
-      tty.c_iflag &= ~(IGNBRK | BRKINT | PARMRK | ISTRIP | INLCR | IGNCR | ICRNL);
-      tty.c_oflag &= ~OPOST;
-      tty.c_oflag &= ~ONLCR;
-
-      tty.c_cc[VTIME] = 1; /* 100ms read timeout, so the loop keeps polling running_ */
-      tty.c_cc[VMIN] = 0;
-
-      tcsetattr(fd, TCSANOW, &tty);
-      /* Not fatal if this device doesn't support one of these settings
-       * (rfcomm devices often ignore termios line-discipline knobs
-       * entirely) - the fd is still usable either way. */
-    }
-
-    int flags = fcntl(fd, F_GETFL, 0);
-    fcntl(fd, F_SETFL, flags & ~O_NDELAY);
-
-    fd_ = fd;
-    line_.clear();
-    last_activity_ns_.store(now().nanoseconds());
-    RCLCPP_INFO(get_logger(), "Bluetooth link connected on %s", port_.c_str());
-  }
-
-  /* Caller must hold fd_mutex_. */
-  void closeLocked()
-  {
-    if (fd_ >= 0) {
-      close(fd_);
-      fd_ = -1;
-      RCLCPP_WARN(get_logger(), "Bluetooth link on %s closed", port_.c_str());
-    }
-  }
-
-  void onAppTx(const std_msgs::msg::String::SharedPtr msg)
-  {
-    std::string out = msg->data;
-    if (out.empty() || out.back() != '\n') {
-      out.push_back('\n');
-    }
-
-    std::lock_guard<std::mutex> lock(fd_mutex_);
-    if (fd_ < 0) {
-      RCLCPP_WARN(get_logger(), "app_tx dropped, Bluetooth link not connected");
-      return;
-    }
-
-    size_t written = 0;
-    while (written < out.size()) {
-      ssize_t n = write(fd_, out.data() + written, out.size() - written);
-      if (n < 0) {
-        if (errno == EAGAIN || errno == EINTR) {
-          continue;
-        }
-        RCLCPP_WARN(get_logger(), "Write to Bluetooth port failed, closing for reconnect");
-        closeLocked();
-        return;
-      }
-      written += static_cast<size_t>(n);
-    }
-  }
-
-  void readLoop()
+  void acceptLoop()
   {
     while (running_) {
-      {
-        std::lock_guard<std::mutex> lock(fd_mutex_);
-        if (fd_ < 0) {
-          openLocked();
-        }
-      }
 
-      if (fd_ < 0) {
-        std::this_thread::sleep_for(reconnect_interval_ms_);
+      sockaddr_rc remote_addr{};
+      socklen_t addr_len = sizeof(remote_addr);
+
+      const int fd = accept(
+        server_fd_,
+        reinterpret_cast<sockaddr *>(&remote_addr),
+        &addr_len);
+
+      if (fd < 0) {
+        if (running_) {
+          RCLCPP_WARN(get_logger(), "accept() on RFCOMM socket failed, retrying");
+          std::this_thread::sleep_for(std::chrono::milliseconds(500));
+        }
         continue;
       }
 
-      uint8_t byte;
-      ssize_t n;
+      char addr_str[19] = {0};
+      ba2str(&remote_addr.rc_bdaddr, addr_str);
+      RCLCPP_INFO(get_logger(), "Android connected from %s", addr_str);
+
       {
-        std::lock_guard<std::mutex> lock(fd_mutex_);
-        if (fd_ < 0) {
-          continue;
-        }
-        n = read(fd_, &byte, 1);
+        std::lock_guard<std::mutex> lock(client_mutex_);
+        client_fd_ = fd;
       }
 
-      if (n < 0) {
-        if (errno == EAGAIN || errno == EINTR) {
-          continue;
-        }
-        RCLCPP_WARN(get_logger(), "Read from Bluetooth port failed, closing for reconnect");
-        std::lock_guard<std::mutex> lock(fd_mutex_);
-        closeLocked();
-        continue;
-      }
-      if (n == 0) {
-        continue; /* VTIME read timeout, nothing available yet */
-      }
+      readClient(fd);
 
-      last_activity_ns_.store(now().nanoseconds());
+      {
+        std::lock_guard<std::mutex> lock(client_mutex_);
+        if (client_fd_ == fd) {
+          client_fd_ = -1;
+        }
+      }
+      close(fd);
 
-      if (byte == '\n') {
-        if (!line_.empty() && line_.back() == '\r') {
-          line_.pop_back();
-        }
-        if (!line_.empty()) {
-          std_msgs::msg::String msg;
-          msg.data = line_;
-          app_rx_pub_->publish(msg);
-        }
-        line_.clear();
-      } else {
-        /* Guard against an unterminated garbage stream growing forever if
-         * the app connects but never sends a newline. */
-        constexpr size_t kMaxLineLen = 4096;
-        if (line_.size() < kMaxLineLen) {
-          line_.push_back(static_cast<char>(byte));
-        } else {
-          RCLCPP_WARN(get_logger(), "app_rx line exceeded %zu bytes without a newline, dropping", kMaxLineLen);
-          line_.clear();
-        }
+      if (running_) {
+        RCLCPP_WARN(get_logger(), "Android disconnected, waiting for next connection");
       }
     }
   }
 
-  void checkLinkHealth()
+  void readClient(int fd)
   {
-    bool connected;
-    {
-      std::lock_guard<std::mutex> lock(fd_mutex_);
-      connected = fd_ >= 0;
-    }
-    const bool link_ok = connected &&
-      (now().nanoseconds() - last_activity_ns_.load() < link_timeout_ns_);
+    std::string buffer;
 
-    std_msgs::msg::Bool msg;
-    msg.data = link_ok;
-    link_ok_pub_->publish(msg);
+    while (running_) {
+
+      char byte;
+
+      const ssize_t n =
+        read(fd, &byte, 1);
+
+      if (n <= 0) {
+        break; /* disconnected, or a fatal read error - back to accept() */
+      }
+
+      /*
+       * Android BluetoothService.kt sends
+       * newline-terminated messages.
+       */
+      if (byte == '\n') {
+
+        if (!buffer.empty() && buffer.back() == '\r') {
+          buffer.pop_back();
+        }
+
+        if (!buffer.empty()) {
+
+          RCLCPP_INFO(
+            get_logger(),
+            "Android -> ROS: %s",
+            buffer.c_str());
+
+          std_msgs::msg::String msg;
+          msg.data = buffer;
+
+          command_pub_->publish(msg);
+        }
+
+        buffer.clear();
+
+      } else {
+
+        buffer += byte;
+
+        /*
+         * Prevent an accidentally malformed message
+         * from growing indefinitely.
+         */
+        if (buffer.size() > 4096) {
+
+          RCLCPP_WARN(
+            get_logger(),
+            "Bluetooth message exceeded 4096 bytes; clearing buffer");
+
+          buffer.clear();
+        }
+      }
+    }
   }
 
-  std::string port_;
-  std::chrono::milliseconds reconnect_interval_ms_{2000};
-  int64_t link_timeout_ns_ = 0;
+  void onStatus(
+    const std_msgs::msg::String::SharedPtr msg)
+  {
+    std::lock_guard<std::mutex> lock(client_mutex_);
 
-  std::mutex fd_mutex_;
-  int fd_ = -1;
-  std::string line_;
+    if (client_fd_ < 0) {
+      RCLCPP_WARN(get_logger(), "No Android device connected, dropping status message");
+      return;
+    }
+
+    std::string payload = msg->data;
+
+    /*
+     * Android BluetoothService.kt uses readLine(),
+     * so every outgoing message must end with '\n'.
+     */
+    if (payload.empty() || payload.back() != '\n') {
+      payload += '\n';
+    }
+
+    const ssize_t written =
+      write(
+        client_fd_,
+        payload.data(),
+        payload.size());
+
+    if (written !=
+      static_cast<ssize_t>(payload.size()))
+    {
+      RCLCPP_WARN(
+        get_logger(),
+        "Failed to send complete message to Android");
+    } else {
+
+      RCLCPP_INFO(
+        get_logger(),
+        "ROS -> Android: %s",
+        msg->data.c_str());
+    }
+  }
+
+  int server_fd_ = -1;
+  int client_fd_ = -1;
+  std::mutex client_mutex_;
 
   std::atomic<bool> running_{false};
-  std::thread read_thread_;
-  std::atomic<int64_t> last_activity_ns_{0};
 
-  rclcpp::Publisher<std_msgs::msg::String>::SharedPtr app_rx_pub_;
-  rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr link_ok_pub_;
-  rclcpp::Subscription<std_msgs::msg::String>::SharedPtr app_tx_sub_;
-  rclcpp::TimerBase::SharedPtr link_watchdog_timer_;
+  std::thread accept_thread_;
+
+  rclcpp::Publisher<
+    std_msgs::msg::String
+  >::SharedPtr command_pub_;
+
+  rclcpp::Subscription<
+    std_msgs::msg::String
+  >::SharedPtr status_sub_;
 };
 
 }  // namespace mdp_bridge
 
-int main(int argc, char ** argv)
+
+int main(
+  int argc,
+  char ** argv)
 {
   rclcpp::init(argc, argv);
-  rclcpp::spin(std::make_shared<mdp_bridge::BluetoothBridgeNode>());
+
+  rclcpp::spin(
+    std::make_shared<
+      mdp_bridge::BluetoothBridgeNode
+    >());
+
   rclcpp::shutdown();
+
   return 0;
 }
