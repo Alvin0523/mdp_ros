@@ -1,24 +1,35 @@
 #!/usr/bin/env python3
 """
 RPi Camera Publisher Node for MDP Vision.
-Captures MJPEG frames from the Pi Camera Module (IMX219) via `rpicam-vid`
-(hardware-accelerated, no libcamera/camera_ros build required) and republishes
-them as ROS 2 sensor_msgs/Image, decoded, so this is a drop-in replacement for
-camera_ros's camera_node - same topic/type yolo_detector.py already expects.
 
-TEMP INSTRUMENTATION: logs parsed/decoded/published frame counts every second
-to localize a throughput bottleneck (see get_logger().info in _log_stats).
+Captures raw YUV420 frames from the Pi Camera Module (IMX219) via
+`rpicam-vid` (no libcamera/camera_ros build required) and republishes them as
+ROS 2 sensor_msgs/Image (bgr8) on `camera_topic` - same topic/type
+yolo_detector.py already expects.
+
+Single-threaded, fixed-size reads: `rpicam-vid --codec yuv420` emits frames
+of exactly width*height*3/2 bytes each with no framing/parsing needed (unlike
+MJPEG, which requires scanning for SOI/EOI markers in a byte stream). This
+was benchmarked standalone at a steady 30.0-30.1 fps @ 640x480 on this same
+Pi 4B (no drops over a sustained run) - see docs/pi-camera-vision.md.
+
+Also publishes a JPEG-compressed copy on `<camera_topic>/compressed`, but
+only while something is actually subscribed to it (e.g. Foxglove open for
+live monitoring) - raw uncompressed frames are fine for the local YOLO
+subscriber on the same host, but saturate a remote Foxglove websocket
+client's decode at ~27MB/s, causing a growing playback lag; JPEG cuts that
+to ~15-20KB/frame.
 """
 
 import subprocess
-import threading
 import time
 
 import cv2
 import numpy as np
 import rclpy
 from rclpy.node import Node
-from sensor_msgs.msg import Image
+from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
+from sensor_msgs.msg import Image, CompressedImage
 from cv_bridge import CvBridge
 
 
@@ -29,109 +40,116 @@ class RpiCamPublisher(Node):
         self.declare_parameter('image_width', 640)
         self.declare_parameter('image_height', 480)
         self.declare_parameter('frame_rate', 30.0)
-        self.declare_parameter('camera_topic', '/camera/image_raw')
+        self.declare_parameter('camera_topic', '/image_raw')
+        self.declare_parameter('jpeg_quality', 80)
 
         self.width = self.get_parameter('image_width').value
         self.height = self.get_parameter('image_height').value
         frame_rate = self.get_parameter('frame_rate').value
         camera_topic = self.get_parameter('camera_topic').value
+        self.jpeg_quality = self.get_parameter('jpeg_quality').value
 
-        self.publisher = self.create_publisher(Image, camera_topic, 10)
+        self.frame_size = self.width * self.height * 3 // 2  # I420 (YUV420 planar)
         self.bridge = CvBridge()
 
-        self._lock = threading.Lock()
-        self._latest_frame = None
-
-        # Instrumentation counters, reset every second by _log_stats.
-        self._stat_lock = threading.Lock()
-        self._n_parsed = 0
-        self._n_decoded = 0
-        self._n_published = 0
-        self._n_bytes_read = 0
+        # BEST_EFFORT + depth 1 (KEEP_LAST): matches yolo_detector.py's
+        # subscription QoS - if a consumer falls slightly behind, it always
+        # gets handed the newest frame instead of working through a growing
+        # backlog of stale ones. camera_ros's default publisher QoS is
+        # RELIABLE, which a BEST_EFFORT subscriber is compatible with too.
+        image_qos = QoSProfile(
+            depth=1,
+            reliability=ReliabilityPolicy.BEST_EFFORT,
+            history=HistoryPolicy.KEEP_LAST,
+        )
+        self.pub = self.create_publisher(Image, camera_topic, image_qos)
+        self.compressed_pub = self.create_publisher(
+            CompressedImage, f'{camera_topic}/compressed', image_qos)
 
         cmd = [
             'rpicam-vid',
-            '-t', '0',
             '--width', str(self.width),
             '--height', str(self.height),
             '--framerate', str(frame_rate),
-            '--codec', 'mjpeg',
-            '-n',
-            '--inline',
+            '--codec', 'yuv420',
+            '--timeout', '0',
+            '--nopreview',
+            '--flush',
             '-o', '-',
         ]
-        self.proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, bufsize=65536)
         self.get_logger().info(
             f"rpicam-vid started ({self.width}x{self.height} @ {frame_rate} FPS), "
             f"publishing to {camera_topic}")
+        self.proc = subprocess.Popen(
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+            bufsize=self.frame_size)
 
-        self._stop = False
-        self._reader_thread = threading.Thread(target=self._read_loop, daemon=True)
-        self._reader_thread.start()
+        self.frame_count = 0
+        self.window_count = 0
+        self.start_time = time.monotonic()
+        self.window_start = self.start_time
+        self.report_period_s = 5.0
 
-        self.timer = self.create_timer(1.0 / frame_rate, self.publish_latest)
-        self.stats_timer = self.create_timer(1.0, self._log_stats)
+        self.timer = self.create_timer(0.0, self.tick)
 
-    def _read_loop(self):
-        buffer = bytearray()
-        while not self._stop:
-            chunk = self.proc.stdout.read(65536)
+    def _read_exact(self, n):
+        buf = bytearray()
+        while len(buf) < n:
+            chunk = self.proc.stdout.read(n - len(buf))
             if not chunk:
-                break
-            with self._stat_lock:
-                self._n_bytes_read += len(chunk)
-            buffer.extend(chunk)
+                return None
+            buf.extend(chunk)
+        return bytes(buf)
 
-            soi = buffer.find(b'\xff\xd8')
-            eoi = buffer.find(b'\xff\xd9')
-            if soi == -1 or eoi == -1 or eoi <= soi:
-                continue
+    def tick(self):
+        raw = self._read_exact(self.frame_size)
+        if raw is None:
+            self.get_logger().error('rpicam-vid stream ended, shutting down')
+            self.timer.cancel()
+            raise SystemExit
 
-            jpeg_data = bytes(buffer[soi:eoi + 2])
-            del buffer[:eoi + 2]
-            with self._stat_lock:
-                self._n_parsed += 1
+        yuv = np.frombuffer(raw, dtype=np.uint8).reshape((self.height * 3 // 2, self.width))
+        bgr = cv2.cvtColor(yuv, cv2.COLOR_YUV2BGR_I420)
 
-            t0 = time.monotonic()
-            frame = cv2.imdecode(np.frombuffer(jpeg_data, np.uint8), cv2.IMREAD_COLOR)
-            decode_ms = (time.monotonic() - t0) * 1000.0
-            if frame is None:
-                continue
-            with self._stat_lock:
-                self._n_decoded += 1
-                self._last_decode_ms = decode_ms
+        stamp = self.get_clock().now().to_msg()
 
-            with self._lock:
-                self._latest_frame = frame
-
-    def publish_latest(self):
-        with self._lock:
-            frame = self._latest_frame
-            self._latest_frame = None
-        if frame is None:
-            return
-
-        msg = self.bridge.cv2_to_imgmsg(frame, encoding='bgr8')
-        msg.header.stamp = self.get_clock().now().to_msg()
+        msg = self.bridge.cv2_to_imgmsg(bgr, encoding='bgr8')
+        msg.header.stamp = stamp
         msg.header.frame_id = 'camera_frame'
-        self.publisher.publish(msg)
-        with self._stat_lock:
-            self._n_published += 1
+        self.pub.publish(msg)
 
-    def _log_stats(self):
-        with self._stat_lock:
-            parsed, decoded, published = self._n_parsed, self._n_decoded, self._n_published
-            kb_read = self._n_bytes_read / 1024.0
-            last_decode_ms = getattr(self, '_last_decode_ms', -1)
-            self._n_parsed = self._n_decoded = self._n_published = self._n_bytes_read = 0
-        self.get_logger().info(
-            f"[stats/s] pipe_read={kb_read:.0f}KB parsed={parsed} decoded={decoded} "
-            f"published={published} last_decode={last_decode_ms:.2f}ms")
+        # Skip JPEG encode entirely when nobody's watching - costs real CPU
+        # that would otherwise go to capture/inference.
+        if self.compressed_pub.get_subscription_count() > 0:
+            ok, jpeg = cv2.imencode(
+                '.jpg', bgr, [cv2.IMWRITE_JPEG_QUALITY, self.jpeg_quality])
+            if ok:
+                cmsg = CompressedImage()
+                cmsg.header.stamp = stamp
+                cmsg.header.frame_id = 'camera_frame'
+                cmsg.format = 'jpeg'
+                cmsg.data = jpeg.tobytes()
+                self.compressed_pub.publish(cmsg)
+
+        self.frame_count += 1
+        self.window_count += 1
+
+        elapsed = time.monotonic() - self.window_start
+        if elapsed >= self.report_period_s:
+            fps = self.window_count / elapsed
+            avg_fps = self.frame_count / (time.monotonic() - self.start_time)
+            self.get_logger().info(
+                f'fps(window)={fps:.2f}  fps(avg)={avg_fps:.2f}  frames={self.frame_count}')
+            self.window_count = 0
+            self.window_start = time.monotonic()
 
     def destroy_node(self):
-        self._stop = True
         if self.proc:
             self.proc.terminate()
+            try:
+                self.proc.wait(timeout=2)
+            except Exception:
+                self.proc.kill()
         super().destroy_node()
 
 
@@ -140,7 +158,7 @@ def main(args=None):
     node = RpiCamPublisher()
     try:
         rclpy.spin(node)
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, SystemExit):
         pass
     finally:
         node.destroy_node()

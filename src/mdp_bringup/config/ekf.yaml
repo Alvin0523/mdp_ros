@@ -83,16 +83,19 @@ ekf_filter_node:
     # if accel fusion is ever turned on later.
     imu0_remove_gravitational_acceleration: true
 
-    # --- Outlier rejection (Mahalanobis distance) ---
-    # Rejects a single bad frame from corrupting the filter instead of
-    # blindly trusting every measurement. Starting values borrowed from
-    # WHEELTEC's reference config (their imu0_twist_rejection_threshold) -
-    # UNVERIFIED for our specific sensors' actual noise characteristics,
-    # same caveat as the servo cubic coefficients (docs/stm32/tuning.md):
-    # the pattern/existence of tuning is right, the exact number is a
-    # starting point to refine against real data, not a spec value.
-    odom0_twist_rejection_threshold: 2.0
-    imu0_twist_rejection_threshold: 1.542
+    # --- Outlier rejection (Mahalanobis distance) --- DISABLED 2026-09-21
+    # These were odom0_twist_rejection_threshold: 2.0 and
+    # imu0_twist_rejection_threshold: 1.542 (borrowed from WHEELTEC). With
+    # initial_estimate_covariance at 1e-9 the filter is near-certain the car
+    # is not turning, so when a turn STARTS (0 -> 32 deg/s) BOTH yaw-rate
+    # measurements were rejected as outliers until the covariance had grown
+    # enough - recorded on hardware (rosbag 2026-09-21 rotate 90): gyro and
+    # wheel odometry read ~30 deg/s from t=0.5s, the EKF's wz sat at 8.8 deg/s
+    # until t~2.0s, so /odometry/filtered under-reported yaw (92 deg vs gyro
+    # 104 deg) and rotate_angle stopped early. Any sudden change in curvature
+    # would be rejected the same way. Removing the thresholds means no
+    # rejection (robot_localization default); add a LARGE value back only if
+    # single-frame glitches are actually seen.
 
     # --- Process/initial covariance (UNVERIFIED starting point) ---
     # Also borrowed from WHEELTEC's reference config as a structurally

@@ -51,12 +51,17 @@ class PurePursuitController:
 
     # max_steering_angle is a single symmetric bound, so it must use the
     # TIGHTER of the two measured sides or it will command angles the chassis
-    # cannot reach in one direction. Measured with a protractor at the wheel
-    # (2026-09-11): left +35.0deg (0.6109 rad), right -29.5deg (0.5149 rad) -
-    # right binds. Was 0.5672 (32.5deg), a figure whose claimed measurement was
-    # never performed; see docs/stm32/tuning.md#what-the-earlier-record-got-wrong.
-    # lookahead_dist was 0.25 (25cm) - almost exactly MIN_TURN_RADIUS_CM
-    # (25.3cm, see planning_constants.py). Pure pursuit only converges to
+    # cannot reach in one direction. RE-MEASURED 2026-09-18 (supersedes the
+    # 2026-09-11 pair): left +43.0deg (0.7505 rad), right -32.5deg (0.5672
+    # rad) - right still binds. Both endpoints (850us left, 2400us right) were
+    # re-confirmed as genuine mechanical limits via raw-pulse sweeps past the
+    # old calibration ceilings. NOTE: 0.5672/32.5deg coincidentally matches an
+    # earlier, since-discredited figure that was never actually measured -
+    # see mdp_description's URDF comment for that history; this is an
+    # unrelated, freshly-measured value, not a revert.
+    # lookahead_dist was 0.25 (25cm) - almost exactly the OLD
+    # MIN_TURN_RADIUS_CM (25.3cm; now 22.5cm post re-measurement, see
+    # planning_constants.py). Pure pursuit only converges to
     # the path's true curvature when lookahead is meaningfully SMALLER than
     # the turn radius being tracked; at lookahead ~= radius (the case on
     # every corner-avoidance curve the planner produces, since those are
@@ -73,14 +78,14 @@ class PurePursuitController:
     # smooth arc (find_lookahead_point() searches by straight-line distance,
     # not arc length, so on a tight curve a point on the FAR side can already
     # be >= lookahead away after just 1-2 path points). 0.10 sits well under
-    # both MIN_TURN_RADIUS_CM (25.3cm) and the ~15-20cm scale of the actual
+    # both MIN_TURN_RADIUS_CM (22.5cm) and the ~15-20cm scale of the actual
     # avoidance curves around a 10cm obstacle cube with inflation margin.
     # target_speed also cut 0.5 -> 0.2: at 20Hz control rate, 0.5 m/s only
     # gives a correction every 2.5cm traveled; 0.2 m/s gives one every 1cm,
     # which matters most exactly on the curves this lookahead cut is meant
     # to track more faithfully.
     def __init__(self, wheelbase: float = 0.1433, lookahead_dist: float = 0.10,
-                 max_steering_angle: float = 0.5149, target_speed: float = 0.2,
+                 max_steering_angle: float = 0.5672, target_speed: float = 0.2,
                  goal_tolerance: float = 0.05):
         self.wheelbase = wheelbase
         self.lookahead_dist = lookahead_dist

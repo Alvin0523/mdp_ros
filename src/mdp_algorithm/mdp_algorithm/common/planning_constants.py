@@ -33,23 +33,22 @@ WHEELBASE_CM = 14.33
 # valid inputs to the Ackermann relation below. See
 # docs/stm32/tuning.md#what-the-earlier-record-got-wrong.
 #
-# Measured limits: LEFT +35.0deg (840us pulse), RIGHT -29.5deg (2400us).
-# RIGHT remains the tighter/binding side, so it is what bounds the plan -
-# unchanged reasoning, but for the first time on a real measured angle.
+# RE-MEASURED 2026-09-18, superseding the 35.0/29.5deg pair above: raw-pulse
+# sweeps confirmed both mechanical limits directly (left 950->780us -> 850us
+# chassis contact, right 2200->2450us -> 2400us confirmed mechanical stop,
+# no longer "calibration ceiling, still tracking"), and protractor angles
+# were re-read at both: LEFT +43.0deg (850us pulse), RIGHT -32.5deg (2400us).
+# RIGHT remains the tighter/binding side (32.5 < 43.0), so it is still what
+# bounds the plan - same reasoning as before, updated numbers.
 #
-# Caveat carried from the measurement: the right limit is not confirmed
-# mechanical. 2400us was the calibration ceiling at the time and the wheel was
-# still tracking there, so this side may open up slightly. If it does, this
-# constant gets smaller (a tighter turn becomes drivable), never larger - so
-# planning against it stays conservative either way.
-_STEERING_CLAMP_DEG = 29.5
+# The right limit is now a CONFIRMED mechanical limit (see mdp_stm32 servo.h),
+# not the "still tracking when measurement stopped" caveat that applied to
+# the old 29.5deg figure - so this value should not need to shrink further.
+_STEERING_CLAMP_DEG = 32.5
 
-# Derived, not hand-set. Previously hardcoded to 25.0 as a temporary override
-# whose own comment flagged it as NOT drivable - it needed ~29.8deg of
-# steering, past what the firmware would then allow. The real measured limit
-# is 29.5deg, which yields 25.3cm, so that override turns out to have been
-# very slightly tighter than the chassis can actually achieve. Deriving it
-# removes both the guess and the drivability gap.
+# Derived, not hand-set. See _STEERING_CLAMP_DEG's history above for how this
+# constant's basis has evolved (guessed override -> 29.5deg-derived ->
+# 32.5deg-derived); each revision has only tightened the achievable radius.
 MIN_TURN_RADIUS_CM = round(WHEELBASE_CM / math.tan(math.radians(_STEERING_CLAMP_DEG)), 1)
 
 # Half the car's own front-to-back footprint length beyond the rear axle,

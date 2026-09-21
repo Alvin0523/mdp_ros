@@ -78,14 +78,17 @@ class Task2Runner(Node):
         # Ackermann Kinematics Specs (must match ackermann_controller.yaml)
         self.wheelbase = 0.1433      # L = 0.1433 m
         self.wheel_radius = 0.0325   # R = 0.0325 m
-        # Measured at the wheel with a protractor (2026-09-11): left +35.0deg
-        # (0.6109 rad), right -29.5deg (0.5149 rad). This is a single symmetric
-        # bound, so it takes the TIGHTER side or it would plan curvature the
-        # chassis cannot deliver turning right. Was 0.39 (22.35deg), the HWZ020
-        # datasheet figure - that describes the servo's own internal travel, not
-        # the angle this linkage achieves at the wheel. See
+        # RE-MEASURED 2026-09-18 (supersedes the 2026-09-11 pair: left +35.0deg/
+        # 0.6109 rad, right -29.5deg/0.5149 rad): left +43.0deg (0.7505 rad),
+        # right -32.5deg (0.5672 rad), both re-confirmed as genuine mechanical
+        # limits via raw-pulse sweeps past the old calibration ceilings. This
+        # is a single symmetric bound, so it still takes the TIGHTER side
+        # (right) or it would plan curvature the chassis cannot deliver
+        # turning right. Was 0.39 (22.35deg), the HWZ020 datasheet figure -
+        # that describes the servo's own internal travel, not the angle this
+        # linkage achieves at the wheel. See
         # docs/stm32/tuning.md#servo-range-steering-calibration.
-        self.max_steering = 0.5149   # right side binds: 29.5 deg
+        self.max_steering = 0.5672   # right side binds: 32.5 deg
         self.lookahead = 0.30        # Pure Pursuit Lookahead distance (30cm)
         self.min_turn_radius = self.wheelbase / math.tan(self.max_steering)
         self.kappa_max = math.tan(self.max_steering) / self.wheelbase  # max path curvature (1/R_min)

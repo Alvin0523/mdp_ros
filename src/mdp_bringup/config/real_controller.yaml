@@ -26,7 +26,12 @@ ackermann_steering_controller:
     steering_track_width: 0.104
     traction_track_width: 0.16
     steering_wheels_radius: 0.0325
-    traction_wheels_radius: 0.0325
+    # MEASURED 2026-09-21 (tape vs odometry, 4 runs of a commanded 2.0 m:
+    # 203.6/203.7/203.6/203.6 cm): the car travels 1.018x what 0.0325 m
+    # predicts, so the effective rolling radius is 0.0325 * 1.018 = 0.03309 m
+    # (tyre thickness). Ticks per rev (1560) were separately confirmed by
+    # hand-rotation and a mark-return test, so this is the radius, not the ticks.
+    traction_wheels_radius: 0.03309
 
     open_loop: false
     # robot_localization's ekf_node is the single odom->base_link TF
@@ -62,7 +67,13 @@ ackermann_steering_controller:
     # model, which does not hold on real hardware. Real encoder noise vs.
     # real ICM-20948 gyro noise needs its own bench comparison before
     # trusting one over the other here.
-    twist_covariance_diagonal: [0.01, 0.01, 0.01, 0.01, 0.01, 0.01]
+    # vyaw (last entry) raised 0.01 -> 1.0 on 2026-09-21: wheel-odometry yaw
+    # over-read by 9% on a physical 180 deg turn (191.4 deg vs ~175 real),
+    # because it uses the commanded steering angle as the real wheel angle,
+    # while the gyro read 177.4 deg. With equal 0.01 covariances the EKF
+    # averaged them (182 deg). 1.0 makes the EKF lean on the gyro for yaw rate;
+    # wheel odometry still supplies vx and acts as a fallback if the IMU drops.
+    twist_covariance_diagonal: [0.01, 0.01, 0.01, 0.01, 0.01, 1.0]
 
     gains:
       left_joint: {p: 100.0, i: 0.1, d: 5.0}

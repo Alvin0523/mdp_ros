@@ -12,8 +12,9 @@ import rclpy
 from ament_index_python.packages import get_package_share_directory
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
-from sensor_msgs.msg import Image
+from sensor_msgs.msg import Image, CompressedImage
 from std_msgs.msg import String
+import cv2
 from cv_bridge import CvBridge
 
 try:
@@ -103,11 +104,13 @@ class YoloDetector(Node):
         self.declare_parameter('model_path', DEFAULT_MODEL)
         self.declare_parameter('result_topic', '/yolo_result')
         self.declare_parameter('annotated_topic', '/yolo_result/image_annotated')
+        self.declare_parameter('jpeg_quality', 80)
 
         camera_topic = self.get_parameter('camera_topic').value
         model_path = resolve_model_path(self.get_parameter('model_path').value)
         result_topic = self.get_parameter('result_topic').value
         annotated_topic = self.get_parameter('annotated_topic').value
+        self.jpeg_quality = self.get_parameter('jpeg_quality').value
 
         self.bridge = CvBridge()
         self.result_pub = self.create_publisher(String, result_topic, 10)
@@ -116,8 +119,12 @@ class YoloDetector(Node):
         # Foxglove/RViz, since /yolo_result alone is just a bare label
         # string with no way to see what the model actually saw/boxed.
         # Published every frame regardless of whether anything was detected,
-        # same as any other live camera feed.
-        self.annotated_pub = self.create_publisher(Image, annotated_topic, 10)
+        # same as any other live camera feed. JPEG-compressed (not raw
+        # Image) - inference itself is the real bottleneck on this hardware
+        # (~0.7 fps measured on a Pi 4B with the NCNN model), but a raw
+        # frame every ~1.4s is still ~0.9MB each; publishing compressed
+        # avoids adding unnecessary bandwidth/decode cost on top of that.
+        self.annotated_pub = self.create_publisher(CompressedImage, annotated_topic, 10)
         # BEST_EFFORT + depth 1 (KEEP_LAST): if inference falls even slightly
         # behind the camera's frame rate, a reliable depth-10 subscription
         # queues up a backlog and the callback works through stale frames
@@ -175,12 +182,13 @@ class YoloDetector(Node):
         # needed. Reuses the original frame's header/timestamp so this
         # topic stays sync'able with /image_raw in Foxglove/rviz.
         annotated = result.plot()
-        try:
-            out_msg = self.bridge.cv2_to_imgmsg(annotated, encoding='bgr8')
-        except Exception as e:
-            self.get_logger().error(f"CvBridge Error (annotated): {e}")
+        ok, jpeg = cv2.imencode('.jpg', annotated, [cv2.IMWRITE_JPEG_QUALITY, self.jpeg_quality])
+        if not ok:
             return
+        out_msg = CompressedImage()
         out_msg.header = header
+        out_msg.format = 'jpeg'
+        out_msg.data = jpeg.tobytes()
         self.annotated_pub.publish(out_msg)
 
     def publish_detection(self, target_id: str, class_name: str = None):
