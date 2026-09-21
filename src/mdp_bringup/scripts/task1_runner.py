@@ -28,7 +28,7 @@ import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSDurabilityPolicy, QoSProfile
 from enum import Enum, auto
-from geometry_msgs.msg import TwistStamped, PoseStamped, Point
+from geometry_msgs.msg import TwistStamped, PoseStamped, Point, PoseWithCovarianceStamped
 import tf2_ros
 # Imported for its side effect: registering the geometry_msgs type conversions
 # tf2 dispatches on. `do_transform_pose` is called through the module below.
@@ -76,6 +76,49 @@ TASK1_CAMERA_THETA_OFFSET_RAD = math.pi / 2.0
 # assumed to start.
 START_BOX_SIZE_CM = 40.0
 
+# --- Tablet protocol conventions (see mdp_bridge's bluetooth_bridge_node) ---
+# The tablet's grid is 20x20 cells of 10cm, origin bottom-left. ROBOT lines
+# report the cell (0-18) of the robot's bottom-left corner. The robot is
+# treated as a 2x2-cell (20cm) footprint centred on the pose we track, so the
+# corner sits 10cm down-left of it. OPEN ITEM: the real footprint/reference
+# point is not confirmed - change ROBOT_FOOTPRINT_CM if the tablet expects
+# something else.
+TABLET_CELL_CM = 10.0
+TABLET_MAX_CELL = 18
+ROBOT_FOOTPRINT_CM = 20.0
+
+# Manual drive (f/b/fl/fr/bl/br): a fixed-speed burst, steered by a fixed
+# wheel angle. yaw rate follows the bicycle model w = v*tan(delta)/L so the
+# sign is right for reversing too (steer left + reverse turns the body right).
+MANUAL_SPEED_MPS = 0.15
+MANUAL_STEER_DEG = 25.0
+MANUAL_BURST_S = 0.3
+WHEELBASE_M = 0.1433
+MANUAL_COMMANDS = {
+    'f': (1.0, 0.0), 'b': (-1.0, 0.0),
+    'fl': (1.0, 1.0), 'fr': (1.0, -1.0),
+    'bl': (-1.0, 1.0), 'br': (-1.0, -1.0),
+}
+
+# The EKF's world frame. map -> odom is a static start-pose transform, so the
+# start pose in `odom` is always the identity.
+ODOM_FRAME = 'odom'
+RESET_POS_TOL_M = 0.03
+RESET_YAW_TOL_RAD = math.radians(5.0)
+RESET_CONFIRM_TIMEOUT_S = 3.0
+
+
+def robot_cell_line(x_m: float, y_m: float, yaw_rad: float) -> str:
+    """`ROBOT,<x>,<y>,<N/E/S/W>` for an arena-frame pose (metres, radians)."""
+    half_cm = ROBOT_FOOTPRINT_CM / 2.0
+
+    def cell(v_m: float) -> int:
+        c = int(math.floor((v_m * 100.0 - half_cm) / TABLET_CELL_CM))
+        return max(0, min(TABLET_MAX_CELL, c))
+
+    quarter = int(round(math.atan2(math.sin(yaw_rad), math.cos(yaw_rad)) / (math.pi / 2.0))) % 4
+    return f'ROBOT,{cell(x_m)},{cell(y_m)},{"ENWS"[quarter]}'
+
 
 class State(Enum):
     WAITING_FOR_SETUP = auto()
@@ -88,6 +131,9 @@ class State(Enum):
     NAVIGATING_TO_TARGET = auto()
     PAUSE_FOR_SCAN = auto()
     FINISHED = auto()
+    # Entered by /stop_run. Zeros are streamed, manual drive is ignored, and
+    # the state only changes again on /reset_run (or a new obstacle setup).
+    STOPPED = auto()
 
 
 class Task1Runner(Node):
@@ -166,6 +212,13 @@ class Task1Runner(Node):
         self.create_subscription(String, '/obstacle_setup', self.setup_callback, 10)
         self.create_subscription(String, '/yolo_result', self.yolo_callback, 10)
         self.create_subscription(Odometry, '/odometry/filtered', self.odom_callback, 10)
+        # Manual drive from the tablet (f/b/fl/fr/bl/br), relayed by
+        # bluetooth_bridge_node. Handled here rather than in the bridge because
+        # this node already streams zeros on /cmd_vel while idle - a second
+        # publisher on that topic would fight it.
+        self.create_subscription(String, '/manual_drive', self.manual_drive_callback, 10)
+        # robot_localization's ekf_node subscribes to this to reset its state.
+        self.set_pose_pub = self.create_publisher(PoseWithCovarianceStamped, '/set_pose', 10)
 
         # `go` trigger: a service (not a topic) so the caller gets a clear
         # accepted/rejected acknowledgement - matches the tablet's one-shot
@@ -173,6 +226,13 @@ class Task1Runner(Node):
         # setup + planning); rejected with a reason otherwise.
         self.start_run_srv = self.create_service(
             Trigger, '/start_run', self.start_run_callback)
+        # Stop the follower and the planner, then hold zeros until /reset_run.
+        self.stop_run_srv = self.create_service(
+            Trigger, '/stop_run', self.stop_run_callback)
+        # Put the pose/odometry back at the start pose. Nothing else: obstacles
+        # and the plan are kept so a rerun needs no new setup.
+        self.reset_run_srv = self.create_service(
+            Trigger, '/reset_run', self.reset_run_callback)
 
         # TF buffer/listener - same pattern task2_runner uses. Needed because
         # /odometry/filtered reports in `odom` (the dead-reckoning frame, created
@@ -192,6 +252,7 @@ class Task1Runner(Node):
         self.state = State.WAITING_FOR_SETUP
 
         self.obstacles = []          # (x_m, y_m, facing) as received from /obstacle_setup
+        self.tablet_ids = []         # tablet's own obstacle number per entry of self.obstacles
         self.visiting_order = []     # obstacle indices, in visit order (mirrors old contract)
         # One entry per obstacle in visiting_order; None until
         # _plan_all_legs_worker (background thread, see below) fills it in -
@@ -210,6 +271,24 @@ class Task1Runner(Node):
         # self.leg_paths[idx] each tick and starts driving the moment it's
         # filled in - see NAVIGATING_TO_TARGET's handling below.
         self._planning_thread = None
+        # Bumped whenever the current plan is abandoned (new setup, stop). The
+        # planning thread captures the value it started with and drops its
+        # results if it no longer matches - Hybrid A* can't be interrupted
+        # mid-search, so a stale thread just finishes into an orphaned list.
+        self._plan_gen = 0
+
+        # Tablet indicators (PLAN / RESET / STATUS lines on /bluetooth_tx).
+        self.plan_state = 'WAITING'    # WAITING | PLANNING | DONE
+        self.reset_done = False        # True once the pose is confirmed at the start
+        self.stopped = False           # set by /stop_run, cleared by /reset_run
+        self._reset_pending = False
+        self._reset_requested_at = 0.0
+        self._last_sent = {}           # indicator key -> last line sent, to publish on change only
+        self._last_heartbeat = 0.0
+        self._last_robot_line = None
+        self._manual_cmd = (0.0, 0.0)
+        self._manual_until = 0.0
+        self._manual_active = False
 
         self.detected_target_id = None
         self.state_start_time = self.get_now_sec()
@@ -308,20 +387,106 @@ class Task1Runner(Node):
         self.current_pose = (p.x, p.y, yaw)
         self.follower.update_pose(p.x, p.y, yaw)
 
-    def setup_callback(self, msg: String):
-        if self.state == State.WAITING_FOR_SETUP:
-            self.obstacles.clear()
-            raw_items = msg.data.strip().split('|')
-            for item in raw_items:
-                if ':' in item:
-                    obs_id, data = item.split(':')
-                    parts = data.split(',')
-                    x, y = float(parts[0]), float(parts[1])
-                    face = parts[2]
-                    self.obstacles.append((x, y, face))
+        if self._reset_pending:
+            sx, sy, syaw = self.get_start_pose()
+            yaw_err = math.atan2(math.sin(yaw - syaw), math.cos(yaw - syaw))
+            if (math.hypot(p.x - sx, p.y - sy) < RESET_POS_TOL_M
+                    and abs(yaw_err) < RESET_YAW_TOL_RAD):
+                self._reset_pending = False
+                self.reset_done = True
+                self.get_logger().info("Reset confirmed: pose is at the start.")
+            elif self.get_now_sec() - self._reset_requested_at > RESET_CONFIRM_TIMEOUT_S:
+                self._reset_pending = False
+                self.get_logger().warn(
+                    f"Reset not confirmed after {RESET_CONFIRM_TIMEOUT_S:.0f}s - pose "
+                    f"({p.x:.2f}, {p.y:.2f}, {math.degrees(yaw):.0f}deg) is not at the start "
+                    f"pose {self.get_start_pose()}. Is the EKF running / did it take /set_pose?")
 
-            self.get_logger().info(f"Loaded {len(self.obstacles)} obstacles from setup!")
-            self.state = State.PLANNING_PATH
+        robot_line = robot_cell_line(p.x, p.y, yaw)
+        if robot_line != self._last_robot_line:
+            self._last_robot_line = robot_line
+            self.send_bt(robot_line)
+
+    def setup_callback(self, msg: String):
+        """`id:x,y,facing|id:x,y,facing|...` (metres). A new set replaces the old
+        one - including a finished plan - but never interrupts a run in progress."""
+        if self.state in (State.NAVIGATING_TO_TARGET, State.PAUSE_FOR_SCAN):
+            self.get_logger().warn("Obstacle setup ignored: a run is in progress. Stop it first.")
+            return
+
+        obstacles, ids = [], []
+        for item in msg.data.strip().split('|'):
+            if ':' not in item:
+                continue
+            try:
+                obs_id, data = item.split(':')
+                parts = data.split(',')
+                x, y, face = float(parts[0]), float(parts[1]), parts[2].strip().upper()
+            except (ValueError, IndexError):
+                self.get_logger().warn(f"Skipping malformed obstacle entry {item!r}")
+                continue
+            if face not in ('N', 'E', 'S', 'W'):
+                self.get_logger().warn(f"Skipping obstacle {obs_id!r}: facing {face!r} is not N/E/S/W")
+                continue
+            obstacles.append((x, y, face))
+            ids.append(obs_id.strip())
+
+        if not obstacles:
+            self.get_logger().warn("Obstacle setup contained no valid obstacles - ignored.")
+            return
+
+        self._plan_gen += 1   # abandon any planner still running for the old set
+        self.obstacles = obstacles
+        self.tablet_ids = ids
+        self.visiting_order = []
+        self.checkpoints = []
+        self.unreachable = []
+        self.leg_paths = []
+        self.current_target_idx = 0
+        self.follower.set_path([])
+        self.plan_state = 'PLANNING'
+        self.state = State.PLANNING_PATH
+        self.state_start_time = self.get_now_sec()
+        self.get_logger().info(f"Loaded {len(self.obstacles)} obstacles from setup!")
+
+    def _tablet_id(self, obstacle_idx: int) -> str:
+        """The tablet's own number for obstacle `obstacle_idx` (0-based index into
+        self.obstacles), falling back to idx+1 if ids were never supplied."""
+        if obstacle_idx < len(self.tablet_ids):
+            return self.tablet_ids[obstacle_idx]
+        return str(obstacle_idx + 1)
+
+    def _current_obstacle_label(self) -> str:
+        if self.current_target_idx < len(self.visiting_order):
+            return self._tablet_id(self.visiting_order[self.current_target_idx])
+        return '?'
+
+    def _status_text(self) -> str:
+        if self.stopped:
+            return 'Stopped'
+        if self.state == State.NAVIGATING_TO_TARGET:
+            return f'Going to obstacle {self._current_obstacle_label()}'
+        if self.state == State.PAUSE_FOR_SCAN:
+            return f'Scanning obstacle {self._current_obstacle_label()}'
+        if self.state == State.FINISHED:
+            return 'Finished'
+        if (self.state == State.WAITING_FOR_GO and self.plan_state == 'DONE'
+                and self.reset_done):
+            return 'Ready'
+        return 'Waiting'
+
+    def _sync_indicators(self):
+        """PLAN / RESET / STATUS lines, sent only when they change. The bridge
+        remembers the latest of each and resends them at link-up."""
+        lines = {
+            'PLAN': f'PLAN:{self.plan_state}',
+            'RESET': f'RESET:{"DONE" if self.reset_done else "WAITING"}',
+            'STATUS': f'STATUS:{self._status_text()}',
+        }
+        for key, line in lines.items():
+            if self._last_sent.get(key) != line:
+                self._last_sent[key] = line
+                self.send_bt(line)
 
     def yolo_callback(self, msg: String):
         if self.state == State.PAUSE_FOR_SCAN and self.detected_target_id is None:
@@ -329,27 +494,134 @@ class Task1Runner(Node):
             self.get_logger().info(f"YOLO26 Identified Target: {self.detected_target_id}")
 
     def start_run_callback(self, request, response):
-        """`/start_run` service (the `go` trigger). Only starts the run if we
-        have finished planning and are holding in WAITING_FOR_GO; otherwise
-        rejects with a reason so the caller knows why nothing happened."""
+        """`/start_run` (the tablet's BEGIN / `pixi run go`). Starts only from
+        WAITING_FOR_GO with the plan DONE and the pose reset; otherwise rejects
+        with a reason so the caller knows why nothing happened."""
         if self.state == State.WAITING_FOR_GO:
-            self.state = State.NAVIGATING_TO_TARGET
-            self.state_start_time = self.get_now_sec()
-            response.success = True
-            response.message = "Run started - navigating to targets."
-            self.get_logger().info("Received `go` - starting navigation.")
+            if self.plan_state != 'DONE':
+                response.success = False
+                response.message = "Not ready: still planning the path."
+            elif not self.reset_done:
+                response.success = False
+                response.message = "Not ready: reset the pose first (pixi run reset)."
+            else:
+                self.state = State.NAVIGATING_TO_TARGET
+                self.state_start_time = self.get_now_sec()
+                self.current_target_idx = 0
+                self._manual_until = 0.0
+                # The car is about to leave the start, so it needs a fresh reset
+                # before it can run again.
+                self.reset_done = False
+                response.success = True
+                response.message = "Run started - navigating to targets."
+                self.get_logger().info("Received `go` - starting navigation.")
         elif self.state == State.WAITING_FOR_SETUP:
             response.success = False
             response.message = "Not ready: no obstacle setup received yet."
         elif self.state == State.PLANNING_PATH:
             response.success = False
             response.message = "Not ready: still planning the path."
+        elif self.state == State.STOPPED:
+            response.success = False
+            response.message = "Ignored: stopped - reset the pose first (pixi run reset)."
+        elif self.state == State.FINISHED:
+            response.success = False
+            response.message = "Not ready: run finished - put the car back and reset (pixi run reset)."
         else:
             response.success = False
             response.message = f"Ignored: run already in progress ({self.state.name})."
         if not response.success:
             self.get_logger().warn(f"`go` rejected: {response.message}")
+        self._sync_indicators()
         return response
+
+    def stop_run_callback(self, request, response):
+        """`/stop_run` (the tablet's STOP / `pixi run stop`). Halts the follower
+        and the planner, and holds zeros on /cmd_vel until /reset_run."""
+        self._plan_gen += 1               # abandon any planner still running
+        self.stopped = True
+        self.reset_done = False           # wherever the car is now, it's not a verified start
+        self._reset_pending = False
+        self._manual_until = 0.0
+        self.follower.set_path([])
+        if self.plan_state == 'PLANNING':
+            self.plan_state = 'WAITING'   # aborted mid-plan; /reset_run replans from the kept obstacles
+        self.state = State.STOPPED
+        self.state_start_time = self.get_now_sec()
+        self.send_cmd(0.0, 0.0)
+        self.get_logger().warn("STOP - halted; holding zeros until reset.")
+        self._sync_indicators()
+        response.success = True
+        response.message = "Stopped."
+        return response
+
+    def reset_run_callback(self, request, response):
+        """`/reset_run` (`pixi run reset`). Puts the EKF pose back at the start
+        pose - nothing else. Obstacles and the plan are kept.
+
+        The service returns as soon as the request is sent; RESET turns DONE
+        only once odometry actually reports the start pose (see odom_callback),
+        which is what the tablet's indicator should mean."""
+        if self.state in (State.NAVIGATING_TO_TARGET, State.PAUSE_FOR_SCAN):
+            response.success = False
+            response.message = "Ignored: run in progress - stop it first."
+            return response
+
+        # Start pose expressed in `odom` is always the identity (map -> odom is
+        # the static start-pose transform), so reset means "EKF pose = 0".
+        msg = PoseWithCovarianceStamped()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.header.frame_id = ODOM_FRAME
+        msg.pose.pose.orientation.w = 1.0
+        for i in range(0, 36, 7):
+            msg.pose.covariance[i] = 1e-6
+        self.set_pose_pub.publish(msg)
+
+        self.reset_done = False
+        self._reset_pending = True
+        self._reset_requested_at = self.get_now_sec()
+        self.stopped = False
+        self._manual_until = 0.0
+        self.follower.set_path([])
+
+        if self.state in (State.FINISHED, State.STOPPED):
+            self.current_target_idx = 0
+            if self.plan_state == 'DONE':
+                self.state = State.WAITING_FOR_GO
+            elif self.obstacles:
+                self._plan_gen += 1
+                self.leg_paths = []
+                self.plan_state = 'PLANNING'
+                self.state = State.PLANNING_PATH
+            else:
+                self.state = State.WAITING_FOR_SETUP
+            self.state_start_time = self.get_now_sec()
+
+        self.get_logger().info("Reset requested - waiting for odometry to report the start pose.")
+        self._sync_indicators()
+        response.success = True
+        response.message = "Reset requested; RESET turns DONE once the pose is at the start."
+        return response
+
+    def manual_drive_callback(self, msg: String):
+        """f/b/fl/fr/bl/br from the tablet: a short fixed burst on /cmd_vel,
+        then zeros. Ignored during a run and after STOP until /reset_run."""
+        key = msg.data.strip().lower()
+        if key not in MANUAL_COMMANDS:
+            self.get_logger().warn(f"Unknown manual drive command {msg.data!r}")
+            return
+        if self.stopped or self.state in (State.NAVIGATING_TO_TARGET, State.PAUSE_FOR_SCAN):
+            self.get_logger().info(f"Manual drive {key!r} ignored (run in progress or stopped).")
+            return
+        direction, steer = MANUAL_COMMANDS[key]
+        v = direction * MANUAL_SPEED_MPS
+        w = v * math.tan(math.radians(MANUAL_STEER_DEG)) / WHEELBASE_M * steer
+        self._manual_cmd = (v, w)
+        self._manual_until = self.get_now_sec() + MANUAL_BURST_S
+        self._manual_active = True
+        # Moving the car by hand means it's no longer at a verified start pose.
+        self.reset_done = False
+        self._reset_pending = False
 
     def send_cmd(self, linear_x: float, angular_z: float):
         msg = TwistStamped()
@@ -367,6 +639,27 @@ class Task1Runner(Node):
     def control_loop(self):
         now = self.get_now_sec()
         elapsed = now - self.state_start_time
+
+        # Repeat the indicator lines every few seconds. /bluetooth_tx is
+        # volatile, so a bridge that comes up after this node would otherwise
+        # never learn the current PLAN/RESET/STATUS/ROBOT until one changes. The
+        # bridge drops repeats, so the tablet still only sees real changes.
+        if now - self._last_heartbeat >= 2.0:
+            self._last_heartbeat = now
+            self._last_sent.clear()
+            if self._last_robot_line is not None:
+                self.send_bt(self._last_robot_line)
+        self._sync_indicators()
+
+        # Manual drive burst from the tablet (never active during a run - see
+        # manual_drive_callback). Ends with an explicit zero, then the normal
+        # per-state zero streaming resumes.
+        if self._manual_until > now:
+            self.send_cmd(*self._manual_cmd)
+            return
+        if self._manual_active:
+            self._manual_active = False
+            self.send_cmd(0.0, 0.0)
 
         # STATE 1: Planning Path after receiving setup
         if self.state == State.PLANNING_PATH:
@@ -425,8 +718,9 @@ class Task1Runner(Node):
             # number, confirmed confusing.
             if self.unreachable:
                 self.get_logger().warn(
-                    f"Obstacles with no valid scan checkpoint, skipped: {[i + 1 for i in self.unreachable]}")
-            self.get_logger().info(f"Visiting Order Calculated: {[i + 1 for i in self.visiting_order]}")
+                    f"Obstacles with no valid scan checkpoint, skipped: {[self._tablet_id(i) for i in self.unreachable]}")
+            self.get_logger().info(
+                f"Visiting Order Calculated: {[self._tablet_id(i) for i in self.visiting_order]}")
 
             self.leg_paths = [None] * len(self.visiting_order)
             self.current_target_idx = 0
@@ -446,7 +740,9 @@ class Task1Runner(Node):
             # every later leg just gets a head start instead of only
             # starting once the robot arrives at the checkpoint before it.
             self._planning_thread = threading.Thread(
-                target=self._plan_all_legs_worker, args=(start_pose,), daemon=True)
+                target=self._plan_all_legs_worker,
+                args=(start_pose, self._plan_gen, self.leg_paths, self.checkpoints, self.occ_map),
+                daemon=True)
             self._planning_thread.start()
 
         # STATE 1b: Planning done, car held until `go` (see start_run_callback).
@@ -462,6 +758,12 @@ class Task1Runner(Node):
             # the state transition, so the robot starts driving the instant
             # it's ready instead of only when arrival at the PREVIOUS
             # checkpoint happened to trigger a (re)check.
+            if self.current_target_idx >= len(self.leg_paths):
+                self.send_cmd(0.0, 0.0)
+                self.state = State.FINISHED
+                self.get_logger().info("Nothing to visit - finished.")
+                return
+
             if not self.follower.active:
                 if not self._start_current_leg():
                     self.send_cmd(0.0, 0.0)   # still waiting on the background planner
@@ -479,8 +781,6 @@ class Task1Runner(Node):
                 self.get_logger().info(f"Arrived at Target Standoff {self.current_target_idx + 1}. Scanning...")
             else:
                 self.send_cmd(*cmd)
-                self.send_bt(f"ROBOT,{self.current_pose[0]:.2f},{self.current_pose[1]:.2f},"
-                             f"{math.degrees(self.current_pose[2]):.0f}")
 
         # STATE 3: Pause for YOLO26 scanning & Bluetooth update
         elif self.state == State.PAUSE_FOR_SCAN:
@@ -488,7 +788,7 @@ class Task1Runner(Node):
 
             if self.detected_target_id is not None or elapsed > 0.6:
                 target_id = self.detected_target_id if self.detected_target_id else "UNKNOWN"
-                obs_num = self.visiting_order[self.current_target_idx] + 1
+                obs_num = self._tablet_id(self.visiting_order[self.current_target_idx])
 
                 self.send_bt(f"TARGET,{obs_num},{target_id}")
                 self.get_logger().info(f"Updated Android Tablet: TARGET,{obs_num},{target_id}")
@@ -508,6 +808,10 @@ class Task1Runner(Node):
 
         # STATE 4: Finished & Auto-Stopped
         elif self.state == State.FINISHED:
+            self.send_cmd(0.0, 0.0)
+
+        # STATE 5: Stopped by /stop_run - keep publishing zeros until reset
+        elif self.state == State.STOPPED:
             self.send_cmd(0.0, 0.0)
 
     def _publish_occupancy_grid(self):
@@ -831,7 +1135,7 @@ class Task1Runner(Node):
         msg.points = [Point(x=float(x), y=float(y), z=0.02) for x, y in points_m]
         self.search_progress_pub.publish(MarkerArray(markers=[msg]))
 
-    def _plan_all_legs_worker(self, start_pose_m):
+    def _plan_all_legs_worker(self, start_pose_m, gen, leg_paths, checkpoints, occ_map):
         """Runs in a background thread (see the PLANNING_PATH state above,
         which starts it right after plan_visiting_order() and does NOT wait
         for it). Plans every leg back-to-back, one after another, publishing
@@ -852,17 +1156,23 @@ class Task1Runner(Node):
         silently hanging the whole route forever with no explanation."""
         try:
             leg_start_pose_m = start_pose_m
-            for idx, target_pose_m in enumerate(self.checkpoints):
+            for idx, target_pose_m in enumerate(checkpoints):
+                if gen != self._plan_gen:
+                    return   # abandoned (new setup / stop) - write nothing
                 path = plan_leg(
-                    self.occ_map, leg_start_pose_m, target_pose_m,
+                    occ_map, leg_start_pose_m, target_pose_m,
                     theta_offset=TASK1_CAMERA_THETA_OFFSET_RAD,
                     progress_callback=self._publish_search_progress)
-                self.leg_paths[idx] = path
+                if gen != self._plan_gen:
+                    return
+                leg_paths[idx] = path
                 status = f"{len(path)} points" if path else "NO PATH FOUND"
-                self.get_logger().info(f"Leg {idx + 1}/{len(self.checkpoints)} planned: {status}")
+                self.get_logger().info(f"Leg {idx + 1}/{len(checkpoints)} planned: {status}")
                 self._publish_planned_route()
                 leg_start_pose_m = target_pose_m
-            self.get_logger().info("All legs planned.")
+            if gen == self._plan_gen:
+                self.plan_state = 'DONE'
+                self.get_logger().info("All legs planned.")
         except Exception:
             # rclpy's logger takes a plain string, not stdlib logging's
             # exc_info kwarg - format the traceback in manually.
