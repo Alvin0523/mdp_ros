@@ -275,6 +275,15 @@ class TappedRunner:
         node.current_target_idx = 0
         node.occ_map = None
         node.detected_target_id = None
+        node.tablet_ids = []
+        node.plan_state = 'WAITING'
+        node.reset_done = False
+        node.stopped = False
+        node._plan_gen += 1
+        node._last_sent = {}
+        node._last_heartbeat = node.get_now_sec()
+        node._manual_until = 0.0
+        node._manual_active = False
         node.current_pose = (0.0, 0.0, math.pi / 2)
         node.follower.active = False
         node.state_start_time = node.get_now_sec()
@@ -459,7 +468,7 @@ def test_obstacle_setup_is_read_as_arena_metres(runner):
     """`id:x,y,facing` in metres, cube centres exactly on the given coordinates.
 
     Also pins the label format (`#N [facing] (x, y)` at one decimal, matching the
-    arena's 10 cm grid) and that setup is ignored outside `WAITING_FOR_SETUP`.
+    arena's 10 cm grid) and that a new set replaces the old one except during a run.
     """
     runner.reset()
     obstacles = [(0.5, 1.0, 'S'), (1.2, 0.4, 'W'), (1.76, 1.55, 'N')]
@@ -476,9 +485,18 @@ def test_obstacle_setup_is_read_as_arena_metres(runner):
     assert [m.text for m in labels] == ['#1 [S] (0.5, 1.0)', '#2 [W] (1.2, 0.4)',
                                         '#3 [N] (1.8, 1.6)']
 
-    # A second setup while planning is ignored - the runner is past that gate.
+    # A second set replaces the first (the tablet resends after DONE), and
+    # abandons any planner still running for the old one.
+    gen = runner.node._plan_gen
     runner.node.setup_callback(String(data=setup_string([(0.1, 0.1, 'E')])))
-    assert runner.node.obstacles == obstacles
+    assert runner.node.obstacles == [(0.1, 0.1, 'E')]
+    assert runner.node._plan_gen == gen + 1
+    assert runner.node.plan_state == 'PLANNING'
+
+    # ...but never during a run.
+    runner.node.state = runner.module.State.NAVIGATING_TO_TARGET
+    runner.node.setup_callback(String(data=setup_string([(1.0, 1.0, 'N')])))
+    assert runner.node.obstacles == [(0.1, 0.1, 'E')]
 
 
 @settings(max_examples=50, deadline=None,
@@ -661,62 +679,150 @@ def test_yolo_result_handling_is_unchanged(runner):
     assert runner.node.detected_target_id == '38_AlphabetV'
 
 
-def test_start_run_gating_is_unchanged(runner):
-    """`/start_run` accepts only in `WAITING_FOR_GO`, with the recorded reasons."""
+def test_start_run_gating(runner):
+    """`/start_run` accepts only from WAITING_FOR_GO with the plan DONE and the
+    pose reset, and says why otherwise."""
+    State = runner.module.State
     expected = {
         'WAITING_FOR_SETUP': (False, 'Not ready: no obstacle setup received yet.'),
         'PLANNING_PATH': (False, 'Not ready: still planning the path.'),
-        'WAITING_FOR_GO': (True, 'Run started - navigating to targets.'),
         'NAVIGATING_TO_TARGET': (False, 'Ignored: run already in progress (NAVIGATING_TO_TARGET).'),
         'PAUSE_FOR_SCAN': (False, 'Ignored: run already in progress (PAUSE_FOR_SCAN).'),
-        'FINISHED': (False, 'Ignored: run already in progress (FINISHED).'),
+        'FINISHED': (False, 'Not ready: run finished - put the car back and reset (pixi run reset).'),
+        'STOPPED': (False, 'Ignored: stopped - reset the pose first (pixi run reset).'),
     }
-    assert set(expected) == {s.name for s in runner.module.State}
-
-    for state in runner.module.State:
+    for state in State:
+        if state is State.WAITING_FOR_GO:
+            continue
         runner.reset()
         runner.node.state = state
         response = runner.node.start_run_callback(Trigger.Request(), Trigger.Response())
-        assert (response.success, response.message) == expected[state.name]
-        # Accepted only from WAITING_FOR_GO, and then it starts driving.
-        assert runner.node.state is (runner.module.State.NAVIGATING_TO_TARGET
-                                     if response.success else state)
+        assert (response.success, response.message) == expected[state.name], state
+        assert runner.node.state is state
+    assert set(expected) | {'WAITING_FOR_GO'} == {s.name for s in State}
 
-
-def test_target_bluetooth_string_is_unchanged(runner):
-    """`TARGET,<1-based obstacle number>,<id|UNKNOWN>` on leaving a scan pause."""
-    for detected, expected in (('20_AlphabetA', 'TARGET,1,20_AlphabetA'),
-                               (None, 'TARGET,1,UNKNOWN')):
+    # WAITING_FOR_GO: needs BOTH indicators DONE.
+    for plan, reset_done, ok, message in (
+            ('PLANNING', True, False, 'Not ready: still planning the path.'),
+            ('DONE', False, False, 'Not ready: reset the pose first (pixi run reset).'),
+            ('DONE', True, True, 'Run started - navigating to targets.')):
         runner.reset()
-        runner.node.visiting_order = list(BASELINE_VISITING_ORDER)
+        runner.node.state = State.WAITING_FOR_GO
+        runner.node.plan_state = plan
+        runner.node.reset_done = reset_done
+        response = runner.node.start_run_callback(Trigger.Request(), Trigger.Response())
+        assert (response.success, response.message) == (ok, message)
+        assert runner.node.state is (State.NAVIGATING_TO_TARGET if ok else State.WAITING_FOR_GO)
+        # Leaving the start invalidates the reset - a rerun needs a new one.
+        assert runner.node.reset_done is (False if ok else reset_done)
+
+
+def bt_lines(runner, prefix):
+    return [m.data for m in runner.captured.get('bluetooth_tx', []) if m.data.startswith(prefix)]
+
+
+def test_target_line_uses_the_tablets_own_obstacle_number(runner):
+    """`TARGET,<tablet's n>,<id|UNKNOWN>` on leaving a scan pause.
+
+    The number is the one the tablet sent in its OBSTACLE line, not the 1-based
+    position in our list - they differ as soon as the tablet numbers from 0 or
+    skips a number.
+    """
+    for detected, expected in (('20', 'TARGET,7,20'), (None, 'TARGET,7,UNKNOWN')):
+        runner.reset()
+        runner.node.tablet_ids = ['3', '7']
+        runner.node.visiting_order = [1, 0]      # first stop is our obstacle index 1 -> tablet's 7
         runner.node.state = runner.module.State.PAUSE_FOR_SCAN
         runner.node.detected_target_id = detected
         # Past the 0.6 s scan window, so the pause resolves on this tick.
         runner.node.state_start_time = runner.node.get_now_sec() - 5.0
         runner.node.control_loop()
-        assert [m.data for m in runner.captured['bluetooth_tx']] == [expected]
+        assert bt_lines(runner, 'TARGET') == [expected]
         assert runner.node.current_target_idx == 1
 
 
-def test_robot_bluetooth_string_is_unchanged(runner):
-    """`ROBOT,<x .2f>,<y .2f>,<heading degrees .0f>` while driving a leg.
+def test_robot_line_is_a_tablet_cell_and_compass_letter(runner):
+    """`ROBOT,<x>,<y>,<N/E/S/W>` - bottom-left cell 0-18 of a 2x2-cell robot."""
+    line = runner.module.robot_cell_line
+    assert line(0.15, 0.15, math.pi / 2) == 'ROBOT,0,0,N'      # default start pose
+    assert line(1.00, 1.00, 0.0) == 'ROBOT,9,9,E'
+    assert line(1.00, 1.00, math.pi) == 'ROBOT,9,9,W'
+    assert line(1.00, 1.00, -math.pi / 2) == 'ROBOT,9,9,S'
+    assert line(1.00, 1.00, math.radians(80)) == 'ROBOT,9,9,N'  # nearest compass point
+    assert line(-0.5, 5.0, 0.0) == 'ROBOT,0,18,E'              # clamped to the grid
 
-    Reports `current_pose` verbatim. Task 6.5 changes which frame that pose is
-    expressed in, not the string - so this is the assertion that catches a
-    formatting regression hiding inside the frame change.
-    """
+
+def test_indicator_lines_are_sent_on_change_only(runner):
+    """PLAN/RESET/STATUS go out when they change, not every 50 ms tick."""
     runner.reset()
-    leg = [(0.15, 0.2, math.pi / 2), (0.15, 0.4, math.pi / 2), (0.15, 0.6, math.pi / 2)]
-    runner.node.leg_paths = [leg]
-    runner.node.state = runner.module.State.NAVIGATING_TO_TARGET
-    runner.node.current_pose = (1.234567, -0.5, math.radians(91.4))
-    runner.node.follower.update_pose(*runner.node.current_pose)
+    runner.node.state = runner.module.State.WAITING_FOR_GO
     runner.node.control_loop()
+    runner.node.control_loop()
+    assert bt_lines(runner, 'PLAN') == ['PLAN:WAITING']
+    assert bt_lines(runner, 'RESET') == ['RESET:WAITING']
+    assert bt_lines(runner, 'STATUS') == ['STATUS:Waiting']
 
-    assert [m.data for m in runner.captured['bluetooth_tx']] == ['ROBOT,1.23,-0.50,91']
-    # /cmd_vel stays a body-frame twist - not arena data, so the fix must not
-    # touch its frame.
-    assert {m.header.frame_id for m in runner.captured['cmd_vel']} == {'base_link'}
+    runner.node.plan_state = 'DONE'
+    runner.node.reset_done = True
+    runner.node.control_loop()
+    assert bt_lines(runner, 'STATUS')[-1] == 'STATUS:Ready'
+    assert bt_lines(runner, 'PLAN')[-1] == 'PLAN:DONE'
+    assert bt_lines(runner, 'RESET')[-1] == 'RESET:DONE'
+
+
+def test_stop_halts_everything_and_reset_restores_ready(runner):
+    """STOP: zeros, planner abandoned, manual drive ignored. reset: same plan, ready again."""
+    State = runner.module.State
+    runner.reset()
+    runner.node.state = State.NAVIGATING_TO_TARGET
+    runner.node.plan_state = 'DONE'
+    gen = runner.node._plan_gen
+    response = runner.node.stop_run_callback(Trigger.Request(), Trigger.Response())
+    assert response.success and runner.node.state is State.STOPPED
+    assert runner.node._plan_gen == gen + 1 and not runner.node.follower.active
+    runner.node.control_loop()
+    assert runner.captured['cmd_vel'][-1].twist.linear.x == 0.0
+    assert bt_lines(runner, 'STATUS')[-1] == 'STATUS:Stopped'
+
+    runner.node.manual_drive_callback(String(data='f'))
+    assert runner.node._manual_until == 0.0            # ignored while stopped
+
+    runner.node.reset_run_callback(Trigger.Request(), Trigger.Response())
+    assert runner.node.state is State.WAITING_FOR_GO and runner.node.plan_state == 'DONE'
+    assert not runner.node.stopped
+    runner.node.manual_drive_callback(String(data='f'))
+    assert runner.node._manual_until > 0.0             # accepted again once reset
+
+    # A stop that interrupts planning drops the plan and reset replans.
+    runner.reset()
+    runner.node.obstacles = [(0.5, 1.0, 'S')]
+    runner.node.plan_state = 'PLANNING'
+    runner.node.state = State.WAITING_FOR_GO
+    runner.node.stop_run_callback(Trigger.Request(), Trigger.Response())
+    assert runner.node.plan_state == 'WAITING'
+    runner.node.reset_run_callback(Trigger.Request(), Trigger.Response())
+    assert runner.node.state is State.PLANNING_PATH and runner.node.plan_state == 'PLANNING'
+
+    # reset refuses mid-run.
+    runner.reset()
+    runner.node.state = State.NAVIGATING_TO_TARGET
+    response = runner.node.reset_run_callback(Trigger.Request(), Trigger.Response())
+    assert not response.success
+
+
+def test_manual_drive_burst_directions(runner):
+    """Forward/back and left/right map to the right cmd_vel signs (incl. reversing)."""
+    expect = {'f': (1, 0), 'b': (-1, 0), 'fl': (1, 1), 'fr': (1, -1), 'bl': (-1, -1), 'br': (-1, 1)}
+    for key, (vs, ws) in expect.items():
+        runner.reset()
+        runner.node.manual_drive_callback(String(data=key))
+        v, w = runner.node._manual_cmd
+        assert (v > 0) - (v < 0) == vs and (w > 0) - (w < 0) == ws, key
+    runner.reset()
+    runner.node.state = runner.module.State.PAUSE_FOR_SCAN
+    runner.node.manual_drive_callback(String(data='f'))
+    assert runner.node._manual_until == 0.0            # ignored during a run
+
 
 
 # ==========================================================================

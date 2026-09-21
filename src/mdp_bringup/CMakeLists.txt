@@ -13,6 +13,7 @@ install(PROGRAMS
   scripts/task2_runner.py
   scripts/publish_test_obstacles.py
   scripts/go.py
+  scripts/trigger.py
   scripts/drive_distance.py
   scripts/rotate_angle.py
   scripts/circle_obstacle.py

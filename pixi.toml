@@ -17,6 +17,8 @@ real2 = "ros2 launch mdp_bringup real.launch.py serial_port:=/dev/ttyACM0 task:=
 drive = "ros2 launch mdp_bringup real.launch.py serial_port:=/dev/ttyACM0 task:=1 vision:=false"
 setup = "ros2 run mdp_bringup publish_test_obstacles.py"
 go = "ros2 run mdp_bringup go.py"
+stop = "ros2 run mdp_bringup trigger.py /stop_run"
+reset = "ros2 run mdp_bringup trigger.py /reset_run"
 dist = "ros2 run mdp_bringup drive_distance.py"
 rotate = "ros2 run mdp_bringup rotate_angle.py"
 circle = "ros2 run mdp_bringup circle_obstacle.py"

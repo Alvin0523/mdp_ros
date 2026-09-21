@@ -57,6 +57,16 @@ def generate_launch_description():
     )
     serial_port = LaunchConfiguration('serial_port')
 
+    bluetooth_device_arg = DeclareLaunchArgument(
+        'bluetooth_device',
+        default_value='/dev/rfcomm0',
+        description='Serial device the tablet\'s Bluetooth RFCOMM link appears '
+                    'as. The bridge keeps retrying until it exists, so it can '
+                    'be created after launch (e.g. sudo rfcomm listen '
+                    '/dev/rfcomm0 1).'
+    )
+    bluetooth_device = LaunchConfiguration('bluetooth_device')
+
     vision_arg = DeclareLaunchArgument(
         'vision',
         default_value='true',
@@ -181,17 +191,17 @@ def generate_launch_description():
         output='screen'
     )
 
+    # rpicam-vid-backed publisher (no camera_ros / libcamera source build).
+    # Publishes /image_raw for YOLO and /image_raw/compressed for Foxglove.
     camera_node = Node(
-        package='camera_ros',
-        executable='camera_node',
-        name='camera',
+        package='mdp_vision',
+        executable='rpi_cam_publisher.py',
+        name='rpi_cam_publisher',
         parameters=[{
-            'camera': 0,           # only one camera on this board (RPi Camera Module V2 / IMX219)
-            'width': 640,
-            'height': 480,
-            'format': 'RGB888',    # 3-channel, no alpha - avoids XRGB8888's auto-pick and matches
-                                    # cv_bridge's bgr8 conversion in yolo_detector.py cleanly
-            'camera_info_url': 'package://mdp_vision/config/imx219_640x480.yaml',
+            'image_width': 640,
+            'image_height': 480,
+            'frame_rate': 30.0,
+            'camera_topic': '/image_raw',
         }],
         condition=IfCondition(vision),
         output='screen'
@@ -200,15 +210,26 @@ def generate_launch_description():
     yolo_detector = Node(
         package='mdp_vision',
         executable='yolo_detector.py',
-        parameters=[{'camera_topic': '/camera/image_raw'}],
+        parameters=[{'camera_topic': '/image_raw'}],
         condition=IfCondition(vision),
         output='screen'
     )
 
+    # Android tablet link: OBSTACLE/DONE/BEGIN/STOP/CLEAR/manual-drive in,
+    # ROBOT/TARGET/PLAN/RESET/STATUS out. Translates only - the runner decides.
+    bluetooth_bridge = Node(
+        package='mdp_bridge',
+        executable='bluetooth_bridge_node',
+        parameters=[{'device': bluetooth_device}],
+        output='screen'
+    )
+
     # Task 1 runner (task:=1). Comes up idle in WAITING_FOR_SETUP:
-    #   pixi run setup -> publishes /obstacle_setup -> it plans, then HOLDS
-    #   pixi run go    -> calls /start_run service   -> it starts driving
-    # The car does not move on bringup or on setup, only on `go`.
+    #   tablet OBSTACLE.../DONE (or pixi run setup) -> /obstacle_setup -> it plans
+    #   pixi run reset -> /reset_run : pose back at the start pose
+    #   tablet BEGIN   (or pixi run go)   -> /start_run, only once plan + reset are DONE
+    #   tablet STOP    (or pixi run stop) -> /stop_run
+    # The car does not move on bringup or on setup, only on start.
     task1_runner = Node(
         package='mdp_bringup',
         executable='task1_runner.py',
@@ -234,6 +255,7 @@ def generate_launch_description():
 
     return LaunchDescription([
         serial_port_arg,
+        bluetooth_device_arg,
         vision_arg,
         task_arg,
         *start_pose_args,
@@ -241,6 +263,7 @@ def generate_launch_description():
         controller_manager,
         controller_spawner,
         serial_bridge,
+        bluetooth_bridge,
         ekf_node,
         map_to_odom,
         camera_node,

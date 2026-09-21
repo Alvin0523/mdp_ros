@@ -164,9 +164,12 @@ class YoloDetector(Node):
             for r in results:
                 self.publish_annotated(r, msg.header)
                 for box in r.boxes:
-                    cls_id = int(box.cls[0])
-                    label = self.model.names[cls_id].upper()
-                    self.publish_detection(label)
+                    class_name = self.model.names[int(box.cls[0])]
+                    target_id = label_to_target_id(class_name)
+                    if target_id is None:
+                        self.get_logger().warn(f"No MDP Target ID for class {class_name!r}")
+                        target_id = class_name.upper()
+                    self.publish_detection(str(target_id), class_name)
                     return
 
     def publish_annotated(self, result, header):
