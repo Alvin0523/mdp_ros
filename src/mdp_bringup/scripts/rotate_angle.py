@@ -32,7 +32,7 @@ ODOM_TOPIC = '/odometry/filtered'
 PUBLISH_HZ = 20.0
 
 WHEELBASE_M = 0.1433  # WHEELTEC C30D Ackermann wheelbase
-DEFAULT_STEER_DEG = 28.0  # Safely inside chassis lock (left +35 deg, right -29.5 deg)
+DEFAULT_STEER_DEG = 28.0  # Safely inside chassis lock (left +43 deg, right -32.5 deg, re-measured 2026-09-18)
 SLOWDOWN_MARGIN_DEG = 15.0
 MIN_SPEED_MPS = 0.05
 PROGRESS_LOG_HZ = 2.0

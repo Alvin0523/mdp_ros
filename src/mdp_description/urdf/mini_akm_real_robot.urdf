@@ -59,36 +59,45 @@
     <parent link="base_link" />
     <child link="left_link" />
     <axis xyz="0 0 1" />
-    <!-- ASYMMETRIC, from protractor readings at the wheel (2026-09-11):
-           upper =  0.6109 rad =  35.0deg  (full left,  840us pulse)
-           lower = -0.5149 rad = -29.5deg  (full right, 2400us pulse)
+    <!-- ASYMMETRIC, from protractor readings at the wheel, RE-MEASURED
+         2026-09-18 (supersedes the 2026-09-11 pair below):
+           upper =  0.7505 rad =  43.0deg  (full left,  850us pulse)
+           lower = -0.5672 rad = -32.5deg  (full right, 2400us pulse)
          Sign per REP-103: positive = CCW = left.
+
+         Both pulse endpoints were re-confirmed as genuine mechanical limits
+         via raw-pulse sweeps that probed past the previous calibration
+         ceilings (left 950->780us -> 850us chassis contact, right
+         2200->2450us -> 2400us confirmed stop, no longer "still tracking
+         when measurement stopped"). Previous pair (2026-09-11): upper =
+         0.6109 rad = 35.0deg (840us), lower = -0.5149 rad = -29.5deg (2400us)
+         - both undermeasured the true range, left especially (8deg short).
+
+         NOTE: the new right-side value, -0.5672 rad (32.5deg), happens to
+         numerically match an EARLIER, since-discredited symmetric value that
+         was once used here - that older number was never actually measured
+         (its comment described an 8-reading session that was never
+         performed). This 32.5deg is unrelated: a fresh, genuine protractor
+         reading taken 2026-09-18. Coincidence, not a revert.
 
          Single shared servo/linkage drives both front wheels - servo to the
          right wheel's knuckle, then tie-rod across to the left.
-
-         REPLACES a previous symmetric +/-0.5672 rad (32.5deg) whose comment
-         described a detailed 8-reading, 2-session measurement that was never
-         actually performed. Treat that value as unfounded, not as a
-         second opinion. Before that it was +/-0.39 rad, the HWZ020 servo's
-         bare datasheet spec, which describes the servo's own internal travel
-         rather than the angle this linkage achieves at the wheel.
 
          KNOWN LIMITATION - both joints currently carry the SAME pair of
          limits, which is not strictly correct. Ackermann geometry steers the
          inner wheel harder than the outer, so left_joint and right_joint
          should differ. Which physical wheel each of the two readings above
-         came from was not recorded, so the 35.0/29.5 pair cannot yet be
-         split per wheel; it is possible that gap is itself inner-vs-outer
-         rather than left-vs-right. Resolving it needs four readings: both
-         wheels at both locks. Until then these are the measured envelope of
-         steering travel, applied to both joints.
+         came from was STILL not recorded in this 2026-09-18 pass, so the
+         43.0/32.5 pair cannot yet be split per wheel; it is possible that gap
+         is itself inner-vs-outer rather than left-vs-right. Resolving it
+         needs four readings: both wheels at both locks. Until then these are
+         the measured envelope of steering travel, applied to both joints.
 
          Firmware side: mdp_stm32 servo.h SERVO_ANGLE_MAX_LEFT_RAD /
          SERVO_ANGLE_MAX_RIGHT_RAD hold the same two values, and
          servo_set_angle() now takes a REAL angle, so these agree by
          construction. See docs/stm32/tuning.md. -->
-    <limit lower="-0.5149" upper="0.6109" effort="10.0" velocity="5.0" />
+    <limit lower="-0.5672" upper="0.7505" effort="10.0" velocity="5.0" />
   </joint>
 
   <link name="right_link">
@@ -105,7 +114,7 @@
     <!-- Same measured values as left_joint - see its comment above, including
          why both joints currently share one pair of limits when Ackermann
          geometry says they should differ. -->
-    <limit lower="-0.5149" upper="0.6109" effort="10.0" velocity="5.0" />
+    <limit lower="-0.5672" upper="0.7505" effort="10.0" velocity="5.0" />
   </joint>
 
   <link name="imu_link" />

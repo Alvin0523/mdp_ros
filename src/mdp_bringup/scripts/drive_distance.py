@@ -73,10 +73,14 @@ WHEELBASE_M = 0.1433  # WHEELTEC C30D Ackermann wheelbase - matches rotate_angle
 SLOWDOWN_MARGIN_M = 0.10
 MIN_SPEED_MPS = 0.05
 
+# Soft start: speed rises at this rate (m/s^2) instead of stepping instantly to
+# --speed, which made the rear wheels slip at the start. 0.15 m/s -> ~1 s ramp.
+DEFAULT_ACCEL_MPS2 = 0.15
+
 
 class DriveDistance(Node):
     def __init__(self, target_m: float, speed_mps: float, timeout_s: float,
-                 steer_deg: float = 0.0):
+                 steer_deg: float = 0.0, accel_mps2: float = DEFAULT_ACCEL_MPS2):
         super().__init__('drive_distance')
 
         self.target_m = abs(target_m)
@@ -84,6 +88,8 @@ class DriveDistance(Node):
         self.speed_mps = abs(speed_mps)
         self.timeout_s = timeout_s
         self.steer_rad = math.radians(steer_deg)
+        self.accel_mps2 = abs(accel_mps2)
+        self.ramp_speed = 0.0
 
         self.start_xy = None
         self.travelled_m = 0.0
@@ -159,10 +165,12 @@ class DriveDistance(Node):
                        f'(target {self.target_m:.3f} m)')
             return
 
-        speed = self.speed_mps
+        self.ramp_speed = min(self.speed_mps,
+                              self.ramp_speed + self.accel_mps2 / PUBLISH_HZ)
+        speed = self.ramp_speed
         if remaining < SLOWDOWN_MARGIN_M:
             scale = remaining / SLOWDOWN_MARGIN_M
-            speed = max(MIN_SPEED_MPS, self.speed_mps * scale)
+            speed = min(speed, max(MIN_SPEED_MPS, self.speed_mps * scale))
 
         self._publish(self.direction * speed)
 
@@ -189,6 +197,8 @@ def main() -> int:
                         help='m/s, default 0.15')
     parser.add_argument('--timeout', type=float, default=60.0,
                         help='seconds before giving up, default 60')
+    parser.add_argument('--accel', type=float, default=DEFAULT_ACCEL_MPS2,
+                        help='start-up acceleration in m/s^2 (default %(default)s)')
     parser.add_argument('--steer-deg', type=float, default=0.0,
                         help='constant steering trim in degrees for '
                              'straight-line calibration, default 0 '
@@ -196,7 +206,8 @@ def main() -> int:
     args, ros_args = parser.parse_known_args()
 
     rclpy.init(args=ros_args)
-    node = DriveDistance(args.distance, args.speed, args.timeout, args.steer_deg)
+    node = DriveDistance(args.distance, args.speed, args.timeout, args.steer_deg,
+                         args.accel)
     try:
         while rclpy.ok() and not node.finished:
             rclpy.spin_once(node, timeout_sec=0.1)

@@ -35,8 +35,6 @@ setup(
     },
     entry_points={
         'console_scripts': [
-            'camera_publisher = mdp_vision.camera_publisher:main',
-            'camera_publisher.py = mdp_vision.camera_publisher:main',
             'rpi_cam_publisher = mdp_vision.rpi_cam_publisher:main',
             'rpi_cam_publisher.py = mdp_vision.rpi_cam_publisher:main',
             'yolo_detector = mdp_vision.yolo_detector:main',
