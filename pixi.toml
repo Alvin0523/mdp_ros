@@ -16,6 +16,11 @@ real1 = "ros2 launch mdp_bringup real.launch.py serial_port:=/dev/ttyACM0 task:=
 real2 = "ros2 launch mdp_bringup real.launch.py serial_port:=/dev/ttyACM0 task:=2"
 setup = "ros2 run mdp_bringup publish_test_obstacles.py"
 go = "ros2 run mdp_bringup go.py"
+stop = "ros2 service call /stop_run std_srvs/srv/Trigger"
+reset = "ros2 service call /reset_run std_srvs/srv/Trigger"
+# Bluetooth link debugging: send any raw line to the tablet / watch what it sends.
+bt-send = { cmd = "ros2 topic pub --once /bluetooth_bridge/app_tx std_msgs/msg/String \"{data: '{{ line }}'}\"", args = ["line"] }
+bt-rx = "ros2 topic echo /bluetooth_bridge/app_rx"
 dist = "ros2 run mdp_bringup drive_distance.py"
 rotate = "ros2 run mdp_bringup rotate_angle.py"
 circle = "ros2 run mdp_bringup circle_obstacle.py"

@@ -15,7 +15,7 @@ environment (no system-wide ROS install needed). See `pixi.toml` for tasks (`pix
 | `mdp_bringup` | Top-level launch files (sim, real hardware) + Task 1/2 runner scripts |
 | `mdp_algorithm/mdp_planning` | Path planning building blocks (Reeds-Shepp/Dubins + TSP, pure-pursuit, spline) |
 | `mdp_algorithm/wayp_plan_tools` | Waypoint loading/saving and pursuit control tools |
-| `mdp_bridge` | STM32 serial bridge (`serial_bridge_node`) + Android Bluetooth bridge (`bluetooth_bridge_node`, placeholder) |
+| `mdp_bridge` | STM32 serial bridge (`serial_bridge_node`) + Android Bluetooth bridge (`bluetooth_bridge_node`: obstacles, start/stop, manual drive, pose/status to the tablet) |
 | `mdp_vision` | Camera capture (sim fallback) + YOLO detection node |
 
 ## External dependencies (not submodules)

@@ -3,7 +3,7 @@
 <package format="3">
   <name>mdp_bridge</name>
   <version>0.0.0</version>
-  <description>Hardware/communication bridges for the robot: serial_bridge_node links mdp_stm32's custom binary protocol (USART3) to topic_based_ros2_control's /joint_commands and /joint_states topics (plus /imu/data and /estop); bluetooth_bridge_node is a placeholder for the Android tablet's Bluetooth RFCOMM link.</description>
+  <description>Hardware/communication bridges for the robot: serial_bridge_node links mdp_stm32's custom binary protocol (USART3) to topic_based_ros2_control's /joint_commands and /joint_states topics (plus /imu/data and /estop); bluetooth_bridge_node speaks the line protocol with the Android tablet over Bluetooth RFCOMM (obstacles, start/stop, manual drive, robot pose, status).</description>
   <maintainer email="alvinwm0523@gmail.com">Wei Ming</maintainer>
   <license>TODO: License declaration</license>
 
@@ -11,10 +11,13 @@
 
   <test_depend>ament_lint_auto</test_depend>
   <test_depend>ament_lint_common</test_depend>
+  <test_depend>ament_cmake_gtest</test_depend>
   <exec_depend>ros2launch</exec_depend>
   <depend>rclcpp</depend>
+  <depend>geometry_msgs</depend>
   <depend>sensor_msgs</depend>
   <depend>std_msgs</depend>
+  <depend>std_srvs</depend>
 
   <export>
     <build_type>ament_cmake</build_type>

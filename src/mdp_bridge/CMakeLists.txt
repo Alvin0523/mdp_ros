@@ -9,13 +9,17 @@ endif()
 
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
+find_package(geometry_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
+find_package(std_srvs REQUIRED)
 
 set(ament_dependencies
   rclcpp
+  geometry_msgs
   sensor_msgs
   std_msgs
+  std_srvs
 )
 
 include_directories(
@@ -33,6 +37,12 @@ if(BUILD_TESTING)
   set(ament_cmake_copyright_FOUND TRUE)
   set(ament_cmake_cpplint_FOUND TRUE)
   ament_lint_auto_find_test_dependencies()
+
+  find_package(ament_cmake_gtest QUIET)
+  if(ament_cmake_gtest_FOUND)
+    ament_add_gtest(test_bluetooth_protocol test/test_bluetooth_protocol.cpp)
+    target_include_directories(test_bluetooth_protocol PRIVATE include)
+  endif()
 endif()
 
 install(TARGETS
