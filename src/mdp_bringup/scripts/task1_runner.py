@@ -28,13 +28,13 @@ import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSDurabilityPolicy, QoSProfile
 from enum import Enum, auto
-from geometry_msgs.msg import TwistStamped, PoseStamped, Point
+from geometry_msgs.msg import TwistStamped, PoseStamped, PoseWithCovarianceStamped, Point
 import tf2_ros
 # Imported for its side effect: registering the geometry_msgs type conversions
 # tf2 dispatches on. `do_transform_pose` is called through the module below.
 import tf2_geometry_msgs
 from nav_msgs.msg import Odometry, OccupancyGrid, Path
-from std_msgs.msg import Header, String
+from std_msgs.msg import Bool, Header, String
 from std_srvs.srv import Trigger
 from visualization_msgs.msg import Marker, MarkerArray
 
@@ -44,6 +44,8 @@ from mdp_algorithm.planning.occupancy_map import (
     Obstacle, OccupancyMap,
 )
 from mdp_algorithm.control.pure_pursuit_follower import PurePursuitController, yaw_from_quaternion
+
+import task1_logic as logic   # sibling module in lib/mdp_bringup, see task1_logic.py
 
 # Task 1's physical camera is mounted facing the car's LEFT side, not
 # forward - confirmed by the user. Modeled in mini_akm_robot.urdf's
@@ -77,6 +79,10 @@ TASK1_CAMERA_THETA_OFFSET_RAD = math.pi / 2.0
 START_BOX_SIZE_CM = 40.0
 
 
+class _PlanCancelled(Exception):
+    """Raised inside the planner's progress callback to abort a stale search."""
+
+
 class State(Enum):
     WAITING_FOR_SETUP = auto()
     PLANNING_PATH = auto()
@@ -88,6 +94,9 @@ class State(Enum):
     NAVIGATING_TO_TARGET = auto()
     PAUSE_FOR_SCAN = auto()
     FINISHED = auto()
+    # Reached via /stop_run: everything halted, zeros held. /reset_run is the
+    # only way out (the plan itself is kept).
+    STOPPED = auto()
 
 
 class Task1Runner(Node):
@@ -115,6 +124,17 @@ class Task1Runner(Node):
         self.declare_parameter('start_x', 0.15)
         self.declare_parameter('start_y', 0.15)
         self.declare_parameter('start_yaw', math.pi / 2.0)
+        # 'At start' (the tablet's RESET indicator, and a precondition for
+        # /start_run) = odometry pose within these of the start pose.
+        self.declare_parameter('start_tolerance_m', 0.05)
+        self.declare_parameter('start_tolerance_deg', 10.0)
+        # robot_localization's set_pose topic (PoseWithCovarianceStamped in the
+        # EKF's world frame). /reset_run publishes an identity pose here, which
+        # puts the arena pose back at the start pose (map -> odom IS the start
+        # pose, see the launch files).
+        self.declare_parameter('ekf_set_pose_topic', '/set_pose')
+        self.declare_parameter('ekf_world_frame', 'odom')
+        self.declare_parameter('robot_pose_period_s', 0.2)
 
         # Publishers & Subscribers
         # /cmd_vel is the correct target: real.launch.py and sim.launch.py both
@@ -163,8 +183,16 @@ class Task1Runner(Node):
         # a search is running, nothing to catch up on for a late subscriber.
         self.search_progress_pub = self.create_publisher(MarkerArray, '/search_progress', 10)
 
+        self.set_pose_pub = self.create_publisher(
+            PoseWithCovarianceStamped, self.get_parameter('ekf_set_pose_topic').value, 10)
+        # Two inputs, one handler: '/obstacle_setup' = centres in metres (dev
+        # tools, sim); '/obstacle_cells' = integer grid cells 0..19 (the tablet,
+        # via bluetooth_bridge_node). See task1_logic.parse_setup.
         self.create_subscription(String, '/obstacle_setup', self.setup_callback, 10)
+        self.create_subscription(String, '/obstacle_cells', self.setup_cells_callback, 10)
         self.create_subscription(String, '/yolo_result', self.yolo_callback, 10)
+        # The STM32's motor switch (PD3), published by serial_bridge_node.
+        self.create_subscription(Bool, '/estop', self.estop_callback, 10)
         self.create_subscription(Odometry, '/odometry/filtered', self.odom_callback, 10)
 
         # `go` trigger: a service (not a topic) so the caller gets a clear
@@ -173,6 +201,12 @@ class Task1Runner(Node):
         # setup + planning); rejected with a reason otherwise.
         self.start_run_srv = self.create_service(
             Trigger, '/start_run', self.start_run_callback)
+        # `stop`: halt everything (follower, planning thread), hold zeros.
+        # `reset`: pose/odometry back to the start pose - nothing else.
+        self.stop_run_srv = self.create_service(
+            Trigger, '/stop_run', self.stop_run_callback)
+        self.reset_run_srv = self.create_service(
+            Trigger, '/reset_run', self.reset_run_callback)
 
         # TF buffer/listener - same pattern task2_runner uses. Needed because
         # /odometry/filtered reports in `odom` (the dead-reckoning frame, created
@@ -192,6 +226,7 @@ class Task1Runner(Node):
         self.state = State.WAITING_FOR_SETUP
 
         self.obstacles = []          # (x_m, y_m, facing) as received from /obstacle_setup
+        self.obstacle_ids = []       # the tablet's obstacle number for each entry of self.obstacles
         self.visiting_order = []     # obstacle indices, in visit order (mirrors old contract)
         # One entry per obstacle in visiting_order; None until
         # _plan_all_legs_worker (background thread, see below) fills it in -
@@ -210,6 +245,18 @@ class Task1Runner(Node):
         # self.leg_paths[idx] each tick and starts driving the moment it's
         # filled in - see NAVIGATING_TO_TARGET's handling below.
         self._planning_thread = None
+        # Bumped whenever a planning thread must stop (new setup, /stop_run);
+        # the thread compares against the value it started with.
+        self._plan_gen = 0
+        self.estop = False             # STM32 motor switch engaged (/estop)
+        self.planning_active = False   # a planning thread is (still) running
+        self.legs_done = False         # every leg planned -> the tablet's PLAN:DONE
+        self._last_robot_send = 0.0
+        self._finished_at = 0.0
+
+        # Tablet indicators are republished at 1Hz so a bridge started after
+        # this node (or a reconnecting tablet) catches up within a second.
+        self.create_timer(1.0, self._publish_indicators)
 
         self.detected_target_id = None
         self.state_start_time = self.get_now_sec()
@@ -308,20 +355,106 @@ class Task1Runner(Node):
         self.current_pose = (p.x, p.y, yaw)
         self.follower.update_pose(p.x, p.y, yaw)
 
-    def setup_callback(self, msg: String):
-        if self.state == State.WAITING_FOR_SETUP:
-            self.obstacles.clear()
-            raw_items = msg.data.strip().split('|')
-            for item in raw_items:
-                if ':' in item:
-                    obs_id, data = item.split(':')
-                    parts = data.split(',')
-                    x, y = float(parts[0]), float(parts[1])
-                    face = parts[2]
-                    self.obstacles.append((x, y, face))
+        # Pose for the tablet, all the time (also while idle, so the robot
+        # icon shows the start pose). Metres/degrees here; the Bluetooth
+        # bridge converts to the tablet's cell format.
+        now = self.get_now_sec()
+        if now - self._last_robot_send >= self.get_parameter('robot_pose_period_s').value:
+            self._last_robot_send = now
+            self.send_bt(f"ROBOT,{p.x:.3f},{p.y:.3f},{math.degrees(yaw):.1f}")
 
-            self.get_logger().info(f"Loaded {len(self.obstacles)} obstacles from setup!")
-            self.state = State.PLANNING_PATH
+    # ---- run-state helpers ------------------------------------------------
+    def _at_start(self) -> bool:
+        return logic.pose_at_start(
+            self.current_pose, self.get_start_pose(),
+            self.get_parameter('start_tolerance_m').value,
+            math.radians(self.get_parameter('start_tolerance_deg').value))
+
+    def _is_running(self) -> bool:
+        return self.state in (State.NAVIGATING_TO_TARGET, State.PAUSE_FOR_SCAN)
+
+    def _cancel_planning(self):
+        """Invalidate the current plan: tell any background planning thread to
+        stop at its next progress tick (it raises _PlanCancelled) and forget
+        its result. Used when the obstacle set changes."""
+        self._plan_gen += 1
+        self.planning_active = False
+        self.legs_done = False
+
+    def _stop_planning_thread(self):
+        """Stop a planning thread that is STILL RUNNING (stop / reset). A plan
+        that already finished (legs_done) is left alone - stop and reset keep
+        the plan, only new obstacles replace it."""
+        if self.planning_active:
+            self._plan_gen += 1
+            self.planning_active = False
+
+    def _halt_motion(self):
+        self.follower.set_path([])
+        self.send_cmd(0.0, 0.0)
+
+    def _target_obstacle_number(self):
+        """The tablet's own number of the obstacle currently being visited."""
+        if not self.visiting_order or self.current_target_idx >= len(self.visiting_order):
+            return None
+        idx = self.visiting_order[self.current_target_idx]
+        return self.obstacle_ids[idx] if idx < len(self.obstacle_ids) else idx + 1
+
+    def _publish_indicators(self):
+        target = self._target_obstacle_number() if self._is_running() else None
+        for line in logic.indicator_lines(
+                self.state.name, bool(self.obstacles), self.planning_active,
+                self.legs_done, self._at_start(), target, self.estop):
+            self.send_bt(line)
+
+    # ---- inputs ---------------------------------------------------------
+    def setup_callback(self, msg: String):
+        self._apply_setup(msg.data, cells=False)
+
+    def setup_cells_callback(self, msg: String):
+        self._apply_setup(msg.data, cells=True)
+
+    def _apply_setup(self, text: str, cells: bool):
+        """A new obstacle set. Accepted whenever the car is not mid-run; it
+        replaces the old set, drops the old plan and re-plans."""
+        if self._is_running():
+            self.get_logger().warn("Obstacle setup ignored: a run is in progress.")
+            return
+
+        items = logic.parse_setup(text, cells=cells)
+        if not items:
+            self.get_logger().warn(f"Obstacle setup ignored: nothing valid in {text!r}")
+            return
+
+        self._cancel_planning()
+        self.obstacle_ids = [oid for oid, _, _, _ in items]
+        self.obstacles = [(x, y, f) for _, x, y, f in items]
+        self.get_logger().info(f"Loaded {len(self.obstacles)} obstacles from setup!")
+        self.state = State.PLANNING_PATH
+        self.state_start_time = self.get_now_sec()
+        self._publish_indicators()
+
+    def estop_callback(self, msg: Bool):
+        """The motor switch. The firmware already refuses to drive while it is
+        engaged, so a run must not carry on regardless (the follower would keep
+        'driving' a car that isn't moving, then lurch when it is released):
+        engaging it mid-run aborts the run like /stop_run."""
+        engaged = bool(msg.data)
+        if engaged == self.estop:
+            return
+        self.estop = engaged
+        self.get_logger().warn(f"E-stop {'ENGAGED' if engaged else 'released'}")
+        if engaged and self._is_running():
+            self._abort_run()
+        self._publish_indicators()
+
+    def _abort_run(self):
+        """Stop everything and hold zeros until /reset_run (shared by
+        /stop_run and the e-stop)."""
+        self._stop_planning_thread()
+        self._halt_motion()
+        self.state = State.STOPPED
+        self.state_start_time = self.get_now_sec()
 
     def yolo_callback(self, msg: String):
         if self.state == State.PAUSE_FOR_SCAN and self.detected_target_id is None:
@@ -329,26 +462,80 @@ class Task1Runner(Node):
             self.get_logger().info(f"YOLO26 Identified Target: {self.detected_target_id}")
 
     def start_run_callback(self, request, response):
-        """`/start_run` service (the `go` trigger). Only starts the run if we
-        have finished planning and are holding in WAITING_FOR_GO; otherwise
-        rejects with a reason so the caller knows why nothing happened."""
-        if self.state == State.WAITING_FOR_GO:
+        """`/start_run` (the `go` trigger). Needs BOTH: the plan finished and
+        the car at the start pose - the tablet's PLAN and RESET indicators."""
+        if self._is_running():
+            response.success, response.message = False, f"Ignored: run already in progress ({self.state.name})."
+        elif self.state in (State.FINISHED, State.STOPPED):
+            response.success, response.message = False, "Not ready: run reset first."
+        elif self.estop:
+            response.success, response.message = False, "Not ready: e-stop engaged."
+        elif not self.obstacles:
+            response.success, response.message = False, "Not ready: no obstacle setup received yet."
+        elif not self.legs_done:
+            response.success, response.message = False, "Not ready: still planning the path."
+        elif not self.visiting_order:
+            response.success, response.message = False, "Not ready: no reachable obstacle to visit."
+        elif not self._at_start():
+            response.success, response.message = False, "Not ready: car not at the start pose - run reset."
+        else:
             self.state = State.NAVIGATING_TO_TARGET
             self.state_start_time = self.get_now_sec()
-            response.success = True
-            response.message = "Run started - navigating to targets."
+            self.current_target_idx = 0
+            self.follower.set_path([])
+            response.success, response.message = True, "Run started - navigating to targets."
             self.get_logger().info("Received `go` - starting navigation.")
-        elif self.state == State.WAITING_FOR_SETUP:
-            response.success = False
-            response.message = "Not ready: no obstacle setup received yet."
-        elif self.state == State.PLANNING_PATH:
-            response.success = False
-            response.message = "Not ready: still planning the path."
-        else:
-            response.success = False
-            response.message = f"Ignored: run already in progress ({self.state.name})."
         if not response.success:
             self.get_logger().warn(f"`go` rejected: {response.message}")
+        self._publish_indicators()
+        return response
+
+    def stop_run_callback(self, request, response):
+        """`/stop_run`: halt the follower and any planning, hold zeros. Only
+        /reset_run leaves STOPPED. A no-op (still success) when nothing runs."""
+        if self._is_running():
+            self._abort_run()
+            response.message = "Stopped."
+            self.get_logger().warn("`stop` received - run aborted.")
+        else:
+            self._halt_motion()
+            response.message = f"Not running ({self.state.name}); zeros sent."
+        response.success = True
+        self._publish_indicators()
+        return response
+
+    def reset_run_callback(self, request, response):
+        """`/reset_run`: pose/odometry back to the start pose, nothing else.
+        The obstacles and the plan are kept. An active run is aborted."""
+        self._stop_planning_thread()
+        self._halt_motion()
+
+        # Identity pose in the EKF's world frame == the start pose in the
+        # arena frame (map -> odom is the start pose).
+        pose = PoseWithCovarianceStamped()
+        pose.header.stamp = self.get_clock().now().to_msg()
+        pose.header.frame_id = self.get_parameter('ekf_world_frame').value
+        pose.pose.pose.orientation.w = 1.0
+        for i in (0, 7, 35):
+            pose.pose.covariance[i] = 1e-6
+        self.set_pose_pub.publish(pose)
+
+        self.current_target_idx = 0
+        self.detected_target_id = None
+        if self.state in (State.NAVIGATING_TO_TARGET, State.PAUSE_FOR_SCAN,
+                          State.FINISHED, State.STOPPED):
+            if not self.obstacles:
+                self.state = State.WAITING_FOR_SETUP
+            elif self.legs_done:
+                self.state = State.WAITING_FOR_GO
+            else:
+                self.state = State.PLANNING_PATH   # planning was cancelled: redo it
+            self.state_start_time = self.get_now_sec()
+
+        response.success = True
+        response.message = "Reset: pose and odometry set to the start pose."
+        self.get_logger().info(response.message)
+        self._publish_indicators()
         return response
 
     def send_cmd(self, linear_x: float, angular_z: float):
@@ -436,8 +623,11 @@ class Task1Runner(Node):
             # the car just isn't allowed to move until then.
             self.state = State.WAITING_FOR_GO
             self.state_start_time = now
+            self.planning_active = True
+            self.legs_done = False
             self.get_logger().info(
                 "Planning complete. Holding - waiting for `go` (/start_run service).")
+            self._publish_indicators()
 
             # Plans every leg back-to-back, in the background, starting NOW
             # - not gated on the robot physically reaching each checkpoint
@@ -446,17 +636,27 @@ class Task1Runner(Node):
             # every later leg just gets a head start instead of only
             # starting once the robot arrives at the checkpoint before it.
             self._planning_thread = threading.Thread(
-                target=self._plan_all_legs_worker, args=(start_pose,), daemon=True)
+                target=self._plan_all_legs_worker, args=(start_pose, self._plan_gen), daemon=True)
             self._planning_thread.start()
 
         # STATE 1b: Planning done, car held until `go` (see start_run_callback).
         elif self.state == State.WAITING_FOR_GO:
-            self.send_cmd(0.0, 0.0)
+            # Deliberately publishes nothing: an idle car needs no zeros (the
+            # last command already was one), and a zero every tick would
+            # override the tablet's manual-drive buttons.
+            pass
 
         # STATE 2: Navigating to current target standoff pose - now actually
         # tracks the Hybrid A*-planned path via PurePursuitController,
         # instead of blindly driving forward for a fixed 2.5s.
         elif self.state == State.NAVIGATING_TO_TARGET:
+            if self.current_target_idx >= len(self.visiting_order):
+                # Nothing (left) to visit - e.g. every obstacle was unreachable.
+                self.send_cmd(0.0, 0.0)
+                self.state = State.FINISHED
+                self._finished_at = now
+                self._publish_indicators()
+                return
             # Leg may still be mid-search in the background thread (see
             # _plan_all_legs_worker) - check every tick, not just once at
             # the state transition, so the robot starts driving the instant
@@ -479,8 +679,6 @@ class Task1Runner(Node):
                 self.get_logger().info(f"Arrived at Target Standoff {self.current_target_idx + 1}. Scanning...")
             else:
                 self.send_cmd(*cmd)
-                self.send_bt(f"ROBOT,{self.current_pose[0]:.2f},{self.current_pose[1]:.2f},"
-                             f"{math.degrees(self.current_pose[2]):.0f}")
 
         # STATE 3: Pause for YOLO26 scanning & Bluetooth update
         elif self.state == State.PAUSE_FOR_SCAN:
@@ -488,7 +686,7 @@ class Task1Runner(Node):
 
             if self.detected_target_id is not None or elapsed > 0.6:
                 target_id = self.detected_target_id if self.detected_target_id else "UNKNOWN"
-                obs_num = self.visiting_order[self.current_target_idx] + 1
+                obs_num = self._target_obstacle_number()
 
                 self.send_bt(f"TARGET,{obs_num},{target_id}")
                 self.get_logger().info(f"Updated Android Tablet: TARGET,{obs_num},{target_id}")
@@ -496,7 +694,9 @@ class Task1Runner(Node):
                 self.current_target_idx += 1
                 if self.current_target_idx >= len(self.visiting_order):
                     self.state = State.FINISHED
+                    self._finished_at = now
                     self.get_logger().info("All targets processed! Auto-stopping...")
+                    self._publish_indicators()
                 else:
                     self.state = State.NAVIGATING_TO_TARGET
                     self.state_start_time = now
@@ -508,6 +708,12 @@ class Task1Runner(Node):
 
         # STATE 4: Finished & Auto-Stopped
         elif self.state == State.FINISHED:
+            # Zeros for a second, then silence so manual drive works again.
+            if now - self._finished_at < 1.0:
+                self.send_cmd(0.0, 0.0)
+
+        # STATE 5: Stopped by /stop_run - zeros held until /reset_run.
+        elif self.state == State.STOPPED:
             self.send_cmd(0.0, 0.0)
 
     def _publish_occupancy_grid(self):
@@ -831,7 +1037,7 @@ class Task1Runner(Node):
         msg.points = [Point(x=float(x), y=float(y), z=0.02) for x, y in points_m]
         self.search_progress_pub.publish(MarkerArray(markers=[msg]))
 
-    def _plan_all_legs_worker(self, start_pose_m):
+    def _plan_all_legs_worker(self, start_pose_m, gen):
         """Runs in a background thread (see the PLANNING_PATH state above,
         which starts it right after plan_visiting_order() and does NOT wait
         for it). Plans every leg back-to-back, one after another, publishing
@@ -850,20 +1056,35 @@ class Task1Runner(Node):
         (.publish() is documented safe to call from any thread). Wrapped in
         try/except so a genuine crash mid-search logs an error instead of
         silently hanging the whole route forever with no explanation."""
+        def progress(points_m):
+            if gen != self._plan_gen:
+                raise _PlanCancelled()
+            self._publish_search_progress(points_m)
+
         try:
             leg_start_pose_m = start_pose_m
             for idx, target_pose_m in enumerate(self.checkpoints):
+                if gen != self._plan_gen:
+                    raise _PlanCancelled()
                 path = plan_leg(
                     self.occ_map, leg_start_pose_m, target_pose_m,
                     theta_offset=TASK1_CAMERA_THETA_OFFSET_RAD,
-                    progress_callback=self._publish_search_progress)
+                    progress_callback=progress)
+                if gen != self._plan_gen:
+                    raise _PlanCancelled()
                 self.leg_paths[idx] = path
                 status = f"{len(path)} points" if path else "NO PATH FOUND"
                 self.get_logger().info(f"Leg {idx + 1}/{len(self.checkpoints)} planned: {status}")
                 self._publish_planned_route()
                 leg_start_pose_m = target_pose_m
             self.get_logger().info("All legs planned.")
+            self.planning_active = False
+            self.legs_done = True
+        except _PlanCancelled:
+            self.get_logger().info("Leg planning cancelled (superseded or stopped).")
         except Exception:
+            if gen == self._plan_gen:
+                self.planning_active = False
             # rclpy's logger takes a plain string, not stdlib logging's
             # exc_info kwarg - format the traceback in manually.
             self.get_logger().error(f"Background leg-planning thread crashed:\n{traceback.format_exc()}")

@@ -153,6 +153,14 @@ def generate_launch_description():
         output='screen'
     )
 
+    # Android tablet link (RFCOMM) + the line protocol: obstacles, start/stop,
+    # manual drive, robot pose, status. Waits for the tablet by itself.
+    bluetooth_bridge = Node(
+        package='mdp_bridge',
+        executable='bluetooth_bridge_node',
+        output='screen'
+    )
+
     ekf_node = Node(
         package='robot_localization',
         executable='ekf_node',
@@ -241,6 +249,7 @@ def generate_launch_description():
         controller_manager,
         controller_spawner,
         serial_bridge,
+        bluetooth_bridge,
         ekf_node,
         map_to_odom,
         camera_node,

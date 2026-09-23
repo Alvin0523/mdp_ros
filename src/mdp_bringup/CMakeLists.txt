@@ -21,6 +21,7 @@ install(PROGRAMS
   # Not an entry point: a pure helper module the runners import as a sibling out
   # of lib/mdp_bringup, installed here so that import resolves at runtime.
   scripts/pose_transform.py
+  scripts/task1_logic.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
