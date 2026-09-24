@@ -41,6 +41,7 @@
 #include <vector>
 
 #include "rclcpp/rclcpp.hpp"
+#include "std_msgs/msg/bool.hpp"
 #include "std_msgs/msg/string.hpp"
 #include "std_srvs/srv/trigger.hpp"
 
@@ -129,6 +130,12 @@ public:
 
     setup_pub_ = create_publisher<std_msgs::msg::String>("/obstacle_setup", 10);
     manual_pub_ = create_publisher<std_msgs::msg::String>("/manual_drive", 10);
+    // Monitoring only - nothing consumes these. /bluetooth_rx is every line the
+    // tablet sent (raw, trimmed), the mirror of /bluetooth_tx; link_ok mirrors
+    // /hardware_bridge/link_ok for the tablet link.
+    rx_pub_ = create_publisher<std_msgs::msg::String>("/bluetooth_rx", 50);
+    link_pub_ = create_publisher<std_msgs::msg::Bool>("/bluetooth_bridge/link_ok", 10);
+    link_timer_ = create_wall_timer(std::chrono::seconds(1), [this]() {publishLink();});
     tx_sub_ = create_subscription<std_msgs::msg::String>(
       "/bluetooth_tx", 50,
       [this](const std_msgs::msg::String::SharedPtr msg) {onTx(msg->data);});
@@ -166,7 +173,18 @@ private:
     tx_buf_.clear();
     got_rx_since_open_ = false;
     RCLCPP_INFO(get_logger(), "link up on %s", device_.c_str());
+    publishLink();
     resendState();
+  }
+
+  /// True while the RFCOMM device is open with no read/write error since.
+  /// (The device can open a moment before the tablet's first line - see
+  /// handleLine - so this means "link up", not "tablet has spoken".)
+  void publishLink()
+  {
+    std_msgs::msg::Bool msg;
+    msg.data = (fd_ >= 0);
+    link_pub_->publish(msg);
   }
 
   void closeLink(const char * why)
@@ -175,6 +193,7 @@ private:
       ::close(fd_);
       fd_ = -1;
       RCLCPP_WARN(get_logger(), "link down (%s)", why);
+      publishLink();
     }
   }
 
@@ -289,6 +308,12 @@ private:
   {
     const std::string line = trim(raw);
     if (line.empty()) {return;}
+
+    {
+      std_msgs::msg::String rx;
+      rx.data = line;
+      rx_pub_->publish(rx);
+    }
 
     if (!got_rx_since_open_) {
       // The device can open before the tablet has actually connected, in which
@@ -414,6 +439,9 @@ private:
 
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr setup_pub_;
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr manual_pub_;
+  rclcpp::Publisher<std_msgs::msg::String>::SharedPtr rx_pub_;
+  rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr link_pub_;
+  rclcpp::TimerBase::SharedPtr link_timer_;
   rclcpp::Subscription<std_msgs::msg::String>::SharedPtr tx_sub_;
   rclcpp::Client<std_srvs::srv::Trigger>::SharedPtr start_client_;
   rclcpp::Client<std_srvs::srv::Trigger>::SharedPtr stop_client_;

@@ -48,7 +48,7 @@ Usage:
     ros2 run mdp_bringup drive_distance.py -1.0          # reverse
     ros2 run mdp_bringup drive_distance.py 2.0 --steer-deg -1.5   # trim test
 
-Requires the hardware bringup to be running (pixi run real1 / real2) and the
+Requires the hardware bringup to be running (pixi run drive, or pixi run real task:=1) and the
 motor switch to be on.
 """
 
