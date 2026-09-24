@@ -157,11 +157,7 @@ ODOM_FILTERED_PUBLISHERS = ('ekf_node', 'relay', 'topic_tools')
 # Launch-description introspection (no Gazebo, no ROS graph)
 # --------------------------------------------------------------------------
 
-def load_launch(name: str) -> LaunchDescription:
-    """Load a launch file from the SOURCE tree, without visiting it."""
-    from launch.launch_description_sources import get_launch_description_from_python_launch_file
-    return get_launch_description_from_python_launch_file(
-        str(PACKAGE_ROOT / 'launch' / name))
+from launch_introspection import HARDWARE_LAUNCH, SIM_LAUNCH, load_launch  # noqa: E402
 
 
 def launch_nodes(ld: LaunchDescription):
@@ -211,8 +207,9 @@ def first_leg_waypoint():
     test layout. Hybrid A* is the expensive call (a few seconds), so this runs
     once per module.
     """
-    cfg = yaml.safe_load((PACKAGE_ROOT / 'config' / 'test_obstacles.yaml').read_text())
-    obstacles_grid = [(o['x'] * 100.0, o['y'] * 100.0, o['facing']) for o in cfg['obstacles']]
+    import obstacle_layout
+    obstacles_grid = [(o.centre_m[0] * 100.0, o.centre_m[1] * 100.0, o.facing)
+                      for o in obstacle_layout.load(str(PACKAGE_ROOT / 'config' / 'test_obstacles.yaml'))]
 
     _order, checkpoints, _unreachable, occ_map = plan_visiting_order(
         obstacles_grid, REPORTED_START_POSE, theta_offset=CAMERA_THETA_OFFSET_RAD)
@@ -311,7 +308,7 @@ def test_sim_launch_publishes_odometry_filtered():
 
     EXPECTED FAILURE: zero publishers, so `odom_callback` never fires.
     """
-    ld = load_launch('task1_sim.launch.py')
+    ld = load_launch(SIM_LAUNCH)
     publishers = odometry_filtered_publishers(ld)
     executables = sorted(node_executable(n) for n in launch_nodes(ld))
     assert publishers, (
@@ -326,7 +323,7 @@ def test_hardware_launch_publishes_odometry_filtered():
     Pins that the sim/hardware graphs disagree, which is the actual defect - not
     that `/odometry/filtered` is unused everywhere.
     """
-    ld = load_launch('real.launch.py')
+    ld = load_launch(HARDWARE_LAUNCH)
     assert 'ekf_node' in odometry_filtered_publishers(ld)
 
 
@@ -339,7 +336,7 @@ def test_runner_pose_is_not_pinned_to_its_constructor_default():
     default_pose = runner_constructor_default_pose()
     assert default_pose is not None, 'could not find self.current_pose in Task1Runner.__init__'
 
-    sim_has_odom = bool(odometry_filtered_publishers(load_launch('task1_sim.launch.py')))
+    sim_has_odom = bool(odometry_filtered_publishers(load_launch(SIM_LAUNCH)))
     assert sim_has_odom, (
         f'task1_runner.current_pose stays at its constructor default {default_pose} '
         'for the whole sim run: /odometry/filtered has no publisher, so odom_callback '
@@ -466,7 +463,7 @@ def test_relay_stopgap_is_not_in_the_launch_graph():
     replaces it with `ekf_node` + `ekf_sim.yaml`. This fails if someone ships the
     stopgap.
     """
-    ld = load_launch('task1_sim.launch.py')
+    ld = load_launch(SIM_LAUNCH)
     relays = [node_executable(n) for n in launch_nodes(ld)
               if node_executable(n) in ('relay', 'topic_tools')]
     assert not relays, f'relay stopgap shipped in task1_sim.launch.py: {relays}'

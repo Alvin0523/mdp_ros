@@ -1,101 +1,68 @@
 #!/usr/bin/env python3
 """
-One-shot test-obstacle publisher for task1_runner.py's /obstacle_setup.
+One-shot obstacle-setup publisher for task1_runner.py's /obstacle_setup
+(`pixi run setup`).
 
-In the real competition, obstacle positions/facings come from the Android
-tablet over Bluetooth (see docs/rpi/algorithm.md / assessment_checklist.md's
-"Preparation" step - the tablet receives them from the supervisor and
-forwards to the RPi). During development, there's no tablet in the loop -
-this reads a small YAML file instead and publishes it in the exact
-pipe-delimited format task1_runner.py's setup_callback() parses
-("id:x,y,facing|id:x,y,facing|..."), so the rest of the pipeline (planner,
-visualization) can be exercised without waiting on the Bluetooth/tablet
-integration to exist.
+Reads a layout YAML in tablet cells (config/test_obstacles.yaml by default, see
+obstacle_layout.py) and publishes exactly the message bluetooth_bridge_node
+would publish after the tablet sent that set and DONE - cell centres, metres.
+Useful on the real robot without the tablet; the sim instead runs
+fake_tablet.py, which goes through the bridge like the real tablet does.
 
-Publishes repeatedly for a few seconds (not a durable/transient-local
-publish) since /obstacle_setup's subscriber uses default (volatile) QoS -
-a single publish immediately at node startup could race ahead of
-task1_runner's subscription being established, especially if both are
-launched together.
+Publishes exactly ONCE, like the bridge on DONE - task1_runner treats every
+message as a new set and replans, so repeated publishes would restart planning
+each time. /obstacle_setup's subscriber is volatile QoS, so a publish before
+task1_runner has subscribed would be lost; the node waits for a subscriber
+first (up to WAIT_FOR_SUBSCRIBER_S).
 """
-import math
 import sys
 
 import rclpy
-import yaml
 from ament_index_python.packages import get_package_share_directory
 from rclpy.node import Node
 from std_msgs.msg import String
 
+import obstacle_layout
+
+WAIT_FOR_SUBSCRIBER_S = 60.0
 DEFAULT_CONFIG = f"{get_package_share_directory('mdp_bringup')}/config/test_obstacles.yaml"
-
-
-CELL_M = 0.10   # arena grid: 20 x 20 cells of 10 cm, cell (0, 0) at the bottom-left
-
-
-def cell_to_centre_m(cell: int) -> float:
-    """Centre of a 10 cm cell in metres: cell (3) -> 0.35."""
-    return round((int(cell) + 0.5) * CELL_M, 4)
-
-
-def describe_obstacles(obstacles: list) -> str:
-    """Human-readable log line in grid cells: '#1 (5,10) S | #2 (12,4) W'."""
-    parts = []
-    for obs in obstacles:
-        if 'cell_x' in obs and 'cell_y' in obs:
-            cx, cy = int(obs['cell_x']), int(obs['cell_y'])
-        else:
-            cx = int(math.floor(obs['x'] / CELL_M + 1e-6))
-            cy = int(math.floor(obs['y'] / CELL_M + 1e-6))
-        parts.append(f"#{obs['id']} ({cx},{cy}) {obs['facing']}")
-    return ' | '.join(parts)
-
-
-def format_obstacle_setup(obstacles: list) -> str:
-    """obstacles: list of {id, cell_x, cell_y, facing} dicts (from YAML) -> the
-    pipe-delimited wire format task1_runner.setup_callback() expects, with the
-    obstacle CENTRE in metres. Entries may still give metres as x/y instead."""
-    items = []
-    for obs in obstacles:
-        if 'cell_x' in obs and 'cell_y' in obs:
-            x, y = cell_to_centre_m(obs['cell_x']), cell_to_centre_m(obs['cell_y'])
-        else:
-            x, y = obs['x'], obs['y']
-        items.append(f"{obs['id']}:{x},{y},{obs['facing']}")
-    return '|'.join(items)
 
 
 class TestObstaclePublisher(Node):
     def __init__(self, config_path: str):
         super().__init__('publish_test_obstacles')
 
-        with open(config_path) as f:
-            data = yaml.safe_load(f)
-        obstacles = data.get('obstacles', [])
+        obstacles = obstacle_layout.load(config_path)
         if not obstacles:
             self.get_logger().warn(f"No obstacles found in {config_path} - nothing to publish.")
 
-        self.message = format_obstacle_setup(obstacles)
+        self.message = obstacle_layout.setup_string(obstacles)
         self.get_logger().info(f"Loaded {len(obstacles)} obstacles from {config_path}")
-        self.get_logger().info(f"Publishing (cell x,y, facing): {describe_obstacles(obstacles)}")
+        self.get_logger().info(f"Publishing (cell x,y, facing): {obstacle_layout.describe(obstacles)}")
 
         self.pub = self.create_publisher(String, '/obstacle_setup', 10)
-        self.publish_count = 0
-        # Every 0.5s for 5s (10 publishes) - task1_runner only ever acts on
-        # the first one it receives (setup_callback() checks
-        # State.WAITING_FOR_SETUP), so republishing is harmless, just a
-        # safety margin against the subscription not being up yet.
-        self.timer = self.create_timer(0.5, self.publish_once)
+        self.waited = 0.0
+        self.seen_subscriber = False
+        self.timer = self.create_timer(0.5, self.publish_when_subscribed)
 
-    def publish_once(self):
+    def publish_when_subscribed(self):
+        if self.pub.get_subscription_count() > 0:
+            # Discovery can report the subscriber a moment before its
+            # connection is ready to receive; give it one tick of grace.
+            if not self.seen_subscriber:
+                self.seen_subscriber = True
+                return
+        else:
+            self.waited += 0.5
+            if self.waited < WAIT_FOR_SUBSCRIBER_S:
+                return
+            self.get_logger().warn("No /obstacle_setup subscriber yet - publishing anyway.")
         msg = String()
         msg.data = self.message
         self.pub.publish(msg)
-        self.publish_count += 1
-        if self.publish_count >= 10:
-            self.get_logger().info("Done publishing test obstacles.")
-            self.timer.cancel()
-            rclpy.shutdown()
+        self.get_logger().info("Published test obstacles once.")
+        self.timer.cancel()
+        rclpy.shutdown()
 
 
 def main(args=None):

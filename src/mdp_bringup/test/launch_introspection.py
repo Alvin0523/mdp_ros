@@ -44,10 +44,29 @@ ARENA_SIZE_M = 2.0
 # Launch-description introspection
 # --------------------------------------------------------------------------
 
+# mdp.launch.py is the one bringup; these name its two Task 1 graphs.
+SIM_LAUNCH = 'mdp.launch.py sim:=true task:=1'
+HARDWARE_LAUNCH = 'mdp.launch.py sim:=false task:=1'
+
+
+def launch_file(name: str) -> Path:
+    """Source path of a `load_launch` name (`<file> [arg:=value ...]`)."""
+    return LAUNCH_DIR / name.split()[0]
+
+
 def load_launch(name: str) -> LaunchDescription:
-    """Build a launch description from the source tree without visiting it."""
-    from launch.launch_description_sources import get_launch_description_from_python_launch_file
-    return get_launch_description_from_python_launch_file(str(LAUNCH_DIR / name))
+    """Build a launch description from the source tree without visiting it.
+
+    `name` is the launch file plus any `arg:=value` launch arguments, e.g.
+    SIM_LAUNCH. mdp.launch.py resolves its arguments at build time, so they are
+    handed straight to its generate_launch_description().
+    """
+    import importlib.util
+    path = launch_file(name)
+    spec = importlib.util.spec_from_file_location(f'launch_under_test_{path.stem}', path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.generate_launch_description(name.split()[1:])
 
 
 def launch_nodes(ld: LaunchDescription):

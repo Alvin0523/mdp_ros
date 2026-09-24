@@ -22,7 +22,7 @@ ekf_filter_node:
     # --- Frames ---
     map_frame: map              # unused - no absolute localization source (GPS/AMCL) yet
     odom_frame: odom
-    base_link_frame: base_link
+    base_link_frame: base_footprint   # URDF root on both real and sim
     world_frame: odom           # single EKF instance operating in odom frame (no map-fusion stage)
 
     use_sim_time: false

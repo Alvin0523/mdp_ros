@@ -11,22 +11,28 @@ build = { cmd = "colcon build --symlink-install", description = "Build all packa
 test = { cmd = "colcon test", description = "Run the package tests" }
 clean = { cmd = "rm -rf build install log", description = "Delete build, install and log folders" }
 
-# --- Real robot bringup (RPi + STM32) ----------------------------------------
-# ONE launch, all options are launch arguments:
+# --- Robot bringup: ONE launch for real and sim (launch/mdp.launch.py) --------
+# All options are launch arguments, appended to any of these:
 #   pixi run real                                bare car: no task runner, no camera
 #   pixi run real task:=1                        task 1 runner (tablet, planning, status)
 #   pixi run real task:=2 vision:=true           task 2 runner + camera and YOLO
-#   pixi run real task:=1 vision:=true start_x:=0.15 start_y:=0.15 start_yaw:=1.5708
-#   also: serial_port:=/dev/ttyACM0  bluetooth_device:=/dev/rfcomm0
-real = { cmd = "ros2 launch mdp_bringup real.launch.py serial_port:=/dev/ttyACM0", description = "Real robot bringup. Args: task:=0|1|2 vision:=true|false start_x start_y start_yaw serial_port bluetooth_device" }
-drive = { cmd = "ros2 launch mdp_bringup real.launch.py serial_port:=/dev/ttyACM0 task:=0 vision:=false", description = "Alias: bare car (no runner, no camera) for motion tests" }
+#   pixi run sim task:=1                         the same in Gazebo (laptop)
+#   pixi run sim task:=1 obstacles:=tablet       Gazebo + the real tablet over Bluetooth
+#   obstacles:=tablet|yaml  layout:=<cells.yaml>  gui:=false (sim)
+#   start_x start_y start_yaw  serial_port:=/dev/ttyACM0  bluetooth_device:=/dev/rfcomm0
+real = { cmd = "ros2 launch mdp_bringup mdp.launch.py sim:=false serial_port:=/dev/ttyACM0", description = "Real robot bringup. Args: task:=0|1|2 vision:=true|false obstacles:=tablet|yaml start_x start_y start_yaw serial_port bluetooth_device" }
+drive = { cmd = "ros2 launch mdp_bringup mdp.launch.py sim:=false serial_port:=/dev/ttyACM0 task:=0 vision:=false", description = "Alias: bare car (no runner, no camera) for motion tests" }
+sim = { cmd = "ros2 launch mdp_bringup mdp.launch.py sim:=true", description = "Gazebo bringup, same args as real (+ gui:=false)" }
+sim1 = { cmd = "ros2 launch mdp_bringup mdp.launch.py sim:=true task:=1", description = "Alias: Gazebo task 1" }
+sim2 = { cmd = "ros2 launch mdp_bringup mdp.launch.py sim:=true task:=2", description = "Alias: Gazebo task 2" }
 vision = { cmd = "ros2 launch mdp_vision vision.launch.py", description = "Camera and YOLO only, no robot" }
 
-# --- Run control (reset works on any bringup; setup/go/stop need task:=1) ------
+# --- Run control (same for real and sim; reset works on any bringup; setup/go/stop need task:=1)
 setup = { cmd = "ros2 run mdp_bringup publish_test_obstacles.py", description = "Publish the test obstacle set (cells, from test_obstacles.yaml)" }
 reset = { cmd = "ros2 run mdp_bringup trigger.py /reset_pose", description = "Reset the EKF pose to the start pose (base bringup, any task)" }
 go = { cmd = "ros2 run mdp_bringup trigger.py /start_run", description = "Start the planned run (like the tablet's BEGIN)" }
 stop = { cmd = "ros2 run mdp_bringup trigger.py /stop_run", description = "Stop the run and hold zero velocity" }
+guard = { cmd = "ros2 run mdp_bringup grid_guard.py", description = "TEMP: stop when off the 20x20 tablet grid" }
 
 target = { cmd = "ros2 run mdp_bringup send_target.py", description = "Debug: send TARGET,<obstacle>,<id> to the tablet: target 2 20" }
 
@@ -41,10 +47,7 @@ foxglove = { cmd = "ros2 launch foxglove_bridge foxglove_bridge_launch.xml", des
 bag = { cmd = "ros2 bag record -x '/image_raw.*|/yolo_result/image_annotated' -o bags/rosbag2_$(date +%Y%m%d_%H%M%S) -a", description = "Record all topics except camera images" }
 bag-all = { cmd = "ros2 bag record -a -o bags/rosbag2_$(date +%Y%m%d_%H%M%S)", description = "Record everything, including camera images (large)" }
 
-# --- Simulation (laptop only) and assets -------------------------------------
-sim = { cmd = "ros2 launch mdp_bringup sim.launch.py", description = "Gazebo sim: bare" }
-sim1 = { cmd = "ros2 launch mdp_bringup task1_sim.launch.py", description = "Gazebo sim: task 1" }
-sim2 = { cmd = "ros2 launch mdp_bringup task2_sim.launch.py", description = "Gazebo sim: task 2" }
+# --- Sim assets ---------------------------------------------------------------
 panels = { cmd = "python src/mdp_description/scripts/gen_symbol_meshes.py", description = "Generate the symbol panel meshes" }
 import-symbols = { cmd = "python src/mdp_description/scripts/import_symbol_textures.py", description = "Import the symbol textures" }
 
@@ -79,6 +82,7 @@ colcon-common-extensions = "*"
 compilers = "*"
 cmake = "*"
 ninja = "*"
+hypothesis = ">=6.168.1,<7"
 
 [pypi-dependencies]
 ultralytics = "*"

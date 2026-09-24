@@ -48,6 +48,5 @@ def test_source_tree_fixtures_resolve(package_root, scripts_dir):
 
 def test_launch_and_config_assets_exist(package_root):
     """The launch files and config the frame fix will touch are present."""
-    assert (package_root / 'launch' / 'task1_sim.launch.py').is_file()
-    assert (package_root / 'launch' / 'real.launch.py').is_file()
+    assert (package_root / 'launch' / 'mdp.launch.py').is_file()
     assert (package_root / 'config' / 'ekf.yaml').is_file()

@@ -158,59 +158,6 @@
       xyz="0 1 0" />
   </joint>
   <link
-    name="front_link">
-    <inertial>
-      <origin
-        xyz="2.47652365809037E-07 -2.27629542054232E-09 2.42861286636753E-17"
-        rpy="0 0 0" />
-      <mass
-        value="0.115265613771811" />
-      <inertia
-        ixx="0.000198380666923192"
-        ixy="-2.44845696267185E-12"
-        ixz="-4.08963450598172E-21"
-        iyy="2.73732443212511E-05"
-        iyz="-3.60301679893399E-20"
-        izz="0.000218069536992989" />
-    </inertial>
-    <visual>
-      <origin
-        xyz="0 0 0"
-        rpy="0 0 0" />
-      <geometry>
-        <mesh
-          filename="package://mdp_description/meshes/mini_akm_robot_meshes/front_link.STL" />
-      </geometry>
-      <material
-        name="">
-        <color
-          rgba="0.349019607843137 0.349019607843137 0.349019607843137 1" />
-      </material>
-    </visual>
-    <collision>
-      <origin
-        xyz="0 0 0"
-        rpy="0 0 0" />
-      <geometry>
-        <mesh
-          filename="package://mdp_description/meshes/mini_akm_robot_meshes/front_link.STL" />
-      </geometry>
-    </collision>
-  </link>
-  <joint
-    name="front_joint"
-    type="fixed">
-    <origin
-      xyz="0.14383 -1.2575E-05 0.01"
-      rpy="0 0 0" />
-    <parent
-      link="base_link" />
-    <child
-      link="front_link" />
-    <axis
-      xyz="0 0 0" />
-  </joint>
-  <link
     name="controller_link">
     <inertial>
       <origin
@@ -313,17 +260,16 @@
          (see TASK1_CAMERA_THETA_OFFSET_RAD in task1_runner.py for the
          planner-side half); Task 2 and bare sim keep it forward, matching
          real hardware's default mount. One shared URDF can't hardcode both,
-         since all three sim launches load this same file.
+         since every sim run loads this same file.
 
-         task1_sim.launch.py substitutes +pi/2 for "left" (REP-103: positive
+         mdp.launch.py (sim:=true) substitutes +pi/2 for task:=1 for "left" (REP-103: positive
          yaw = left). The <camera> sensor's boresight is always local +X of
          its own pose regardless of camera_link's decorative visual mesh, so
          judge this against actual /camera/image_raw content, not the mesh
          or a TF axis gizmo (camera frames conventionally use
          Z-forward/X-right/Y-down optical convention, not REP-103 body
          convention - a gizmo arrow "pointing right" is not necessarily
-         wrong). See task1_sim.launch.py's substitution comment for the
-         2026-09-17 back-and-forth on this sign - it's settled on +pi/2. -->
+         wrong). The 2026-09-17 back-and-forth on this sign settled on +pi/2. -->
     <origin
       xyz="0.11365 0.00016542 0.076204"
       rpy="0 0 CAMERA_YAW_RAD" />

@@ -964,7 +964,12 @@ class Task1Runner(Node):
         if not self.obstacles:
             return
 
-        marker_array = MarkerArray()
+        # DELETEALL first: a new tablet set can have fewer obstacles than the
+        # last one, and TRANSIENT_LOCAL keeps only this array, so stale ids
+        # would otherwise linger in Foxglove.
+        clear = Marker()
+        clear.action = Marker.DELETEALL
+        marker_array = MarkerArray(markers=[clear])
         header_stamp = self.get_clock().now().to_msg()
         obstacle_c = self.get_parameter('obstacle_color').value
         label_c = self.get_parameter('obstacle_label_color').value
