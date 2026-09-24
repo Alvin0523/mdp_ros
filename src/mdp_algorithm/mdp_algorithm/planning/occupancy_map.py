@@ -164,7 +164,11 @@ class OccupancyMap:
                     cell_x, cell_y = grid_to_coords(i, j)
                     cell_cx = cell_x + CELL_SIZE_CM / 2.0
                     cell_cy = cell_y + CELL_SIZE_CM / 2.0
-                    if (cell_cx - obstacle.x_cm) ** 2 + (cell_cy - obstacle.y_cm) ** 2 <= r ** 2:
+                    # + 1e-6 tolerance: obstacle coordinates arrive as metres*100
+                    # (0.55*100 = 55.00000000000001), so a cell EXACTLY on the
+                    # radius (a cell centre 20 cm away at a cell-centred obstacle)
+                    # was included on one side and dropped on the other.
+                    if (cell_cx - obstacle.x_cm) ** 2 + (cell_cy - obstacle.y_cm) ** 2 <= r ** 2 + 1e-6:
                         self.occupancy_grid[i, j] = 1
 
     def collide_with_point(self, x: float, y: float) -> bool:

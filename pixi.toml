@@ -6,35 +6,47 @@ platforms = ["linux-64", "linux-aarch64", "osx-arm64"]
 version = "0.1.0"
 
 [tasks]
-# Workspace lifecycle
-build = "colcon build --symlink-install"
-test = "colcon test"
-clean = "rm -rf build install log"
+# --- Workspace ---------------------------------------------------------------
+build = { cmd = "colcon build --symlink-install", description = "Build all packages" }
+test = { cmd = "colcon test", description = "Run the package tests" }
+clean = { cmd = "rm -rf build install log", description = "Delete build, install and log folders" }
 
-# Real Hardware (RPi + STM32)
-real1 = "ros2 launch mdp_bringup real.launch.py serial_port:=/dev/ttyACM0 task:=1"
-real2 = "ros2 launch mdp_bringup real.launch.py serial_port:=/dev/ttyACM0 task:=2"
-drive = "ros2 launch mdp_bringup real.launch.py serial_port:=/dev/ttyACM0 task:=1 vision:=false"
-setup = "ros2 run mdp_bringup publish_test_obstacles.py"
-go = "ros2 run mdp_bringup go.py"
-stop = "ros2 run mdp_bringup trigger.py /stop_run"
-reset = "ros2 run mdp_bringup trigger.py /reset_run"
-dist = "ros2 run mdp_bringup drive_distance.py"
-rotate = "ros2 run mdp_bringup rotate_angle.py"
-circle = "ros2 run mdp_bringup circle_obstacle.py"
-teleop = "ros2 run teleop_twist_keyboard teleop_twist_keyboard --ros-args -p stamped:=true"
-vision = "ros2 launch mdp_vision vision.launch.py"
+# --- Real robot bringup (RPi + STM32) ----------------------------------------
+# ONE launch, all options are launch arguments:
+#   pixi run real                                bare car: no task runner, no camera
+#   pixi run real task:=1                        task 1 runner (tablet, planning, status)
+#   pixi run real task:=2 vision:=true           task 2 runner + camera and YOLO
+#   pixi run real task:=1 vision:=true start_x:=0.15 start_y:=0.15 start_yaw:=1.5708
+#   also: serial_port:=/dev/ttyACM0  bluetooth_device:=/dev/rfcomm0
+real = { cmd = "ros2 launch mdp_bringup real.launch.py serial_port:=/dev/ttyACM0", description = "Real robot bringup. Args: task:=0|1|2 vision:=true|false start_x start_y start_yaw serial_port bluetooth_device" }
+drive = { cmd = "ros2 launch mdp_bringup real.launch.py serial_port:=/dev/ttyACM0 task:=0 vision:=false", description = "Alias: bare car (no runner, no camera) for motion tests" }
+vision = { cmd = "ros2 launch mdp_vision vision.launch.py", description = "Camera and YOLO only, no robot" }
 
-# Simulation (Laptop only)
-sim = "ros2 launch mdp_bringup sim.launch.py"
-sim1 = "ros2 launch mdp_bringup task1_sim.launch.py"
-sim2 = "ros2 launch mdp_bringup task2_sim.launch.py"
-panels = "python src/mdp_description/scripts/gen_symbol_meshes.py"
-import-symbols = "python src/mdp_description/scripts/import_symbol_textures.py"
+# --- Run control (reset works on any bringup; setup/go/stop need task:=1) ------
+setup = { cmd = "ros2 run mdp_bringup publish_test_obstacles.py", description = "Publish the test obstacle set (cells, from test_obstacles.yaml)" }
+reset = { cmd = "ros2 run mdp_bringup trigger.py /reset_pose", description = "Reset the EKF pose to the start pose (base bringup, any task)" }
+go = { cmd = "ros2 run mdp_bringup trigger.py /start_run", description = "Start the planned run (like the tablet's BEGIN)" }
+stop = { cmd = "ros2 run mdp_bringup trigger.py /stop_run", description = "Stop the run and hold zero velocity" }
 
-# Telemetry & Recording
-foxglove = "ros2 launch foxglove_bridge foxglove_bridge_launch.xml"
-bag = "ros2 bag record -a -o bags/rosbag2_$(date +%Y%m%d_%H%M%S)"
+target = { cmd = "ros2 run mdp_bringup send_target.py", description = "Debug: send TARGET,<obstacle>,<id> to the tablet: target 2 20" }
+
+# --- Motion tests (bare car: pixi run drive) ---------------------------------
+dist = { cmd = "ros2 run mdp_bringup drive_distance.py", description = "Drive a straight distance: dist <m> [--speed m/s] [--steer-deg deg]" }
+rotate = { cmd = "ros2 run mdp_bringup rotate_angle.py", description = "Turn by an angle: rotate <deg> [--direction left|right]" }
+circle = { cmd = "ros2 run mdp_bringup circle_obstacle.py", description = "Approach an obstacle and go around it: circle [--right-only|--full]" }
+teleop = { cmd = "ros2 run teleop_twist_keyboard teleop_twist_keyboard --ros-args -p stamped:=true", description = "Keyboard driving" }
+
+# --- Viewing and recording ---------------------------------------------------
+foxglove = { cmd = "ros2 launch foxglove_bridge foxglove_bridge_launch.xml", description = "Foxglove bridge (ws://<pi>:8765, display frame: map)" }
+bag = { cmd = "ros2 bag record -x '/image_raw.*|/yolo_result/image_annotated' -o bags/rosbag2_$(date +%Y%m%d_%H%M%S) -a", description = "Record all topics except camera images" }
+bag-all = { cmd = "ros2 bag record -a -o bags/rosbag2_$(date +%Y%m%d_%H%M%S)", description = "Record everything, including camera images (large)" }
+
+# --- Simulation (laptop only) and assets -------------------------------------
+sim = { cmd = "ros2 launch mdp_bringup sim.launch.py", description = "Gazebo sim: bare" }
+sim1 = { cmd = "ros2 launch mdp_bringup task1_sim.launch.py", description = "Gazebo sim: task 1" }
+sim2 = { cmd = "ros2 launch mdp_bringup task2_sim.launch.py", description = "Gazebo sim: task 2" }
+panels = { cmd = "python src/mdp_description/scripts/gen_symbol_meshes.py", description = "Generate the symbol panel meshes" }
+import-symbols = { cmd = "python src/mdp_description/scripts/import_symbol_textures.py", description = "Import the symbol textures" }
 
 [dependencies]
 # Core ROS2 & Control

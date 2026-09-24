@@ -12,11 +12,14 @@ install(PROGRAMS
   scripts/task1_runner.py
   scripts/task2_runner.py
   scripts/publish_test_obstacles.py
-  scripts/go.py
   scripts/trigger.py
   scripts/drive_distance.py
   scripts/rotate_angle.py
   scripts/circle_obstacle.py
+  scripts/bt_monitor.py
+  scripts/manual_drive.py
+  scripts/send_target.py
+  scripts/robot_pose_feedback.py
   # generate_arena_world.py removed 2026-09-11 - obstacles now live directly in
   # mdp_description/worlds/task1_arena.sdf, which the sim launches load as-is.
   # Not an entry point: a pure helper module the runners import as a sibling out

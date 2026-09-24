@@ -62,6 +62,7 @@ public:
     battery_pub_ = create_publisher<sensor_msgs::msg::BatteryState>("/battery_state", 10);
     ultrasonic_pub_ = create_publisher<sensor_msgs::msg::Range>("/ultrasonic", 10);
     ir_pub_ = create_publisher<sensor_msgs::msg::Range>("/ir", 10);
+    ir2_pub_ = create_publisher<sensor_msgs::msg::Range>("/ir2", 10);
     steering_pwm_pub_ = create_publisher<std_msgs::msg::UInt16>(
       "/hardware_bridge/steering_pwm_us", 10);
 
@@ -444,6 +445,11 @@ private:
     ir_range.range = pkt.ir_distance_cm / 100.0f;
     ir_pub_->publish(ir_range);
 
+    /* Second IR sensor (PC1/ADC1_CH11) - same spec and simplifications as the first. */
+    sensor_msgs::msg::Range ir2_range = ir_range;
+    ir2_range.range = pkt.ir2_distance_cm / 100.0f;
+    ir2_pub_->publish(ir2_range);
+
     std_msgs::msg::UInt16 pwm_msg;
     pwm_msg.data = pkt.servo_pwm_us;
     steering_pwm_pub_->publish(pwm_msg);
@@ -460,6 +466,7 @@ private:
   rclcpp::Publisher<sensor_msgs::msg::BatteryState>::SharedPtr battery_pub_;
   rclcpp::Publisher<sensor_msgs::msg::Range>::SharedPtr ultrasonic_pub_;
   rclcpp::Publisher<sensor_msgs::msg::Range>::SharedPtr ir_pub_;
+  rclcpp::Publisher<sensor_msgs::msg::Range>::SharedPtr ir2_pub_;
   rclcpp::Publisher<std_msgs::msg::UInt16>::SharedPtr steering_pwm_pub_;
   rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr joint_command_sub_;
   rclcpp::TimerBase::SharedPtr link_watchdog_timer_;

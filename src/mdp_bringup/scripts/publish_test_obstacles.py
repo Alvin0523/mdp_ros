@@ -18,6 +18,7 @@ a single publish immediately at node startup could race ahead of
 task1_runner's subscription being established, especially if both are
 launched together.
 """
+import math
 import sys
 
 import rclpy
@@ -29,12 +30,38 @@ from std_msgs.msg import String
 DEFAULT_CONFIG = f"{get_package_share_directory('mdp_bringup')}/config/test_obstacles.yaml"
 
 
+CELL_M = 0.10   # arena grid: 20 x 20 cells of 10 cm, cell (0, 0) at the bottom-left
+
+
+def cell_to_centre_m(cell: int) -> float:
+    """Centre of a 10 cm cell in metres: cell (3) -> 0.35."""
+    return round((int(cell) + 0.5) * CELL_M, 4)
+
+
+def describe_obstacles(obstacles: list) -> str:
+    """Human-readable log line in grid cells: '#1 (5,10) S | #2 (12,4) W'."""
+    parts = []
+    for obs in obstacles:
+        if 'cell_x' in obs and 'cell_y' in obs:
+            cx, cy = int(obs['cell_x']), int(obs['cell_y'])
+        else:
+            cx = int(math.floor(obs['x'] / CELL_M + 1e-6))
+            cy = int(math.floor(obs['y'] / CELL_M + 1e-6))
+        parts.append(f"#{obs['id']} ({cx},{cy}) {obs['facing']}")
+    return ' | '.join(parts)
+
+
 def format_obstacle_setup(obstacles: list) -> str:
-    """obstacles: list of {id, x, y, facing} dicts (from YAML) -> the
-    pipe-delimited wire format task1_runner.setup_callback() expects."""
+    """obstacles: list of {id, cell_x, cell_y, facing} dicts (from YAML) -> the
+    pipe-delimited wire format task1_runner.setup_callback() expects, with the
+    obstacle CENTRE in metres. Entries may still give metres as x/y instead."""
     items = []
     for obs in obstacles:
-        items.append(f"{obs['id']}:{obs['x']},{obs['y']},{obs['facing']}")
+        if 'cell_x' in obs and 'cell_y' in obs:
+            x, y = cell_to_centre_m(obs['cell_x']), cell_to_centre_m(obs['cell_y'])
+        else:
+            x, y = obs['x'], obs['y']
+        items.append(f"{obs['id']}:{x},{y},{obs['facing']}")
     return '|'.join(items)
 
 
@@ -50,7 +77,7 @@ class TestObstaclePublisher(Node):
 
         self.message = format_obstacle_setup(obstacles)
         self.get_logger().info(f"Loaded {len(obstacles)} obstacles from {config_path}")
-        self.get_logger().info(f"Publishing: {self.message}")
+        self.get_logger().info(f"Publishing (cell x,y, facing): {describe_obstacles(obstacles)}")
 
         self.pub = self.create_publisher(String, '/obstacle_setup', 10)
         self.publish_count = 0

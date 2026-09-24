@@ -69,12 +69,10 @@ def generate_launch_description():
 
     vision_arg = DeclareLaunchArgument(
         'vision',
-        default_value='true',
-        description='Bring up camera_node + yolo_detector. Set false for '
-                     'sessions that only need drive/steer/telemetry (e.g. '
-                     'motor PID bench-tuning) - drops real camera/YOLO CPU '
-                     'load on the Pi that a hardware-only session does not '
-                     'need. Usage: pixi run real vision:=false'
+        default_value='false',
+        description='Bring up the camera publisher + yolo_detector. Default false '
+                     '(the Pi is busy enough driving); set true for detection. '
+                     'Usage: pixi run real vision:=true'
     )
     vision = LaunchConfiguration('vision')
 
@@ -82,11 +80,12 @@ def generate_launch_description():
     # for both tasks; only the runner differs (task1 = explore + recognise
     # with obstacle setup; task2 = fixed slalom, no setup). Selected here so
     # the same real.launch.py serves both:
-    #   pixi run real   -> task:=1   pixi run real2 -> task:=2
+    #   pixi run real task:=1   pixi run real task:=2   (default 0 = no runner)
     task_arg = DeclareLaunchArgument(
         'task',
-        default_value='1',
-        description='Which task runner to launch: 1 (explore+recognise) or 2 (slalom).'
+        default_value='0',
+        description='Which task runner to launch: 0 = none (bare car, default), '
+                    '1 (explore+recognise), 2 (slalom).'
     )
     task = LaunchConfiguration('task')
 
@@ -224,6 +223,32 @@ def generate_launch_description():
         output='screen'
     )
 
+    # Bare car (task:=0, `pixi run drive`): no runner, so this small node turns the
+    # tablet's drive letters (/manual_drive) into /cmd_vel. With task:=1 the runner
+    # already does it, so this is NOT started then (it would double every command).
+    manual_drive = Node(
+        package='mdp_bringup',
+        executable='manual_drive.py',
+        condition=IfCondition(EqualsSubstitution(task, '0')),
+        output='screen'
+    )
+
+    # Always on: sends ROBOT,x,y,N/E/S/W to the tablet, whatever the task.
+    # Always on: mirrors the tablet link into /bt_log (Foxglove Log panel).
+    bt_log = Node(
+        package='mdp_bringup',
+        executable='bt_monitor.py',
+        name='bt_log',
+        arguments=['--quiet'],
+        output='screen'
+    )
+
+    robot_pose_feedback = Node(
+        package='mdp_bringup',
+        executable='robot_pose_feedback.py',
+        output='screen'
+    )
+
     # Task 1 runner (task:=1). Comes up idle in WAITING_FOR_SETUP:
     #   tablet OBSTACLE.../DONE (or pixi run setup) -> /obstacle_setup -> it plans
     #   pixi run reset -> /reset_run : pose back at the start pose
@@ -268,6 +293,9 @@ def generate_launch_description():
         map_to_odom,
         camera_node,
         yolo_detector,
+        manual_drive,
+        bt_log,
+        robot_pose_feedback,
         task1_runner,
         task2_runner
     ])

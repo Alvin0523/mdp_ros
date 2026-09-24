@@ -77,15 +77,16 @@ TASK1_CAMERA_THETA_OFFSET_RAD = math.pi / 2.0
 START_BOX_SIZE_CM = 40.0
 
 # --- Tablet protocol conventions (see mdp_bridge's bluetooth_bridge_node) ---
-# The tablet's grid is 20x20 cells of 10cm, origin bottom-left. ROBOT lines
-# report the cell (0-18) of the robot's bottom-left corner. The robot is
-# treated as a 2x2-cell (20cm) footprint centred on the pose we track, so the
-# corner sits 10cm down-left of it. OPEN ITEM: the real footprint/reference
-# point is not confirmed - change ROBOT_FOOTPRINT_CM if the tablet expects
-# something else.
+# The tablet's grid is 20x20 cells of 10cm, origin bottom-left (cell 0,0). ROBOT
+# lines report the cell (0-19) that CONTAINS the robot's tracked point, the same
+# rule as obstacles: cell = floor(cm / 10). So the default start pose
+# (15 cm, 15 cm) is cell (1,1), and a point at (35 cm, 35 cm) is cell (3,3).
+# Changed 2026-09-24 from "bottom-left cell of a 20cm footprint" (start was 0,0)
+# - tell the Android side. Set ROBOT_FOOTPRINT_CM back to 20.0 and
+# TABLET_MAX_CELL to 18 to restore the old meaning.
 TABLET_CELL_CM = 10.0
-TABLET_MAX_CELL = 18
-ROBOT_FOOTPRINT_CM = 20.0
+TABLET_MAX_CELL = 19
+ROBOT_FOOTPRINT_CM = 0.0
 
 # Manual drive (f/b/fl/fr/bl/br): a fixed-speed burst, steered by a fixed
 # wheel angle. yaw rate follows the bicycle model w = v*tan(delta)/L so the
@@ -106,18 +107,6 @@ ODOM_FRAME = 'odom'
 RESET_POS_TOL_M = 0.03
 RESET_YAW_TOL_RAD = math.radians(5.0)
 RESET_CONFIRM_TIMEOUT_S = 3.0
-
-
-def robot_cell_line(x_m: float, y_m: float, yaw_rad: float) -> str:
-    """`ROBOT,<x>,<y>,<N/E/S/W>` for an arena-frame pose (metres, radians)."""
-    half_cm = ROBOT_FOOTPRINT_CM / 2.0
-
-    def cell(v_m: float) -> int:
-        c = int(math.floor((v_m * 100.0 - half_cm) / TABLET_CELL_CM))
-        return max(0, min(TABLET_MAX_CELL, c))
-
-    quarter = int(round(math.atan2(math.sin(yaw_rad), math.cos(yaw_rad)) / (math.pi / 2.0))) % 4
-    return f'ROBOT,{cell(x_m)},{cell(y_m)},{"ENWS"[quarter]}'
 
 
 class State(Enum):
@@ -218,7 +207,10 @@ class Task1Runner(Node):
         # publisher on that topic would fight it.
         self.create_subscription(String, '/manual_drive', self.manual_drive_callback, 10)
         # robot_localization's ekf_node subscribes to this to reset its state.
-        self.set_pose_pub = self.create_publisher(PoseWithCovarianceStamped, '/set_pose', 10)
+        # The pose reset itself is a base service (/reset_pose, robot_pose_feedback.py).
+        # The runner only follows the EKF's /set_pose to keep its own state right.
+        self.reset_pose_client = self.create_client(Trigger, '/reset_pose')
+        self.create_subscription(PoseWithCovarianceStamped, '/set_pose', self.set_pose_callback, 10)
 
         # `go` trigger: a service (not a topic) so the caller gets a clear
         # accepted/rejected acknowledgement - matches the tablet's one-shot
@@ -285,7 +277,15 @@ class Task1Runner(Node):
         self._reset_requested_at = 0.0
         self._last_sent = {}           # indicator key -> last line sent, to publish on change only
         self._last_heartbeat = 0.0
-        self._last_robot_line = None
+        # Tunable live: ros2 param set /task1_runner manual_speed_mps 0.3
+        # While True the runner does NOT stream zero /cmd_vel when idle (waiting for
+        # go / finished), so another publisher (dist, rotate, circle, teleop) can
+        # move the car. STOP and a real run are unaffected.
+        # ros2 param set /task1_runner external_control true
+        self.declare_parameter('external_control', False)
+        self.declare_parameter('manual_speed_mps', MANUAL_SPEED_MPS)
+        self.declare_parameter('manual_steer_deg', MANUAL_STEER_DEG)
+        self.declare_parameter('manual_burst_s', MANUAL_BURST_S)
         self._manual_cmd = (0.0, 0.0)
         self._manual_until = 0.0
         self._manual_active = False
@@ -402,11 +402,6 @@ class Task1Runner(Node):
                     f"({p.x:.2f}, {p.y:.2f}, {math.degrees(yaw):.0f}deg) is not at the start "
                     f"pose {self.get_start_pose()}. Is the EKF running / did it take /set_pose?")
 
-        robot_line = robot_cell_line(p.x, p.y, yaw)
-        if robot_line != self._last_robot_line:
-            self._last_robot_line = robot_line
-            self.send_bt(robot_line)
-
     def setup_callback(self, msg: String):
         """`id:x,y,facing|id:x,y,facing|...` (metres). A new set replaces the old
         one - including a finished plan - but never interrupts a run in progress."""
@@ -447,7 +442,12 @@ class Task1Runner(Node):
         self.plan_state = 'PLANNING'
         self.state = State.PLANNING_PATH
         self.state_start_time = self.get_now_sec()
-        self.get_logger().info(f"Loaded {len(self.obstacles)} obstacles from setup!")
+        cells = ' | '.join(
+            f"#{oid} ({int(math.floor(x * 100.0 / CELL_SIZE_CM + 1e-6))},"
+            f"{int(math.floor(y * 100.0 / CELL_SIZE_CM + 1e-6))}) {face}"
+            for oid, (x, y, face) in zip(ids, obstacles))
+        self.get_logger().info(
+            f"Loaded {len(self.obstacles)} obstacles (cell x,y, facing): {cells}")
 
     def _tablet_id(self, obstacle_idx: int) -> str:
         """The tablet's own number for obstacle `obstacle_idx` (0-based index into
@@ -556,26 +556,28 @@ class Task1Runner(Node):
         return response
 
     def reset_run_callback(self, request, response):
-        """`/reset_run` (`pixi run reset`). Puts the EKF pose back at the start
-        pose - nothing else. Obstacles and the plan are kept.
-
-        The service returns as soon as the request is sent; RESET turns DONE
-        only once odometry actually reports the start pose (see odom_callback),
-        which is what the tablet's indicator should mean."""
+        """`/reset_run` (tablet reset). Asks the base to put the EKF pose back at
+        the start pose (/reset_pose); set_pose_callback then updates the run state.
+        Obstacles and the plan are kept."""
         if self.state in (State.NAVIGATING_TO_TARGET, State.PAUSE_FOR_SCAN):
             response.success = False
             response.message = "Ignored: run in progress - stop it first."
             return response
+        if not self.reset_pose_client.wait_for_service(timeout_sec=1.0):
+            response.success = False
+            response.message = "/reset_pose not available (is robot_pose_feedback running?)"
+            return response
+        self.reset_pose_client.call_async(Trigger.Request())
+        response.success = True
+        response.message = "Reset requested; RESET turns DONE once the pose is at the start."
+        return response
 
-        # Start pose expressed in `odom` is always the identity (map -> odom is
-        # the static start-pose transform), so reset means "EKF pose = 0".
-        msg = PoseWithCovarianceStamped()
-        msg.header.stamp = self.get_clock().now().to_msg()
-        msg.header.frame_id = ODOM_FRAME
-        msg.pose.pose.orientation.w = 1.0
-        for i in range(0, 36, 7):
-            msg.pose.covariance[i] = 1e-6
-        self.set_pose_pub.publish(msg)
+    def set_pose_callback(self, msg: PoseWithCovarianceStamped):
+        """The EKF pose was reset (from /reset_run or `pixi run reset`): RESET turns
+        DONE only once odometry actually reports the start pose (odom_callback)."""
+        if self.state in (State.NAVIGATING_TO_TARGET, State.PAUSE_FOR_SCAN):
+            self.get_logger().warn("Pose was reset during a run - stop it first.")
+            return
 
         self.reset_done = False
         self._reset_pending = True
@@ -599,9 +601,6 @@ class Task1Runner(Node):
 
         self.get_logger().info("Reset requested - waiting for odometry to report the start pose.")
         self._sync_indicators()
-        response.success = True
-        response.message = "Reset requested; RESET turns DONE once the pose is at the start."
-        return response
 
     def manual_drive_callback(self, msg: String):
         """f/b/fl/fr/bl/br from the tablet: a short fixed burst on /cmd_vel,
@@ -614,10 +613,15 @@ class Task1Runner(Node):
             self.get_logger().info(f"Manual drive {key!r} ignored (run in progress or stopped).")
             return
         direction, steer = MANUAL_COMMANDS[key]
-        v = direction * MANUAL_SPEED_MPS
-        w = v * math.tan(math.radians(MANUAL_STEER_DEG)) / WHEELBASE_M * steer
+        # Clamped so a bad value can't send the car flying: 0.05-0.5 m/s,
+        # steering 5-30 deg, burst 0.1-1.0 s.
+        speed = min(0.5, max(0.05, float(self.get_parameter('manual_speed_mps').value)))
+        steer_deg = min(30.0, max(5.0, float(self.get_parameter('manual_steer_deg').value)))
+        burst_s = min(1.0, max(0.1, float(self.get_parameter('manual_burst_s').value)))
+        v = direction * speed
+        w = v * math.tan(math.radians(steer_deg)) / WHEELBASE_M * steer
         self._manual_cmd = (v, w)
-        self._manual_until = self.get_now_sec() + MANUAL_BURST_S
+        self._manual_until = self.get_now_sec() + burst_s
         self._manual_active = True
         # Moving the car by hand means it's no longer at a verified start pose.
         self.reset_done = False
@@ -647,8 +651,6 @@ class Task1Runner(Node):
         if now - self._last_heartbeat >= 2.0:
             self._last_heartbeat = now
             self._last_sent.clear()
-            if self._last_robot_line is not None:
-                self.send_bt(self._last_robot_line)
         self._sync_indicators()
 
         # Manual drive burst from the tablet (never active during a run - see
@@ -747,7 +749,8 @@ class Task1Runner(Node):
 
         # STATE 1b: Planning done, car held until `go` (see start_run_callback).
         elif self.state == State.WAITING_FOR_GO:
-            self.send_cmd(0.0, 0.0)
+            if not self.get_parameter('external_control').value:
+                self.send_cmd(0.0, 0.0)
 
         # STATE 2: Navigating to current target standoff pose - now actually
         # tracks the Hybrid A*-planned path via PurePursuitController,
@@ -808,7 +811,8 @@ class Task1Runner(Node):
 
         # STATE 4: Finished & Auto-Stopped
         elif self.state == State.FINISHED:
-            self.send_cmd(0.0, 0.0)
+            if not self.get_parameter('external_control').value:
+                self.send_cmd(0.0, 0.0)
 
         # STATE 5: Stopped by /stop_run - keep publishing zeros until reset
         elif self.state == State.STOPPED:
@@ -852,7 +856,7 @@ class Task1Runner(Node):
         self._publish_grid_lines()
 
     def _publish_grid_lines(self):
-        """Explicit cell-boundary lines across the full padded grid, not
+        """Explicit cell-boundary lines across the 2x2 m arena, not
         just the OccupancyGrid raster's implicit cell colouring - drawn as
         two LINE_LIST markers (horizontal/vertical) so every individual 5cm
         cell is visible in Foxglove's 3D panel, not only where occupancy
@@ -883,14 +887,19 @@ class Task1Runner(Node):
         lines.scale.x = line_w
         lines.pose.orientation.w = 1.0
         lines.color.r, lines.color.g, lines.color.b, lines.color.a = line_c
-        for i in range(width + 1):
-            x = origin + i * cell_m
-            lines.points.append(Point(x=x, y=origin, z=0.01))
-            lines.points.append(Point(x=x, y=origin + height * cell_m, z=0.01))
-        for j in range(height + 1):
-            y = origin + j * cell_m
-            lines.points.append(Point(x=origin, y=y, z=0.01))
-            lines.points.append(Point(x=origin + width * cell_m, y=y, z=0.01))
+        # 2026-09-24: only the 200x200cm arena, (0,0) to (2,2) in 10cm cells.
+        # This used to span the whole padded planning grid (-1 m to 3 m), which
+        # read as a 4x4 m map; the search margin is planning headroom, not arena.
+        arena_m = ARENA_SIZE_CM / 100.0
+        n_cells = int(round(ARENA_SIZE_CM / CELL_SIZE_CM))
+        for i in range(n_cells + 1):
+            x = i * cell_m
+            lines.points.append(Point(x=x, y=0.0, z=0.01))
+            lines.points.append(Point(x=x, y=arena_m, z=0.01))
+        for j in range(n_cells + 1):
+            y = j * cell_m
+            lines.points.append(Point(x=0.0, y=y, z=0.01))
+            lines.points.append(Point(x=arena_m, y=y, z=0.01))
 
         zone = Marker()
         zone.header.stamp = header_stamp
@@ -942,11 +951,9 @@ class Task1Runner(Node):
         self.grid_marker_pub.publish(MarkerArray(markers=[lines, zone, start_box]))
 
     def _publish_obstacle_markers(self):
-        """One CUBE + one TEXT_VIEW_FACING label per obstacle, published
-        once after planning (positions are static for the run). Label shows
-        the 1-based obstacle number and its facing side, since that facing
-        is what determines the checkpoint pose and is otherwise invisible
-        in the visualization.
+        """Per obstacle: an orange CUBE, a thin red CUBE slab on the facing side,
+        the obstacle's number on top of the block, and a small label above it
+        with its grid cell (x,y). Published once after planning.
 
         Drawn directly at the obstacle's own continuous (x_m, y_m) - no
         longer snapped into a grid cell first. Obstacles are now placed as a
@@ -983,6 +990,48 @@ class Task1Runner(Node):
             cube.color.r, cube.color.g, cube.color.b, cube.color.a = obstacle_c
             marker_array.markers.append(cube)
 
+            # Facing: a thin RED slab on the side of the block that carries the
+            # image (N/E/S/W as sent by the tablet), proud of the surface by 4 mm.
+            half = OBSTACLE_SIZE_CM / 200.0
+            thick = 0.008
+            fx, fy = {'N': (0.0, 1.0), 'S': (0.0, -1.0),
+                      'E': (1.0, 0.0), 'W': (-1.0, 0.0)}[facing]
+            face = Marker()
+            face.header.stamp = header_stamp
+            face.header.frame_id = self.arena_frame
+            face.ns = 'obstacle_facing'
+            face.id = 300 + idx
+            face.type = Marker.CUBE
+            face.action = Marker.ADD
+            face.pose.position.x = cx + fx * (half + thick / 2.0)
+            face.pose.position.y = cy + fy * (half + thick / 2.0)
+            face.pose.position.z = 0.05
+            face.pose.orientation.w = 1.0
+            face.scale.x = thick if fx else OBSTACLE_SIZE_CM / 100.0
+            face.scale.y = thick if fy else OBSTACLE_SIZE_CM / 100.0
+            face.scale.z = 0.10
+            face.color.r, face.color.g, face.color.b, face.color.a = 1.0, 0.0, 0.0, 1.0
+            marker_array.markers.append(face)
+
+            # The obstacle's number, drawn on the top of the block itself.
+            ident = Marker()
+            ident.header.stamp = header_stamp
+            ident.header.frame_id = self.arena_frame
+            ident.ns = 'obstacle_ids'
+            ident.id = 200 + idx
+            ident.type = Marker.TEXT_VIEW_FACING
+            ident.action = Marker.ADD
+            ident.pose.position.x = cx
+            ident.pose.position.y = cy
+            ident.pose.position.z = 0.102
+            ident.scale.z = 0.07
+            ident.color.r, ident.color.g, ident.color.b, ident.color.a = 0.0, 0.0, 0.0, 1.0
+            ident.text = self._tablet_id(idx)
+            marker_array.markers.append(ident)
+
+            # Label above the block: its grid CELL (not cm or metres).
+            cell_x = int(math.floor(x_m * 100.0 / CELL_SIZE_CM + 1e-6))
+            cell_y = int(math.floor(y_m * 100.0 / CELL_SIZE_CM + 1e-6))
             text = Marker()
             text.header.stamp = header_stamp
             text.header.frame_id = self.arena_frame
@@ -993,11 +1042,9 @@ class Task1Runner(Node):
             text.pose.position.x = cx
             text.pose.position.y = cy
             text.pose.position.z = label_h
-            text.scale.z = 0.10
+            text.scale.z = 0.07
             text.color.r, text.color.g, text.color.b, text.color.a = label_c
-            # .1f, not .2f - matches the arena's actual 10cm grid resolution
-            # (CELL_SIZE_CM), a 2nd decimal place is never meaningful here.
-            text.text = f"#{idx + 1} [{facing}] ({x_m:.1f}, {y_m:.1f})"
+            text.text = f"({cell_x},{cell_y})"
             marker_array.markers.append(text)
 
         self.obstacle_marker_pub.publish(marker_array)

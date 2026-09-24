@@ -2,11 +2,11 @@
 """
 Call a std_srvs/Trigger service on the runner and print the reply.
 
+    ros2 run mdp_bringup trigger.py /start_run     (pixi run go)
     ros2 run mdp_bringup trigger.py /stop_run      (pixi run stop)
-    ros2 run mdp_bringup trigger.py /reset_run     (pixi run reset)
+    ros2 run mdp_bringup trigger.py /reset_pose    (pixi run reset)
 
-Same pattern as go.py (which stays as the /start_run shortcut): a service, not
-a topic, so the caller sees accepted / rejected-with-reason. Exits non-zero if
+A service, not a topic, so the caller sees accepted / rejected-with-reason. Exits non-zero if
 the service is missing or replies success=False.
 """
 import sys
@@ -20,7 +20,7 @@ def call(node: Node, service: str) -> bool:
     client = node.create_client(Trigger, service)
     node.get_logger().info(f"Waiting for {service} ...")
     if not client.wait_for_service(timeout_sec=10.0):
-        node.get_logger().error(f"{service} not available - is the runner up? (pixi run real1)")
+        node.get_logger().error(f"{service} not available - is the bringup running? (pixi run real / drive)")
         return False
     future = client.call_async(Trigger.Request())
     rclpy.spin_until_future_complete(node, future, timeout_sec=10.0)

@@ -741,15 +741,23 @@ def test_target_line_uses_the_tablets_own_obstacle_number(runner):
         assert runner.node.current_target_idx == 1
 
 
-def test_robot_line_is_a_tablet_cell_and_compass_letter(runner):
-    """`ROBOT,<x>,<y>,<N/E/S/W>` - bottom-left cell 0-18 of a 2x2-cell robot."""
-    line = runner.module.robot_cell_line
-    assert line(0.15, 0.15, math.pi / 2) == 'ROBOT,0,0,N'      # default start pose
-    assert line(1.00, 1.00, 0.0) == 'ROBOT,9,9,E'
-    assert line(1.00, 1.00, math.pi) == 'ROBOT,9,9,W'
-    assert line(1.00, 1.00, -math.pi / 2) == 'ROBOT,9,9,S'
-    assert line(1.00, 1.00, math.radians(80)) == 'ROBOT,9,9,N'  # nearest compass point
-    assert line(-0.5, 5.0, 0.0) == 'ROBOT,0,18,E'              # clamped to the grid
+def test_robot_line_is_a_tablet_cell_and_compass_letter():
+    """`ROBOT,<x>,<y>,<N/E/S/W>` - the 10cm cell (0-19) containing the tracked point.
+    Sent by the always-on robot_pose_feedback node, not the runner."""
+    import importlib.util
+    import pathlib
+    path = pathlib.Path(__file__).resolve().parents[1] / 'scripts' / 'robot_pose_feedback.py'
+    spec = importlib.util.spec_from_file_location('robot_pose_feedback', path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    line = mod.robot_cell_line
+    assert line(0.15, 0.15, math.pi / 2) == 'ROBOT,1,1,N'      # default start pose
+    assert line(0.35, 0.35, math.pi / 2) == 'ROBOT,3,3,N'
+    assert line(1.00, 1.00, 0.0) == 'ROBOT,10,10,E'
+    assert line(1.00, 1.00, math.pi) == 'ROBOT,10,10,W'
+    assert line(1.00, 1.00, -math.pi / 2) == 'ROBOT,10,10,S'
+    assert line(1.00, 1.00, math.radians(80)) == 'ROBOT,10,10,N'  # nearest compass point
+    assert line(-0.5, 5.0, 0.0) == 'ROBOT,0,19,E'              # clamped to the grid
 
 
 def test_indicator_lines_are_sent_on_change_only(runner):

@@ -49,6 +49,9 @@ struct TelemetryPacket
   uint16_t ir_raw;
   float ir_voltage;
   float ir_distance_cm;
+  uint16_t ir2_raw;         /* second IR sensor, PC1/ADC1_CH11 */
+  float ir2_voltage;
+  float ir2_distance_cm;
   float ultrasonic_cm;  /* negative = no valid echo, see mdp_stm32/include/protocol.h */
   uint32_t uptime_ms;
   uint8_t checksum;
