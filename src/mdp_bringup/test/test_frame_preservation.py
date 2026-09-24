@@ -60,6 +60,7 @@ import pytest
 import rclpy
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
+from geometry_msgs.msg import PoseWithCovarianceStamped
 from std_msgs.msg import String
 from std_srvs.srv import Trigger
 
@@ -189,9 +190,16 @@ def yaw_error(actual, expected):
 # Observation: real planner output (cached - Hybrid A* costs seconds)
 # ==========================================================================
 
+def _layout():
+    """test_obstacles.yaml as (x_m, y_m, facing) cell centres - what the bridge
+    publishes for the same set (obstacle_layout.py)."""
+    import obstacle_layout
+    return [(o.centre_m[0], o.centre_m[1], o.facing)
+            for o in obstacle_layout.load(str(CONFIG_DIR / 'test_obstacles.yaml'))]
+
+
 def _obstacles_from_config():
-    cfg = load_config('test_obstacles.yaml')
-    return [(o['x'] * 100.0, o['y'] * 100.0, o['facing']) for o in cfg['obstacles']]
+    return [(x * 100.0, y * 100.0, facing) for x, y, facing in _layout()]
 
 
 def _plan_route(start_pose):
@@ -320,10 +328,8 @@ def publish_full_scene(runner, start_pose):
     NAVIGATING_TO_TARGET tick emit, but with the planner output injected from the
     cache so Hybrid A* runs once per module rather than once per test.
     """
-    cfg = load_config('test_obstacles.yaml')
     runner.reset()
-    runner.node.setup_callback(String(
-        data=setup_string([(o['x'], o['y'], o['facing']) for o in cfg['obstacles']])))
+    runner.node.setup_callback(String(data=setup_string(_layout())))
 
     order, checkpoints, unreachable, occ_map = planned_route(start_pose)
     node = runner.node
@@ -467,8 +473,8 @@ def test_identity_transform_leaves_arena_coordinates_alone():
 def test_obstacle_setup_is_read_as_arena_metres(runner):
     """`id:x,y,facing` in metres, cube centres exactly on the given coordinates.
 
-    Also pins the label format (`#N [facing] (x, y)` at one decimal, matching the
-    arena's 10 cm grid) and that a new set replaces the old one except during a run.
+    Also pins the labels (the tablet cell `(col,row)` above the block, the
+    tablet number on it, the red facing slab on the S/W/N side) and that a new set replaces the old one except during a run.
     """
     runner.reset()
     obstacles = [(0.5, 1.0, 'S'), (1.2, 0.4, 'W'), (1.76, 1.55, 'N')]
@@ -482,8 +488,12 @@ def test_obstacle_setup_is_read_as_arena_metres(runner):
     labels = [m for m in markers if m.ns == 'obstacle_labels']
     assert [(m.pose.position.x, m.pose.position.y) for m in cubes] == \
         [(x, y) for x, y, _ in obstacles]
-    assert [m.text for m in labels] == ['#1 [S] (0.5, 1.0)', '#2 [W] (1.2, 0.4)',
-                                        '#3 [N] (1.8, 1.6)']
+    assert [m.text for m in labels] == ['(5,10)', '(12,4)', '(17,15)']
+    ids = [m for m in markers if m.ns == 'obstacle_ids']
+    assert [m.text for m in ids] == ['1', '2', '3']
+    faces = [m for m in markers if m.ns == 'obstacle_facing']
+    assert [(round(m.pose.position.x - x, 3), round(m.pose.position.y - y, 3))
+            for m, (x, y, _) in zip(faces, obstacles)] == [(0.0, -0.054), (-0.054, 0.0), (0.0, 0.054)]
 
     # A second set replaces the first (the tablet resends after DONE), and
     # abandons any planner still running for the old one.
@@ -779,7 +789,11 @@ def test_indicator_lines_are_sent_on_change_only(runner):
 
 
 def test_stop_halts_everything_and_reset_restores_ready(runner):
-    """STOP: zeros, planner abandoned, manual drive ignored. reset: same plan, ready again."""
+    """STOP: zeros, planner abandoned, manual drive ignored. reset: same plan, ready again.
+
+    The reset itself is robot_pose_feedback's /reset_pose, which the runner
+    sees as the EKF's /set_pose - so it is driven here through set_pose_callback.
+    """
     State = runner.module.State
     runner.reset()
     runner.node.state = State.NAVIGATING_TO_TARGET
@@ -795,7 +809,7 @@ def test_stop_halts_everything_and_reset_restores_ready(runner):
     runner.node.manual_drive_callback(String(data='f'))
     assert runner.node._manual_until == 0.0            # ignored while stopped
 
-    runner.node.reset_run_callback(Trigger.Request(), Trigger.Response())
+    runner.node.set_pose_callback(PoseWithCovarianceStamped())
     assert runner.node.state is State.WAITING_FOR_GO and runner.node.plan_state == 'DONE'
     assert not runner.node.stopped
     runner.node.manual_drive_callback(String(data='f'))
@@ -808,7 +822,7 @@ def test_stop_halts_everything_and_reset_restores_ready(runner):
     runner.node.state = State.WAITING_FOR_GO
     runner.node.stop_run_callback(Trigger.Request(), Trigger.Response())
     assert runner.node.plan_state == 'WAITING'
-    runner.node.reset_run_callback(Trigger.Request(), Trigger.Response())
+    runner.node.set_pose_callback(PoseWithCovarianceStamped())
     assert runner.node.state is State.PLANNING_PATH and runner.node.plan_state == 'PLANNING'
 
     # reset refuses mid-run.
@@ -859,7 +873,7 @@ def test_no_sim_overlay_has_been_folded_into_ekf_yaml():
     params = load_config('ekf.yaml')['ekf_filter_node']['ros__parameters']
     assert params['world_frame'] == 'odom'
     assert params['odom_frame'] == 'odom'
-    assert params['base_link_frame'] == 'base_link'
+    assert params['base_link_frame'] == 'base_footprint'
     assert params['publish_tf'] is True
     assert params['use_sim_time'] is False
     assert params['imu0'] == '/imu/data'

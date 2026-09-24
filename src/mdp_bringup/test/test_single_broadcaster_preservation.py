@@ -53,15 +53,15 @@ from hypothesis import strategies as st
 
 from launch_introspection import (ARENA_FRAME, ARENA_SIZE_M, CONFIG_DIR, PACKAGE_ROOT,
                                  arena_to_odom_broadcasters, controller_params, launch_nodes,
+                                 SIM_LAUNCH, HARDWARE_LAUNCH, launch_file,
                                  load_launch, node_arguments, node_executable,
                                  node_executables, node_parameter_files, spawned_controllers)
 
-SIM_LAUNCH = 'task1_sim.launch.py'
-HARDWARE_LAUNCH = 'real.launch.py'
 
-# The child frame each context anchors dead reckoning to.
+# The child frame each context anchors dead reckoning to - the URDF root, which
+# is base_footprint on both robots since mini_akm_real_robot.urdf gained it.
 SIM_BASE_FRAME = 'base_footprint'
-HARDWARE_BASE_FRAME = 'base_link'
+HARDWARE_BASE_FRAME = 'base_footprint'
 
 URDF_DIR = PACKAGE_ROOT.parent / 'mdp_description' / 'urdf'
 WORLDS_DIR = PACKAGE_ROOT.parent / 'mdp_description' / 'worlds'
@@ -87,9 +87,11 @@ def controller_config_for(launch_name: str) -> str:
             if path.name.endswith('controller.yaml'):
                 return path.name
 
-    source = (PACKAGE_ROOT / 'launch' / launch_name).read_text()
+    # mdp.launch.py names both configs; a sim graph has no ros2_control_node,
+    # so the hardware one found above is not the one in play.
+    source = launch_file(launch_name).read_text()
     names = sorted({name for name in (p.name for p in CONFIG_DIR.glob('*controller.yaml'))
-                    if name in source})
+                    if name in source and name != 'real_controller.yaml'})
     assert len(names) == 1, f'{launch_name} references controller configs {names}'
     return names[0]
 
@@ -171,7 +173,7 @@ def test_sim_has_exactly_one_odom_to_base_footprint_broadcaster():
         f'sim odom -> {SIM_BASE_FRAME} owners: {owners}'
 
 
-def test_hardware_has_exactly_one_odom_to_base_link_broadcaster():
+def test_hardware_has_exactly_one_odom_to_base_footprint_broadcaster():
     """Hardware: `ekf_filter_node` only - the controller stands down (3.4, 3.5).
 
     `real_controller.yaml` sets `enable_odom_tf: false` so the EKF is the sole
@@ -187,14 +189,14 @@ def test_hardware_has_exactly_one_odom_to_base_link_broadcaster():
     assert hardware_controller['base_frame_id'] == HARDWARE_BASE_FRAME
 
 
-def test_no_context_broadcasts_the_other_context_base_frame():
-    """Sim owns `base_footprint`, hardware owns `base_link`, neither owns both.
+def test_no_context_broadcasts_odom_to_base_link():
+    """Both contexts anchor dead reckoning to the URDF root, `base_footprint`.
 
-    The two graphs differ in which link dead reckoning anchors to, so a fix that
-    hardcodes one base frame would quietly add an edge in the other context.
+    `base_link` hangs off it through a fixed URDF joint (robot_state_publisher),
+    so an `odom -> base_link` edge anywhere would give base_link two parents.
     """
-    assert not count_broadcasters(SIM_LAUNCH, 'odom', HARDWARE_BASE_FRAME)
-    assert not count_broadcasters(HARDWARE_LAUNCH, 'odom', SIM_BASE_FRAME)
+    assert not count_broadcasters(SIM_LAUNCH, 'odom', 'base_link')
+    assert not count_broadcasters(HARDWARE_LAUNCH, 'odom', 'base_link')
 
 
 def test_robot_state_publisher_cannot_own_the_odom_edge():

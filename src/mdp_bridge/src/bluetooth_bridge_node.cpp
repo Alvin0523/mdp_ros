@@ -7,9 +7,11 @@
  * task1_runner.py.
  *
  * Tablet -> ROS
- *   OBSTACLE,<n>,<x>,<y>,<N|E|S|W>  collected; x,y are cell*10 (cm). An OBSTACLE
+ *   OBSTACLE,<n>,<x>,<y>,<N|E|S|W>  collected; x,y are the tablet cell's lower-left
+ *                                   corner, col*10 / row*10 (cm), cells 0..19. An OBSTACLE
  *                                   arriving after a DONE starts a new set.
- *   DONE                            publish the set on /obstacle_setup (metres)
+ *   DONE                            publish the set on /obstacle_setup (metres,
+ *                                   CELL CENTRE = corner + 5 cm)
  *   BEGIN                           call /start_run
  *   STOP                            call /stop_run
  *   CLEAR                           resend the current ROBOT line
@@ -116,6 +118,9 @@ struct Obstacle
 };
 
 constexpr int kArenaCm = 200;
+/// Tablet grid cell size. OBSTACLE x,y name a cell's corner; the obstacle
+/// block fills that cell, so its centre is half a cell further in.
+constexpr int kCellCm = 10;
 
 }  // namespace
 
@@ -366,7 +371,7 @@ private:
         f[1].c_str(), f[2].c_str(), f[3].c_str(), f[4].c_str());
       return;
     }
-    if (*x < 0 || *x > kArenaCm || *y < 0 || *y > kArenaCm) {
+    if (*x < 0 || *x >= kArenaCm || *y < 0 || *y >= kArenaCm) {
       RCLCPP_WARN(get_logger(), "OBSTACLE %d at (%d,%d)cm is outside the %dcm arena - ignored",
         *n, *x, *y, kArenaCm);
       return;
@@ -392,12 +397,13 @@ private:
       RCLCPP_WARN(get_logger(), "DONE received with no obstacles - ignored");
       return;
     }
-    // task1_runner's format: "id:x_m,y_m,facing|..." in metres.
+    // task1_runner's format: "id:x_m,y_m,facing|..." in metres, at the centre
+    // of the tablet cell (the runner draws and plans the block centred there).
     std::string out;
     for (const auto & o : obstacles_) {
       char item[64];
       std::snprintf(item, sizeof(item), "%d:%.2f,%.2f,%c",
-        o.n, o.x_cm / 100.0, o.y_cm / 100.0, o.facing);
+        o.n, (o.x_cm + kCellCm / 2.0) / 100.0, (o.y_cm + kCellCm / 2.0) / 100.0, o.facing);
       if (!out.empty()) {out += '|';}
       out += item;
     }

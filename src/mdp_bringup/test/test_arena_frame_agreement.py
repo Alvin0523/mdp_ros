@@ -167,12 +167,10 @@ def load_task1_sim_launch() -> LaunchDescription:
     read when the description is *visited* by a launch service, which never
     happens here - so this starts no simulator and no nodes.
     """
-    from launch.launch_description_sources import get_launch_description_from_python_launch_file
-
     # Deliberately the SOURCE launch file, not `install/mdp_bringup/share`, so a
     # stale install copy can't make this test lie.
-    launch_file = Path(__file__).resolve().parent.parent / 'launch' / 'task1_sim.launch.py'
-    return get_launch_description_from_python_launch_file(str(launch_file))
+    from launch_introspection import SIM_LAUNCH, load_launch
+    return load_launch(SIM_LAUNCH)
 
 
 def launch_nodes(ld: LaunchDescription):

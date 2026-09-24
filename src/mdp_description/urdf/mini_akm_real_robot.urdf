@@ -1,6 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Mini Ackermann Robot URDF for Real Hardware (topic_based_ros2_control) -->
 <robot name="mini_akm_robot">
+  <!-- Ground-level root frame, same as mini_akm_robot.urdf (sim), so both
+       robots publish odom -> base_footprint -> base_link and every config,
+       tool and Foxglove layout uses one frame tree. z = the sim URDF's
+       0.0325 m base_link height. -->
+  <link name="base_footprint"/>
+  <joint name="base_footprint_joint" type="fixed">
+    <origin xyz="0 0 0.0325" rpy="0 0 0"/>
+    <parent link="base_footprint"/>
+    <child link="base_link"/>
+  </joint>
   <link name="base_link">
     <inertial>
       <origin xyz="-0.0119754973846389 -0.000133372463647142 0.021017784029409" rpy="0 0 0" />

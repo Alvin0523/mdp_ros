@@ -12,6 +12,7 @@ install(PROGRAMS
   scripts/task1_runner.py
   scripts/task2_runner.py
   scripts/publish_test_obstacles.py
+  scripts/fake_tablet.py
   scripts/trigger.py
   scripts/drive_distance.py
   scripts/rotate_angle.py
@@ -20,11 +21,12 @@ install(PROGRAMS
   scripts/manual_drive.py
   scripts/send_target.py
   scripts/robot_pose_feedback.py
-  # generate_arena_world.py removed 2026-09-11 - obstacles now live directly in
-  # mdp_description/worlds/task1_arena.sdf, which the sim launches load as-is.
-  # Not an entry point: a pure helper module the runners import as a sibling out
-  # of lib/mdp_bringup, installed here so that import resolves at runtime.
+  scripts/grid_guard.py  # TEMP: zero /cmd_vel when the robot leaves the tablet grid
+  # Not entry points: pure helper modules imported as siblings out of
+  # lib/mdp_bringup (obstacle_layout also by launch/mdp.launch.py), installed
+  # here so those imports resolve at runtime.
   scripts/pose_transform.py
+  scripts/obstacle_layout.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

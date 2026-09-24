@@ -9,13 +9,13 @@ ekf_filter_node:
     #
     #   1. publish_tf: false     - the ackermann_steering_controller already owns
     #                              odom -> base_footprint in sim
-    #   2. base_link_frame       - the sim URDF roots at base_footprint
+    #   2. use_sim_time: true    - every sim node follows Gazebo's /clock
     #
     # A simulated IMU (mini_akm_robot.urdf's base_link sensor, bridged to
     # /imu/data by the sim launch files) means imu0 below is no longer omitted
     # - it now exercises the same fusion path as hardware, not just wheel
-    # odometry. Everything else (rate, two_d_mode, odom0/imu0 fusion masks,
-    # rejection thresholds, covariances) is deliberately the same as hardware,
+    # odometry. Everything else (frames, rate, two_d_mode, odom0/imu0 fusion
+    # masks, covariances, no outlier rejection) is deliberately the same as hardware,
     # so /odometry/filtered in sim behaves like the real thing.
 
     # --- Timing ---
@@ -38,11 +38,8 @@ ekf_filter_node:
     # --- Frames ---
     map_frame: map              # arena frame; the static map -> odom broadcaster owns that edge, not this node
     odom_frame: odom
-    # base_footprint, NOT base_link: mini_akm_robot.urdf (sim) roots at
-    # base_footprint, and the controller reports its odometry against that same
-    # link (ackermann_controller.yaml, base_frame_id: base_footprint). The
-    # hardware URDF (mini_akm_real_robot.urdf) roots at base_link, which is why
-    # ekf.yaml names the other one.
+    # URDF root on both real and sim (mini_akm_real_robot.urdf gained the same
+    # base_footprint root so the two frame trees match).
     base_link_frame: base_footprint
     world_frame: odom           # single EKF instance operating in the odom frame (no map-fusion stage)
 
@@ -76,9 +73,6 @@ ekf_filter_node:
     imu0_relative: false
     imu0_remove_gravitational_acceleration: true
 
-    # --- Outlier rejection ---
-    odom0_twist_rejection_threshold: 2.0
-    imu0_twist_rejection_threshold: 1.542
 
     # --- Process/initial covariance ---
     # Copied from ekf.yaml unchanged: the plant is the same chassis, and keeping

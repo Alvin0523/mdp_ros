@@ -1,69 +1,32 @@
-# Test obstacle layout for the PLANNER, for development without the Android
-# tablet/Bluetooth in the loop - see publish_test_obstacles.py's docstring.
+# Task 1 obstacle layout for development - the tablet's obstacle setup, as a file.
 #
-# SCOPE - this file affects the planner only, and nothing else.
-#   Read by publish_test_obstacles.py (`pixi run publish-obstacles`), which
-#   publishes id/x/y/facing on /obstacle_setup for task1_runner.py. That is the
-#   only consumer.
+# ONE SOURCE for everything that needs obstacles (see scripts/obstacle_layout.py):
+#   * the sim arena - mdp.launch.py bakes one Gazebo model per entry into the
+#     world at launch (task1_arena.sdf itself has no obstacles),
+#   * the planner - fake_tablet.py sends these as the tablet's own
+#     OBSTACLE/DONE lines through bluetooth_bridge_node (`obstacles:=yaml`), or
+#     `pixi run setup` publishes the same set directly on /obstacle_setup.
 #
-#   It does NOT drive the Gazebo sim. The sim's obstacles - positions, facings,
-#   and which symbol is on which face - live directly in
-#   mdp_description/worlds/task1_arena.sdf, which the sim launches load as-is.
-#   (An `image:` field per obstacle plus randomize_images/random_seed used to
-#   feed generate_arena_world.py; that script was deleted 2026-09-11 because
-#   nothing invoked it, so those fields were removed here too rather than left
-#   looking meaningful.)
+# Obstacles are given by CELL, exactly like the tablet's 20x20 grid:
+#   cell_x, cell_y: 0..19, 10 cm cells, cell (0,0) at the bottom-left.
+#   The 10 cm block fills its cell, so its centre is ((c + 0.5) x 0.10) m -
+#   cell (3,3) is the block centred on (0.35, 0.35) m. (Metres via `x:`/`y:`
+#   still work, but cells are the convention.)
+#   The robot starts in the 40 cm start box = cells 0..3 x 0..3.
+# facing: N/E/S/W - which side of the block carries the image (the direction
+#   the robot must face to see it), per docs/assessment_checklist.md B.1/C.5.
+# symbol: sim only - models/symbols/<symbol>.obj decal on the facing side.
 #
-#   CONSEQUENCE: the x/y/facing below and the poses in task1_arena.sdf are no
-#   longer generated from a single source, so keep them in step BY HAND. If they
-#   drift, the planner and the simulator disagree about where the obstacles are,
-#   which presents as a planning or localisation bug rather than a stale config.
+# A made-up layout for testing the pipeline end-to-end, NOT a competition
+# layout - in the real run the supervisor's layout arrives from the tablet.
 #
-# x/y: metres, matching this project's arena convention (start pose at
-#   (0.15, 0.15), bottom-left corner - see task1_runner.py). Arena is
-#   2.0m x 2.0m.
-#   Obstacles are given by CELL, not by cm: the arena is 20 x 20 cells of 10 cm,
-#   cell (0,0) at the bottom-left, cells 0-19. publish_test_obstacles.py turns
-#   cell (cx,cy) into the obstacle's centre in metres ((c + 0.5) x 0.10), so
-#   cell (3,3) is the 10x10 cm block centred on (0.35, 0.35) m. (Metres via
-#   `x:`/`y:` still work, but cells are the convention.)
-# facing: N/S/E/W - which side of the obstacle its scannable image is on
-#   (the direction the robot must face to see it), per
-#   docs/assessment_checklist.md's Module B.1/C.5 convention.
-#
-# This is a made-up layout for testing the pipeline end-to-end, NOT the real
-# competition layout - real obstacle positions are supervisor-specified at setup
-# time and come from the tablet over Bluetooth in the actual run.
-#
-# Symbols currently in task1_arena.sdf, for cross-reference when editing:
-#   id 1 -> 20_AlphabetA   id 2 -> 11_One   id 3 -> 36_ArrowUp
-#   id 4 -> 12_Two   (renumbered from 5 on 2026-09-24 so ids run 1-4 with no gap;
-#                     the sim world still names this model obstacle_5)
-#
-# The old id 4 (0.90, 1.80, facing E, 40_Stop) was REMOVED 2026-09-17 - only 20cm from
-# the arena's top wall, and with the theta_offset sign fix (see
-# task1_runner.py's TASK1_CAMERA_THETA_OFFSET_RAD), its checkpoint required a
-# final heading pointing straight into that wall with less than one full
-# turning-radius (25.3cm) of clearance - Hybrid A* correctly reported
-# "NO PATH FOUND" for it. Dropped rather than relocated for now; re-add once
-# there's a layout position that's actually reachable. (It was also
-# previously 99_Bullseye before an earlier swap to 40_Stop - see git history
-# if that assignment matters again.)
+# id 4 was renumbered from 5 on 2026-09-24 so ids run 1-4 with no gap. The old
+# id 4 (cell 9,18 facing E) was dropped 2026-09-17: 20 cm from the top wall, its
+# checkpoint heading pointed into the wall with less than one turning radius
+# (25.3 cm) of room, and Hybrid A* correctly found no path.
 
 obstacles:
-  - id: 1
-    cell_x: 5
-    cell_y: 10
-    facing: S
-  - id: 2
-    cell_x: 12
-    cell_y: 4
-    facing: W
-  - id: 3
-    cell_x: 17
-    cell_y: 15
-    facing: N
-  - id: 4
-    cell_x: 15
-    cell_y: 9
-    facing: S
+  - {id: 1, cell_x: 5,  cell_y: 10, facing: S, symbol: 20_AlphabetA}
+  - {id: 2, cell_x: 12, cell_y: 4,  facing: W, symbol: 11_One}
+  - {id: 3, cell_x: 17, cell_y: 15, facing: N, symbol: 36_ArrowUp}
+  - {id: 4, cell_x: 15, cell_y: 9,  facing: S, symbol: 12_Two}
