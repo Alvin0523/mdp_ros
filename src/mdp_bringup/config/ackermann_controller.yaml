@@ -34,31 +34,16 @@ ackermann_steering_controller:
     publish_limited_velocity: true
     use_stamped_vel: true
 
-    # steering_controllers_library's own hardcoded default is
-    # [0.0, 7.0, 14.0, 21.0, 28.0, 35.0] (vx, vy, vz, vroll, vpitch, vyaw) -
-    # not a computed sensor-noise estimate, just index-numbered placeholder
-    # values nobody had overridden. Confirmed live (2026-09-17): this made
-    # ekf_sim.yaml's EKF report near-zero confidence in wheel-derived vyaw
-    # (covariance 35 = huge uncertainty) and near-infinite confidence in vx
-    # (covariance 0), so the fused yaw estimate barely tracked a real,
-    # sustained slow turn at all - it leaned almost entirely on the IMU
-    # input instead, regardless of what the wheels were actually doing.
-    # Placeholder trust values below, same "unvalidated starting point"
-    # caveat as this project's other covariance numbers (see ekf_sim.yaml/
-    # ekf.yaml) - not measured against this chassis's actual encoder noise.
-    #
-    # vyaw (last entry) deliberately trusted MORE than the simulated IMU's
-    # own covariance (1e-4, see mini_akm_robot.urdf's imu_sensor noise
-    # model): confirmed live that with vyaw trusted less than or equal to
-    # the IMU, a slow sustained turn (~0.01-0.02 rad/s, below the IMU's own
-    # noise floor at that stddev) got its real, consistently-signed wheel
-    # signal swamped by the IMU's noise-dominated near-zero-mean readings,
-    # so the fused yaw stayed nearly flat while the real heading kept
-    # changing. In sim, wheel-derived vyaw comes from ideal kinematics (no
-    # real slip to model), so it genuinely deserves more trust than a noisy
-    # gyro at low turn rates - this is a sim-specific weighting, not
-    # necessarily correct for real hardware's actual encoder noise.
-    twist_covariance_diagonal: [0.001, 0.01, 0.01, 0.01, 0.01, 0.00001]
+    # SAME as real_controller.yaml, so the sim EKF weighs wheels vs IMU the
+    # way the real car does: vx from the wheels, yaw rate from the gyro.
+    # This used to trust wheel yaw rate ~100000x more (0.00001, on the idea
+    # that sim wheels are ideal kinematics with no slip). A ground-truth
+    # check (2026-09-25, /sim/ground_truth vs odometry over a full task-1
+    # run) showed the opposite: the sim IMU stayed within 2 deg of truth,
+    # wheel-odometry heading drifted up to 119 deg through tight turns and
+    # gear changes, and the EKF followed the wheels - the car "arrived" at
+    # obstacle 3 while really 1.25 m away.
+    twist_covariance_diagonal: [0.01, 0.01, 0.01, 0.01, 0.01, 1.0]
 
     gains:
       left_joint: {p: 100.0, i: 0.1, d: 5.0}
