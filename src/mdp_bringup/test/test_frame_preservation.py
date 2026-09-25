@@ -744,7 +744,7 @@ def test_target_line_uses_the_tablets_own_obstacle_number(runner):
         runner.node.visiting_order = [1, 0]      # first stop is our obstacle index 1 -> tablet's 7
         runner.node.state = runner.module.State.PAUSE_FOR_SCAN
         runner.node.detected_target_id = detected
-        # Past the 0.6 s scan window, so the pause resolves on this tick.
+        # Past the scan window (scan_pause_s, 3 s), so the pause resolves on this tick.
         runner.node.state_start_time = runner.node.get_now_sec() - 5.0
         runner.node.control_loop()
         assert bt_lines(runner, 'TARGET') == [expected]

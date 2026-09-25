@@ -6,8 +6,8 @@
   layout YAML (mdp_bringup/config/test_obstacles.yaml by default, `layout:=`
   to pick another), inserts one model per obstacle at the <!- - OBSTACLES - ->
   marker below via mdp_bringup/scripts/obstacle_layout.py, and loads the
-  result. The same YAML goes to the planner through the fake tablet, so
-  Gazebo and the planner cannot disagree about where the obstacles are.
+  result. The same YAML goes to the planner (obstacles:=yaml / pixi run
+  setup), so Gazebo and the planner cannot disagree about where they are.
 
   COORDINATE CONVENTION (matches the planner): arena (0,0) is the BOTTOM-LEFT
   corner, x/y run 0 -> 2.0m; world origin = that corner.

@@ -12,9 +12,11 @@ Arguments
   task       0 bare car (manual drive, no runner), 1 explore + recognise,
              2 slalom                                                 (default 0)
   vision     true/false - camera + YOLO                               (default false)
-  obstacles  tablet -> the real tablet over Bluetooth on `bluetooth_device`
-             yaml   -> fake_tablet.py sends `layout` through the same bridge
-             (default: yaml in sim, tablet on the robot)
+  obstacles  tablet -> only the tablet (over Bluetooth on `bluetooth_device`)
+             yaml   -> also publish `layout` once at startup, like `pixi run setup`
+             (default: yaml in sim, tablet on the robot). The tablet link is up
+             either way, so the tablet can always send a new set.
+             Task 1 only.
   layout     obstacle layout YAML in tablet cells (config/test_obstacles.yaml).
              In sim it also places the Gazebo obstacles, so the planner and the
              arena always agree.
@@ -46,7 +48,7 @@ import tempfile
 
 from ament_index_python.packages import get_package_prefix, get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, ExecuteProcess, IncludeLaunchDescription, SetEnvironmentVariable
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, SetEnvironmentVariable
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch_ros.actions import Node
 
@@ -59,7 +61,6 @@ for _path in (os.path.join(os.path.dirname(os.path.realpath(__file__)), '..', 's
         break
 import obstacle_layout  # noqa: E402
 
-FAKE_TABLET_LINK = '/tmp/mdp_fake_tablet'
 START_POSE = {  # task -> default arena start pose
     '0': (0.15, 0.15, math.pi / 2.0),
     '1': (0.15, 0.15, math.pi / 2.0),   # rear axle in the start box, facing North
@@ -112,7 +113,7 @@ def generate_launch_description(argv=None):
         DeclareLaunchArgument('task', default_value='0', description='0 bare car (manual drive), 1 explore+recognise, 2 slalom'),
         DeclareLaunchArgument('vision', default_value='false', description='camera + YOLO'),
         DeclareLaunchArgument('obstacles', default_value='yaml in sim, tablet on real',
-                              description='tablet: real tablet over Bluetooth; yaml: fake_tablet.py sends `layout`'),
+                              description='tablet: only the tablet; yaml: also publish `layout` once at startup (task 1)'),
         DeclareLaunchArgument('layout', default_value='config/test_obstacles.yaml',
                               description='obstacle layout YAML in tablet cells (also the sim arena obstacles)'),
         DeclareLaunchArgument('start_x', default_value='per task', description='arena start x, metres'),
@@ -141,11 +142,12 @@ def generate_launch_description(argv=None):
         if task == '2':
             world_file = os.path.join(pkg_description, 'worlds', 'task2_arena.sdf')
         else:
-            # Obstacles baked in from the layout - the same file the fake
-            # tablet sends, see obstacle_layout.py.
+            # Obstacles baked in from the layout - the same file that
+            # obstacles:=yaml publishes to the planner, see obstacle_layout.py.
+            # Per-launch name, so two bringups on one machine never share it.
             with open(os.path.join(pkg_description, 'worlds', 'task1_arena.sdf')) as f:
                 world = obstacle_layout.world_sdf(f.read(), obstacle_layout.load(layout))
-            world_file = os.path.join(tempfile.gettempdir(), 'mdp_task1_arena.sdf')
+            world_file = os.path.join(tempfile.gettempdir(), f'mdp_task1_arena_{os.getpid()}.sdf')
             with open(world_file, 'w') as f:
                 f.write(world)
 
@@ -209,7 +211,13 @@ def generate_launch_description(argv=None):
                  arguments=['joint_state_broadcaster', 'ackermann_steering_controller',
                             '--controller-manager', '/controller_manager',
                             '--controller-manager-timeout', '60',
-                            '--controller-ros-args', '-r /ackermann_steering_controller/reference:=/cmd_vel']),
+                            # steering_controllers_library publishes its odom TF on
+                            # ~/tf_odometry, not /tf; without this remap nothing
+                            # owned odom -> base_footprint in sim and the car
+                            # never moved in Foxglove.
+                            '--controller-ros-args',
+                            '-r /ackermann_steering_controller/reference:=/cmd_vel '
+                            '-r /ackermann_steering_controller/tf_odometry:=/tf']),
         ]
         camera_topic = '/camera/image_raw'
     else:
@@ -257,20 +265,20 @@ def generate_launch_description(argv=None):
             package='mdp_vision', executable='yolo_detector.py', output='screen',
             parameters=[{'camera_topic': camera_topic, 'model_path': model}, sim_time]))
 
-    # Tablet link. With obstacles:=yaml the fake tablet provides the device
-    # and plays the tablet's setup; the bridge cannot tell the difference.
-    use_fake_tablet = obstacles == 'yaml' and task == '1'
+    # Tablet link - the real tablet, in sim as on the robot.
     actions.append(Node(
         package='mdp_bridge', executable='bluetooth_bridge_node', output='screen',
-        parameters=[{'device': FAKE_TABLET_LINK if use_fake_tablet else bluetooth_device}, sim_time]))
-    if use_fake_tablet:
-        actions.append(ExecuteProcess(
-            cmd=[os.path.join(get_package_prefix('mdp_bringup'), 'lib', 'mdp_bringup', 'fake_tablet.py'),
-                 layout, FAKE_TABLET_LINK],
-            name='fake_tablet', output='screen'))
+        parameters=[{'device': bluetooth_device}, sim_time]))
+    if obstacles == 'yaml' and task == '1':
+        # The layout, published once to /obstacle_setup after task1_runner
+        # subscribes - exactly what `pixi run setup` does.
+        actions.append(Node(
+            package='mdp_bringup', executable='publish_test_obstacles.py', output='screen',
+            arguments=[layout], parameters=[sim_time]))
 
     # Base nodes, any task: ROBOT,<cell>,<cell>,<dir> to the tablet + the
-    # /reset_pose service, and /bt_log for watching the tablet link.
+    # /reset_pose service, and bt_log - the tablet link's traffic on its own
+    # /bt_log topic (not /rosout, not this terminal).
     actions += [
         Node(package='mdp_bringup', executable='robot_pose_feedback.py', output='screen',
              parameters=[sim_time]),

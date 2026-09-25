@@ -12,7 +12,6 @@ install(PROGRAMS
   scripts/task1_runner.py
   scripts/task2_runner.py
   scripts/publish_test_obstacles.py
-  scripts/fake_tablet.py
   scripts/trigger.py
   scripts/drive_distance.py
   scripts/rotate_angle.py

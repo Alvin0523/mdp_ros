@@ -22,3 +22,6 @@ __pycache__/
 # vendored, not submodules
 src/mdp_vision/libcamera/
 src/mdp_vision/camera_ros/
+
+# recorded rosbags (pixi run bag) - large, keep local
+bags/

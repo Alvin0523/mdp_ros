@@ -3,9 +3,9 @@
 # ONE SOURCE for everything that needs obstacles (see scripts/obstacle_layout.py):
 #   * the sim arena - mdp.launch.py bakes one Gazebo model per entry into the
 #     world at launch (task1_arena.sdf itself has no obstacles),
-#   * the planner - fake_tablet.py sends these as the tablet's own
-#     OBSTACLE/DONE lines through bluetooth_bridge_node (`obstacles:=yaml`), or
-#     `pixi run setup` publishes the same set directly on /obstacle_setup.
+#   * the planner - `pixi run setup` (or obstacles:=yaml at launch, the sim
+#     default) publishes the set on /obstacle_setup, exactly as
+#     bluetooth_bridge_node would after the tablet sent it.
 #
 # Obstacles are given by CELL, exactly like the tablet's 20x20 grid:
 #   cell_x, cell_y: 0..19, 10 cm cells, cell (0,0) at the bottom-left.

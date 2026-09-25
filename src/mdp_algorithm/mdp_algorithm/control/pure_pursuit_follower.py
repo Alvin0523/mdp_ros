@@ -97,6 +97,9 @@ class PurePursuitController:
         self.current_pose: Pose = (0.0, 0.0, 0.0)
         self.active = False
         self._search_idx = 0   # monotonic - never re-scans behind where we already passed
+        self.last_target = None
+        self._seg_ends: List[int] = []   # last path index of each same-gear segment
+        self._seg = 0                    # segment being driven
 
     def set_path(self, path_waypoints: List[DensePose]) -> None:
         """path_waypoints: (x, y, theta, gear) tuples - gear +1/-1. A bare
@@ -108,6 +111,16 @@ class PurePursuitController:
         ]
         self._search_idx = 0
         self.active = bool(self.path)
+        # (x, y, gear) the last compute_cmd() steered at - read-only, for
+        # logging/visualisation (task1_runner's /run_status).
+        self.last_target = None
+        # Split at every gear change (cusp). Each segment is driven on its
+        # own: the lookahead search never crosses into the next segment, and
+        # the next one starts only once this one's end point is reached or
+        # passed - see compute_cmd().
+        self._seg_ends = [i - 1 for i in range(1, len(self.path))
+                          if self.path[i][3] != self.path[i - 1][3]] + [len(self.path) - 1]
+        self._seg = 0
 
     def update_pose(self, x: float, y: float, yaw: float) -> None:
         self.current_pose = (x, y, yaw)
@@ -125,15 +138,32 @@ class PurePursuitController:
         if not self.path:
             return None
 
-        for i in range(self._search_idx, len(self.path)):
+        seg_end = self._seg_ends[self._seg]
+        for i in range(self._search_idx, seg_end + 1):
             px, py, _, gear = self.path[i]
             if math.hypot(px - self.current_pose[0], py - self.current_pose[1]) >= self.lookahead_dist:
                 self._search_idx = i
                 return px, py, gear
 
-        self._search_idx = len(self.path) - 1
-        px, py, _, gear = self.path[-1]
+        self._search_idx = seg_end
+        px, py, _, gear = self.path[seg_end]
         return px, py, gear
+
+    def _segment_end_reached(self, idx: int, final: bool) -> bool:
+        """True once the car is at path[idx] (a segment's last point), or has
+        driven past it in that segment's direction while close to it. The
+        'passed' half is what stops the car dithering back and forth over a
+        point it missed by a few cm sideways. Tighter for the final checkpoint
+        than for an intermediate cusp."""
+        px, py, ptheta, gear = self.path[idx]
+        dx = self.current_pose[0] - px
+        dy = self.current_pose[1] - py
+        dist = math.hypot(dx, dy)
+        if dist <= self.goal_tolerance:
+            return True
+        along = dx * math.cos(ptheta) + dy * math.sin(ptheta)   # + = ahead of the point along its heading
+        passed = along > 0.0 if gear >= 0 else along < 0.0
+        return passed and dist <= (2.0 * self.goal_tolerance if final else 1.5 * self.lookahead_dist)
 
     def calculate_pure_pursuit(self, target_point: Tuple[float, float], gear: int = 1) -> float:
         """gear: +1 forward / -1 reverse (see set_path). BUG FIX
@@ -161,13 +191,16 @@ class PurePursuitController:
         else:
             # REVERSE: the vehicle is moving toward -local_x, so a target
             # that's actually ahead (local_x >= 0) is the anomalous case
-            # here instead. Curvature sign flips relative to forward for
-            # the same local_y - steering the front wheels toward one side
-            # swings the REAR (now the leading end while backing up) the
-            # OPPOSITE way compared to driving forward toward that side.
+            # here instead. The curvature is the SAME expression as forward:
+            # the arc through the target is one circle whichever way it is
+            # driven, and the bicycle model w = v*tan(delta)/L already turns
+            # the other way for negative v (compute_cmd() uses signed speed).
+            # This used to negate it as well, and the two flips cancelled -
+            # reversing steered AWAY from the target (2026-09-24: every
+            # reverse segment ended with the target beside the car).
             if local_x >= 0:
                 return 0.0
-            curvature = -(2.0 * local_y) / (self.lookahead_dist ** 2)
+            curvature = (2.0 * local_y) / (self.lookahead_dist ** 2)
 
         steering_angle = math.atan(self.wheelbase * curvature)
         return max(-self.max_steering_angle, min(self.max_steering_angle, steering_angle))
@@ -203,13 +236,33 @@ class PurePursuitController:
             self.active = False
             return 0.0, 0.0
 
-        goal_x, goal_y, _, _ = self.path[-1]
-        path_exhausted = self._search_idx >= len(self.path) - 1
-        if path_exhausted and math.hypot(goal_x - self.current_pose[0], goal_y - self.current_pose[1]) <= self.goal_tolerance:
-            self.active = False
-            return 0.0, 0.0
+        # End of the current same-gear segment: finished, or on to the next.
+        seg_end = self._seg_ends[self._seg]
+        final = self._seg == len(self._seg_ends) - 1
+        if self._search_idx >= seg_end and self._segment_end_reached(seg_end, final):
+            if final:
+                self.active = False
+                return 0.0, 0.0
+            self._seg += 1
+            self._search_idx = seg_end + 1
+            target = self.find_lookahead_point()
 
         target_x, target_y, gear = target
+        # Drive toward where the target actually IS, not blindly in the
+        # planned gear. After a forward segment ends a little off the line,
+        # the first REVERSE waypoint can already be in front of the car (and
+        # vice versa); the planned gear then points straight away from it,
+        # calculate_pure_pursuit() refuses to steer, and the car drives off
+        # forever - seen in sim 2026-09-24 at the end of leg 1 (forward then
+        # 5 reverse points), reversing 13 m out of the arena.
+        dx = target_x - self.current_pose[0]
+        dy = target_y - self.current_pose[1]
+        local_x = dx * math.cos(self.current_pose[2]) + dy * math.sin(self.current_pose[2])
+        if gear >= 0 and local_x < 0.0:
+            gear = -1
+        elif gear < 0 and local_x > 0.0:
+            gear = 1
+        self.last_target = (target_x, target_y, gear)
         steering_angle = self.calculate_pure_pursuit((target_x, target_y), gear)
         speed = self.target_speed if gear >= 0 else -self.target_speed
         # ackermann_steering_controller's /cmd_vel takes body yaw rate
