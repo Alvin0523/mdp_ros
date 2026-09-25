@@ -5,10 +5,9 @@ places them: a grid CELL (cell_x, cell_y: 0..19, 10 cm each, (0, 0) the
 bottom-left cell) plus the facing side of the image. Metres (`x:`/`y:`) are
 still accepted and snapped to the cell they fall in. From that one list:
 
-  * `tablet_lines()`   - the exact OBSTACLE/DONE lines the tablet sends, for
-                         fake_tablet.py to feed through bluetooth_bridge_node,
-  * `setup_string()`   - the /obstacle_setup message that bridge produces, for
-                         publish_test_obstacles.py (`pixi run setup`),
+  * `setup_string()`   - the /obstacle_setup message bluetooth_bridge_node
+                         produces for the same set, for publish_test_obstacles.py
+                         (`pixi run setup`, and obstacles:=yaml at launch),
   * `world_sdf()`      - the Gazebo arena with the obstacles baked in.
 
 The block fills its cell, so its centre is the cell corner + 5 cm - the same
@@ -61,12 +60,6 @@ def load(path: str) -> List[LayoutObstacle]:
             raise ValueError(f'{path}: obstacle {ob.id} facing {ob.facing!r} is not N/E/S/W')
         out.append(ob)
     return out
-
-
-def tablet_lines(obstacles: List[LayoutObstacle]) -> List[str]:
-    """What the tablet sends: one OBSTACLE line per block (cell corner in cm), then DONE."""
-    lines = [f'OBSTACLE,{o.id},{o.col * CELL_CM},{o.row * CELL_CM},{o.facing}' for o in obstacles]
-    return lines + ['DONE']
 
 
 def describe(obstacles: List[LayoutObstacle]) -> str:

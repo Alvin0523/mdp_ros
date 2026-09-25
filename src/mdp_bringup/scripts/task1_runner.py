@@ -22,6 +22,7 @@ publisher node, see that module's docstring for why.
 
 import math
 import threading
+from collections import Counter
 import traceback
 
 import rclpy
@@ -29,6 +30,8 @@ from rclpy.node import Node
 from rclpy.qos import QoSDurabilityPolicy, QoSProfile
 from enum import Enum, auto
 from geometry_msgs.msg import TwistStamped, PoseStamped, Point, PoseWithCovarianceStamped
+from mdp_interfaces.msg import RunStatus
+from rcl_interfaces.msg import Log
 import tf2_ros
 # Imported for its side effect: registering the geometry_msgs type conversions
 # tf2 dispatches on. `do_transform_pose` is called through the module below.
@@ -197,6 +200,23 @@ class Task1Runner(Node):
         # QoS is fine - this republishes every progress_interval nodes while
         # a search is running, nothing to catch up on for a late subscriber.
         self.search_progress_pub = self.create_publisher(MarkerArray, '/search_progress', 10)
+
+        # Monitoring:
+        #   /run_log     the run's decisions, one line per event (rcl_interfaces/Log,
+        #                via run_log()) - kept OFF /rosout so it reads on its own
+        #   /run_status  live numbers (mdp_interfaces/RunStatus, 2 Hz, plottable)
+        # The current checkpoint / chased waypoint are drawn on the existing
+        # /checkpoint_markers and /path_markers. Tablet traffic is /bt_log
+        # (bt_monitor.py); everything else stays on /rosout.
+        self.run_log_pub = self.create_publisher(Log, '/run_log', 50)
+        self.run_status_pub = self.create_publisher(RunStatus, '/run_status', 10)
+        self._last_status = 0.0
+        self._last_cmd = (0.0, 0.0)
+        # Seconds to stand still at each checkpoint while YOLO looks. Every
+        # detection in that window is kept; the most frequent is reported.
+        #   ros2 param set /task1_runner scan_pause_s 5.0
+        self.declare_parameter('scan_pause_s', 3.0)
+        self.scan_detections = []
 
         self.create_subscription(String, '/obstacle_setup', self.setup_callback, 10)
         self.create_subscription(String, '/yolo_result', self.yolo_callback, 10)
@@ -489,9 +509,15 @@ class Task1Runner(Node):
                 self.send_bt(line)
 
     def yolo_callback(self, msg: String):
-        if self.state == State.PAUSE_FOR_SCAN and self.detected_target_id is None:
-            self.detected_target_id = msg.data.strip()
-            self.get_logger().info(f"YOLO26 Identified Target: {self.detected_target_id}")
+        if self.state != State.PAUSE_FOR_SCAN:
+            return
+        target_id = msg.data.strip()
+        if not target_id:
+            return
+        if target_id not in self.scan_detections:
+            self.run_log(f"  YOLO sees '{target_id}' at obstacle {self._current_obstacle_label()}")
+        self.scan_detections.append(target_id)
+        self.detected_target_id = Counter(self.scan_detections).most_common(1)[0][0]
 
     def start_run_callback(self, request, response):
         """`/start_run` (the tablet's BEGIN / `pixi run go`). Starts only from
@@ -515,6 +541,9 @@ class Task1Runner(Node):
                 response.success = True
                 response.message = "Run started - navigating to targets."
                 self.get_logger().info("Received `go` - starting navigation.")
+                route = ' -> '.join(self._tablet_id(i) for i in self.visiting_order)
+                self.run_log(f"GO. Route: obstacles {route}")
+                self._publish_checkpoint_markers()   # highlight the first checkpoint
         elif self.state == State.WAITING_FOR_SETUP:
             response.success = False
             response.message = "Not ready: no obstacle setup received yet."
@@ -550,6 +579,8 @@ class Task1Runner(Node):
         self.state_start_time = self.get_now_sec()
         self.send_cmd(0.0, 0.0)
         self.get_logger().warn("STOP - halted; holding zeros until reset.")
+        self.run_log(f"STOP at {self._fmt_pose(self.current_pose)}; reset before the next run.", warn=True)
+        self._publish_checkpoint_markers()   # clear the 'current' highlight
         self._sync_indicators()
         response.success = True
         response.message = "Stopped."
@@ -634,6 +665,7 @@ class Task1Runner(Node):
         msg.twist.linear.x = float(linear_x)
         msg.twist.angular.z = float(angular_z)
         self.cmd_pub.publish(msg)
+        self._last_cmd = (float(linear_x), float(angular_z))
 
     def send_bt(self, text: str):
         msg = String()
@@ -652,6 +684,10 @@ class Task1Runner(Node):
             self._last_heartbeat = now
             self._last_sent.clear()
         self._sync_indicators()
+
+        if now - self._last_status >= 0.5:
+            self._last_status = now
+            self._publish_run_status(now - self.state_start_time)
 
         # Manual drive burst from the tablet (never active during a run - see
         # manual_drive_callback). Ends with an explicit zero, then the normal
@@ -779,9 +815,11 @@ class Task1Runner(Node):
             if cmd is None or self.follower.is_done():
                 self.send_cmd(0.0, 0.0)
                 self.detected_target_id = None
+                self.scan_detections = []
                 self.state = State.PAUSE_FOR_SCAN
                 self.state_start_time = now
                 self.get_logger().info(f"Arrived at Target Standoff {self.current_target_idx + 1}. Scanning...")
+                self._log_arrival()
             else:
                 self.send_cmd(*cmd)
 
@@ -789,18 +827,25 @@ class Task1Runner(Node):
         elif self.state == State.PAUSE_FOR_SCAN:
             self.send_cmd(0.0, 0.0)
 
-            if self.detected_target_id is not None or elapsed > 0.6:
+            if elapsed >= float(self.get_parameter('scan_pause_s').value):
                 target_id = self.detected_target_id if self.detected_target_id else "UNKNOWN"
                 obs_num = self._tablet_id(self.visiting_order[self.current_target_idx])
 
                 self.send_bt(f"TARGET,{obs_num},{target_id}")
                 self.get_logger().info(f"Updated Android Tablet: TARGET,{obs_num},{target_id}")
+                seen = ', '.join(f"'{k}' x{n}" for k, n in Counter(self.scan_detections).most_common()) or 'nothing'
+                self.run_log(f"Scan of obstacle {obs_num} done: YOLO saw {seen} -> sent TARGET,{obs_num},{target_id}")
 
                 self.current_target_idx += 1
                 if self.current_target_idx >= len(self.visiting_order):
                     self.state = State.FINISHED
                     self.get_logger().info("All targets processed! Auto-stopping...")
+                    self.run_log("FINISHED: all obstacles visited.")
                 else:
+                    nxt = self.current_target_idx
+                    where = (f", checkpoint {self._fmt_pose(self.checkpoints[nxt])}"
+                             if nxt < len(self.checkpoints) else '')
+                    self.run_log(f"Next: obstacle {self._current_obstacle_label()}{where}")
                     self.state = State.NAVIGATING_TO_TARGET
                     self.state_start_time = now
                     # No _start_current_leg() call here - self.follower.active
@@ -808,6 +853,7 @@ class Task1Runner(Node):
                     # so the very next NAVIGATING_TO_TARGET tick's own check
                     # picks this up automatically (and keeps polling if the
                     # background thread hasn't finished this leg yet).
+                self._publish_checkpoint_markers()   # move (or clear) the 'current' highlight
 
         # STATE 4: Finished & Auto-Stopped
         elif self.state == State.FINISHED:
@@ -1097,6 +1143,10 @@ class Task1Runner(Node):
             arrow.scale.y = 0.02
             arrow.scale.z = 0.02
             arrow.color.r, arrow.color.g, arrow.color.b, arrow.color.a = arrow_c
+            if self._in_run() and i == self.current_target_idx:
+                # The checkpoint being driven to / scanned right now: green, bigger.
+                arrow.scale.x, arrow.scale.y, arrow.scale.z = arrow_len * 1.5, 0.04, 0.04
+                arrow.color.r, arrow.color.g, arrow.color.b, arrow.color.a = 0.1, 1.0, 0.1, 1.0
             marker_array.markers.append(arrow)
 
             text = Marker()
@@ -1161,7 +1211,28 @@ class Task1Runner(Node):
             pt = Point()
             pt.x, pt.y, pt.z = float(x), float(y), 0.03
             line.points.append(pt)
-        self.path_marker_pub.publish(MarkerArray(markers=[line]))
+        markers = [line]
+
+        # The waypoint the follower is steering at right now, and a line to it
+        # from the car - magenta, orange when it is a REVERSE-gear waypoint.
+        target = self.follower.last_target
+        chase_c = (1.0, 0.5, 0.0) if target is not None and target[2] < 0 else (1.0, 0.0, 1.0)
+        dot = Marker(header=header, ns='chased_waypoint', id=0, type=Marker.SPHERE)
+        link = Marker(header=header, ns='chased_waypoint', id=1, type=Marker.LINE_STRIP)
+        if target is None:
+            dot.action = link.action = Marker.DELETE
+        else:
+            dot.pose.position.x, dot.pose.position.y, dot.pose.position.z = float(target[0]), float(target[1]), 0.05
+            dot.pose.orientation.w = 1.0
+            dot.scale.x = dot.scale.y = dot.scale.z = 0.04
+            link.pose.orientation.w = 1.0
+            link.scale.x = 0.01
+            link.points = [Point(x=float(self.current_pose[0]), y=float(self.current_pose[1]), z=0.05),
+                           Point(x=float(target[0]), y=float(target[1]), z=0.05)]
+            for m in (dot, link):
+                m.color.r, m.color.g, m.color.b, m.color.a = chase_c[0], chase_c[1], chase_c[2], 1.0
+        markers += [dot, link]
+        self.path_marker_pub.publish(MarkerArray(markers=markers))
 
     def _publish_search_progress(self, points_m):
         """Callback handed to plan_leg()/HybridAStar - called every
@@ -1252,10 +1323,86 @@ class Task1Runner(Node):
         self.follower.set_path(path)
         if not path:
             self.get_logger().warn(f"No path found to target {idx + 1}, skipping navigation.")
+            self.run_log(f"Leg {idx + 1}/{len(self.visiting_order)}: NO PATH to obstacle "
+                         f"{self._current_obstacle_label()} - skipped, scanning from here", warn=True)
+            self.scan_detections = []
             self.detected_target_id = None
             self.state = State.PAUSE_FOR_SCAN
             self.state_start_time = self.get_now_sec()
+        else:
+            self._log_leg_start(idx, path)
         return True
+
+    # ------------------------------------------------------------ run log ----
+
+    def run_log(self, text: str, warn: bool = False):
+        """One run event on /run_log (Foxglove Log panel, or `pixi run runlog`).
+        Not on /rosout, so the run's story isn't buried in node chatter."""
+        m = Log()
+        m.stamp = self.get_clock().now().to_msg()
+        m.level = Log.WARN if warn else Log.INFO
+        m.name = 'run'
+        m.msg = text
+        self.run_log_pub.publish(m)
+
+    @staticmethod
+    def _fmt_pose(pose) -> str:
+        x, y, theta = pose[0], pose[1], pose[2]
+        return f"({x:.2f}, {y:.2f}) heading {math.degrees(theta) % 360:.0f}deg"
+
+    def _log_leg_start(self, idx: int, path):
+        gears = [p[3] if len(p) > 3 else 1 for p in path]
+        switches = [i for i in range(1, len(gears)) if gears[i] != gears[i - 1]]
+        moves = ' then '.join(
+            ('forward' if gears[a] >= 0 else 'REVERSE') + f' {b - a} pts'
+            for a, b in zip([0] + switches, switches + [len(gears)]))
+        self.run_log(f"Leg {idx + 1}/{len(self.visiting_order)} -> obstacle {self._current_obstacle_label()}: "
+                     f"checkpoint {self._fmt_pose(self.checkpoints[idx])}; path {len(path)} pts: {moves}")
+
+    def _log_arrival(self):
+        cx, cy, ct = self.checkpoints[self.current_target_idx]
+        x, y, yaw = self.current_pose
+        dyaw = math.degrees(math.atan2(math.sin(yaw - ct), math.cos(yaw - ct)))
+        self.run_log(f"Arrived at obstacle {self._current_obstacle_label()}: pose {self._fmt_pose(self.current_pose)}, "
+                     f"off checkpoint by {math.hypot(x - cx, y - cy) * 100:.0f} cm / {dyaw:+.0f}deg. "
+                     f"Scanning {float(self.get_parameter('scan_pause_s').value):.1f} s")
+
+    def _in_run(self) -> bool:
+        return self.state in (State.NAVIGATING_TO_TARGET, State.PAUSE_FOR_SCAN)
+
+    def _publish_run_status(self, elapsed: float):
+        """/run_status (mdp_interfaces/RunStatus) - see that .msg for fields."""
+        msg = RunStatus()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.header.frame_id = self.arena_frame
+        msg.state = self.state.name
+        msg.plan_state = self.plan_state
+        msg.reset_done = bool(self.reset_done)
+        msg.x, msg.y, msg.yaw = (float(v) for v in self.current_pose)
+        msg.leg_count = len(self.visiting_order)
+        msg.dist_to_checkpoint = float('nan')
+        idx = self.current_target_idx
+        if self._in_run() and idx < len(self.checkpoints):
+            msg.obstacle = self._current_obstacle_label()
+            msg.leg = idx + 1
+            cx, cy, ct = self.checkpoints[idx]
+            msg.checkpoint_x, msg.checkpoint_y, msg.checkpoint_yaw = float(cx), float(cy), float(ct)
+            msg.dist_to_checkpoint = math.hypot(self.current_pose[0] - cx, self.current_pose[1] - cy)
+        if self.state == State.NAVIGATING_TO_TARGET and self.follower.last_target is not None:
+            tx, ty, gear = self.follower.last_target
+            msg.wp_index = self.follower._search_idx + 1
+            msg.wp_count = len(self.follower.path)
+            msg.target_x, msg.target_y = float(tx), float(ty)
+            msg.reverse = gear < 0
+        msg.cmd_v, msg.cmd_w = self._last_cmd
+        msg.scan_duration = float(self.get_parameter('scan_pause_s').value)
+        if self.state == State.PAUSE_FOR_SCAN:
+            msg.scan_elapsed = float(elapsed)
+            counts = Counter(self.scan_detections).most_common()
+            msg.yolo_ids = [k for k, _ in counts]
+            msg.yolo_counts = [n for _, n in counts]
+            msg.detected_id = self.detected_target_id or ''
+        self.run_status_pub.publish(msg)
 
     def _publish_planned_route(self):
         """Publishes the FULL route planned SO FAR - every leg

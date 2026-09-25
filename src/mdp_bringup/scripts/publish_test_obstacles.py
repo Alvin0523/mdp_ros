@@ -6,8 +6,8 @@ One-shot obstacle-setup publisher for task1_runner.py's /obstacle_setup
 Reads a layout YAML in tablet cells (config/test_obstacles.yaml by default, see
 obstacle_layout.py) and publishes exactly the message bluetooth_bridge_node
 would publish after the tablet sent that set and DONE - cell centres, metres.
-Useful on the real robot without the tablet; the sim instead runs
-fake_tablet.py, which goes through the bridge like the real tablet does.
+Useful without the tablet; mdp.launch.py also runs it at startup for
+obstacles:=yaml (the sim default).
 
 Publishes exactly ONCE, like the bridge on DONE - task1_runner treats every
 message as a new set and replans, so repeated publishes would restart planning

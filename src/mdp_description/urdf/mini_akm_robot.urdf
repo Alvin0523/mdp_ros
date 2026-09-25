@@ -332,9 +332,14 @@
       link="left_link" />
     <axis
       xyz="0 0 1" />
+    <!-- Same measured steering envelope as mini_akm_real_robot.urdf
+         (right -0.5672 = 32.5deg, left +0.7505 = 43.0deg), so the sim car can
+         turn as tightly as the planner assumes (MIN_TURN_RADIUS_CM, 22.5 cm).
+         Was the HWZ020 datasheet +/-0.39 (35 cm turns): legs with tight
+         planned turns were unfollowable in sim only. -->
     <limit
-      lower="-0.39"
-      upper="0.39"
+      lower="-0.5672"
+      upper="0.7505"
       effort="10.0"
       velocity="5.0" />
   </joint>
@@ -443,9 +448,14 @@
       link="right_link" />
     <axis
       xyz="0 0 1" />
+    <!-- Same measured steering envelope as mini_akm_real_robot.urdf
+         (right -0.5672 = 32.5deg, left +0.7505 = 43.0deg), so the sim car can
+         turn as tightly as the planner assumes (MIN_TURN_RADIUS_CM, 22.5 cm).
+         Was the HWZ020 datasheet +/-0.39 (35 cm turns): legs with tight
+         planned turns were unfollowable in sim only. -->
     <limit
-      lower="-0.39"
-      upper="0.39"
+      lower="-0.5672"
+      upper="0.7505"
       effort="10.0"
       velocity="5.0" />
   </joint>
