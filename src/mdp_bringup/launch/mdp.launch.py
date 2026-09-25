@@ -141,6 +141,7 @@ def generate_launch_description(argv=None):
 
         if task == '2':
             world_file = os.path.join(pkg_description, 'worlds', 'task2_arena.sdf')
+            world_name = 'task2_arena'
         else:
             # Obstacles baked in from the layout - the same file that
             # obstacles:=yaml publishes to the planner, see obstacle_layout.py.
@@ -148,6 +149,7 @@ def generate_launch_description(argv=None):
             with open(os.path.join(pkg_description, 'worlds', 'task1_arena.sdf')) as f:
                 world = obstacle_layout.world_sdf(f.read(), obstacle_layout.load(layout))
             world_file = os.path.join(tempfile.gettempdir(), f'mdp_task1_arena_{os.getpid()}.sdf')
+            world_name = 'task1_arena'
             with open(world_file, 'w') as f:
                 f.write(world)
 
@@ -175,6 +177,11 @@ def generate_launch_description(argv=None):
                             '-x', str(start_x), '-y', str(start_y), '-z', '0.05', '-Y', str(start_yaw)]),
             Node(package='ros_gz_bridge', executable='parameter_bridge', output='screen',
                  parameters=[sim_time],
+                 # Gazebo's TRUE pose of every moving model (the car is
+                 # 'mini_akm_robot', its base_footprint, in the world = arena
+                 # frame) on /sim/ground_truth - to check odometry/EKF and
+                 # arrival accuracy. Deliberately NOT /tf.
+                 remappings=[(f'/world/{world_name}/dynamic_pose/info', '/sim/ground_truth')],
                  arguments=[
                      '/clock@rosgraph_msgs/msg/Clock[gz.msgs.Clock',
                      # /cmd_vel is NOT bridged: the runner's TwistStamped goes
@@ -185,6 +192,7 @@ def generate_launch_description(argv=None):
                      '/camera/image_raw@sensor_msgs/msg/Image[gz.msgs.Image',
                      '/camera/camera_info@sensor_msgs/msg/CameraInfo[gz.msgs.CameraInfo',
                      '/imu/data@sensor_msgs/msg/Imu[gz.msgs.IMU',
+                     f'/world/{world_name}/dynamic_pose/info@tf2_msgs/msg/TFMessage[gz.msgs.Pose_V',
                  ]),
             # gz-sim stamps sensor messages with its own scoped frame names and
             # there is no SDF override, so transforms from the URDF links the
