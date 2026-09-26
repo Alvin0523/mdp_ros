@@ -60,3 +60,37 @@ MIN_TURN_RADIUS_CM = round(WHEELBASE_CM / math.tan(math.radians(_STEERING_CLAMP_
 # (or rear-axle-to-center) distance before trusting collision checks near
 # tight obstacle gaps.
 REAR_AXLE_TO_CENTER_CM = 9.5
+
+
+# --- Per-side turning radius (2026-09-25) ------------------------------------
+# The steering is NOT symmetric: measured protractor limits are LEFT +43.0deg
+# (chassis contact) and RIGHT -32.5deg (mechanical stop), see _STEERING_CLAMP_DEG
+# above. wheelbase / tan(angle) gives the tightest rear-axle turning circle on
+# each side. The planner uses one radius per side (footprint_astar.py) instead of
+# the single, right-limited one, and plans with PLAN_RADIUS_MARGIN headroom so
+# the follower still has steering authority (the servo has dead band and backlash,
+# and which wheel each protractor reading came from was never recorded).
+_STEERING_CLAMP_LEFT_DEG = 43.0
+MIN_TURN_RADIUS_LEFT_CM = round(WHEELBASE_CM / math.tan(math.radians(_STEERING_CLAMP_LEFT_DEG)), 1)
+MIN_TURN_RADIUS_RIGHT_CM = MIN_TURN_RADIUS_CM
+PLAN_RADIUS_MARGIN = 1.15
+PLAN_TURN_RADIUS_LEFT_CM = round(MIN_TURN_RADIUS_LEFT_CM * PLAN_RADIUS_MARGIN, 1)
+PLAN_TURN_RADIUS_RIGHT_CM = round(MIN_TURN_RADIUS_RIGHT_CM * PLAN_RADIUS_MARGIN, 1)
+
+# --- Body footprint, rear-axle frame (2026-09-25) -----------------------------
+# From the URDF and base_link.STL (mdp_description): the chassis mesh spans
+# x -10.07..+12.90 cm and y +-7.68 cm in base_link, whose rear axle is at
+# x = -6.966 cm (rb_joint / lb_joint), so the chassis runs 3.1 cm behind to
+# 19.87 cm ahead of the rear axle. The rear tyres (radius 3.32 cm, centre at
+# the axle) reach 3.32 cm behind it and, at track +-7.975 cm plus half a tyre
+# width, +-9.24 cm sideways. Camera, controller board and IMU sit inside this
+# outline. Mesh values, not tape-measure: verify the nose distance on the car.
+FOOTPRINT_REAR_CM = 3.3
+FOOTPRINT_FRONT_CM = 19.9
+FOOTPRINT_HALF_WIDTH_CM = 9.3
+
+# Clearance kept between the body and an obstacle block / the table edge, on top
+# of the body outline: covers dead-reckoning error and the few cm of path-tracking
+# error. The checkpoint stand-off leaves 20 - 5 - 9.3 = 5.7 cm at the side.
+OBSTACLE_PAD_CM = 3.0
+TABLE_EDGE_MARGIN_CM = 2.0

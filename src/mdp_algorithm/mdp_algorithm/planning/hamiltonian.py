@@ -34,7 +34,8 @@ import numpy as np
 from ..common import geometry_utils as utils
 from . import reeds_shepp_curves as rs
 from ..common.motion_primitives import Gear, Steering
-from .occupancy_map import INFLATION_RADIUS_CM, Obstacle, OccupancyMap
+from .footprint import pose_collides
+from .occupancy_map import INFLATION_RADIUS_CM, Obstacle, OccupancyMap, snap_to_cell_centre
 
 Checkpoint = Tuple[float, float, float, int]  # (x_cm, y_cm, theta_rad, obstacle_id)
 
@@ -365,7 +366,18 @@ def obstacle_to_checkpoint(map: OccupancyMap, obstacle: Obstacle, theta_offset: 
     y = obstacle.y_cm + INFLATION_RADIUS_CM * np.sin(facing_rad)
     theta = utils.M(facing_rad + np.pi - theta_offset)
 
+    # Snap to the CENTRE of the cell the point falls in (never on a grid line): the
+    # tablet and the planner both work in whole cells, so a checkpoint is a cell,
+    # e.g. (1,1) or (10,9). For cell-centred obstacles (the tablet's convention)
+    # this changes nothing; it only matters for an off-centre obstacle coordinate.
+    x, y = snap_to_cell_centre(x), snap_to_cell_centre(y)
+
     if _blocked_by_any_obstacle(map, x, y):
+        return None
+    # The body at the checkpoint pose must fit: on the table and clear of every block
+    # (footprint.py). This is what makes an obstacle facing off the table, or one
+    # boxed in by another, unreachable instead of planned to an impossible pose.
+    if pose_collides(map.obstacles, x, y, theta):
         return None
     return (x, y, theta, obstacle.id)
 

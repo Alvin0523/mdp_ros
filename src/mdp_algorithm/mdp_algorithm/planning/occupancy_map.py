@@ -54,13 +54,19 @@ PLACEMENT_ZONE_CELLS = int(ARENA_SIZE_CM / CELL_SIZE_CM)   # 20 - the nominal zo
 # scan side, and by add_obstacles_to_grid()'s inflation radius below.
 OBSTACLE_SIZE_CM = 10.0
 
-# How far past the nominal placement zone the robot may be planned, on every
-# side - not a wall moved outward, just search headroom. Adjustable; 100cm
-# was picked as a reasonable maneuvering margin, not a spec value.
-GRID_MARGIN_CM = 100.0
+# REVISED 2026-09-25: the grid is exactly the 2m x 2m table (was padded by
+# 100cm on every side). Planning outside it means driving off the table.
+# The outermost EDGE_KEEPOUT_CM (one cell) is blocked so the whole car, not just
+# its rear-axle reference point, stays on the table (car is ~16cm wide).
+# Consequence: a checkpoint (obstacle centre + 20cm) that falls in that strip
+# is unreachable - obstacles are not placed that close to the edge facing out.
+# Set GRID_MARGIN_CM > 0 and EDGE_KEEPOUT_CM = 0 to restore the old behaviour.
+GRID_MARGIN_CM = 0.0
 GRID_MARGIN_CELLS = int(GRID_MARGIN_CM / CELL_SIZE_CM)   # 10
 
-GRID_SIZE = PLACEMENT_ZONE_CELLS + 2 * GRID_MARGIN_CELLS   # 40 - the actual (padded) array size
+GRID_SIZE = PLACEMENT_ZONE_CELLS + 2 * GRID_MARGIN_CELLS   # 20 - the actual array size
+EDGE_KEEPOUT_CM = 10.0
+EDGE_KEEPOUT_CELLS = int(round(EDGE_KEEPOUT_CM / CELL_SIZE_CM))   # 1
 
 # Keep-out radius, in cm, from an obstacle's CENTRE - a true circle (Euclidean
 # distance, see add_obstacles_to_grid), not a square of grid cells like the
@@ -94,6 +100,12 @@ class Obstacle:
     y_cm: float
     facing: str
     id: int = -1
+
+
+def snap_to_cell_centre(v_cm: float) -> float:
+    """Centre of the 10 cm cell containing v_cm (cm). Obstacles and checkpoints live
+    on cells, never on grid lines: cell 10 is 100..110 cm, centre 105."""
+    return float(np.floor(v_cm / CELL_SIZE_CM + 1e-9) * CELL_SIZE_CM + CELL_SIZE_CM / 2.0)
 
 
 def grid_to_coords(x_g: float, y_g: float) -> Tuple[float, float]:
@@ -130,6 +142,14 @@ class OccupancyMap:
         self.xmin, self.xmax, self.ymin, self.ymax = grid_to_coords(0, 0) + grid_to_coords(GRID_SIZE, GRID_SIZE)
         self.obstacles: List[Obstacle] = []
         self.occupancy_grid = np.zeros((GRID_SIZE, GRID_SIZE))
+        # Table edge keep-out: the outer EDGE_KEEPOUT_CELLS ring of the placement zone.
+        k, m = EDGE_KEEPOUT_CELLS, GRID_MARGIN_CELLS
+        if k > 0:
+            lo, hi = m, GRID_SIZE - m
+            self.occupancy_grid[lo:lo + k, lo:hi] = 1
+            self.occupancy_grid[hi - k:hi, lo:hi] = 1
+            self.occupancy_grid[lo:hi, lo:lo + k] = 1
+            self.occupancy_grid[lo:hi, hi - k:hi] = 1
 
         self.add_obstacles_to_grid(obstacles)
 
@@ -164,11 +184,13 @@ class OccupancyMap:
                     cell_x, cell_y = grid_to_coords(i, j)
                     cell_cx = cell_x + CELL_SIZE_CM / 2.0
                     cell_cy = cell_y + CELL_SIZE_CM / 2.0
-                    # + 1e-6 tolerance: obstacle coordinates arrive as metres*100
-                    # (0.55*100 = 55.00000000000001), so a cell EXACTLY on the
-                    # radius (a cell centre 20 cm away at a cell-centred obstacle)
-                    # was included on one side and dropped on the other.
-                    if (cell_cx - obstacle.x_cm) ** 2 + (cell_cy - obstacle.y_cm) ** 2 <= r ** 2 + 1e-6:
+                    # STRICT (< r, with a 1e-6 tolerance so a cell exactly on the
+                    # radius is FREE on every side): a checkpoint sits exactly
+                    # INFLATION_RADIUS_CM from its obstacle's centre and its cell
+                    # must not be inside that obstacle's own inflation. Obstacle
+                    # centres are snapped to cell centres, so the four cells 20 cm
+                    # straight out are exactly on the radius (no float noise).
+                    if (cell_cx - obstacle.x_cm) ** 2 + (cell_cy - obstacle.y_cm) ** 2 < r ** 2 - 1e-6:
                         self.occupancy_grid[i, j] = 1
 
     def collide_with_point(self, x: float, y: float) -> bool:
