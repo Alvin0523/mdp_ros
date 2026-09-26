@@ -260,6 +260,13 @@ class Task1Runner(Node):
 
         # Planner & path-following state
         self.follower = PurePursuitController()
+        # Driving speed of the planned run - live: `ros2 param set /task1_runner
+        # follow_speed_mps 0.3` (read again before every command, clamped 0.05-0.5).
+        # The lookahead should grow with speed (a higher speed at a short lookahead
+        # oscillates); 0 = automatic, scaled with the speed.
+        self.declare_parameter('follow_speed_mps', self.follower.target_speed)
+        self.declare_parameter('follow_lookahead_m', 0.0)
+        self._default_lookahead = self.follower.lookahead_dist
         self.current_pose = (0.0, 0.0, math.pi / 2)  # x, y, yaw - updated by odom_callback
         self.state = State.WAITING_FOR_SETUP
 
@@ -811,6 +818,12 @@ class Task1Runner(Node):
                     return   # _start_current_leg() moved us to PAUSE_FOR_SCAN (empty leg)
 
             self._publish_current_path()
+            speed = min(0.5, max(0.05, float(self.get_parameter('follow_speed_mps').value)))
+            look = float(self.get_parameter('follow_lookahead_m').value)
+            self.follower.target_speed = speed
+            self.follower.lookahead_dist = (look if look > 0.0 else
+                                            max(self._default_lookahead,
+                                                self._default_lookahead * speed / 0.2))
             cmd = self.follower.compute_cmd()
             if cmd is None or self.follower.is_done():
                 self.send_cmd(0.0, 0.0)
@@ -1149,6 +1162,28 @@ class Task1Runner(Node):
                 arrow.color.r, arrow.color.g, arrow.color.b, arrow.color.a = 0.1, 1.0, 0.1, 1.0
             marker_array.markers.append(arrow)
 
+            # Two floating texts, like an obstacle's: the visit index (the
+            # obstacle shows its own number here), and above it the tablet cell
+            # (x = column, y = row from the bottom-left). `visit_pos` is the visit
+            # order (see above), not the obstacle's own number.
+            cell_x = int(math.floor(x * 100.0 / CELL_SIZE_CM + 1e-6))
+            cell_y = int(math.floor(y * 100.0 / CELL_SIZE_CM + 1e-6))
+
+            index = Marker()
+            index.header.stamp = header_stamp
+            index.header.frame_id = self.arena_frame
+            index.ns = 'checkpoint_ids'
+            index.id = 200 + i
+            index.type = Marker.TEXT_VIEW_FACING
+            index.action = Marker.ADD
+            index.pose.position.x = float(x)
+            index.pose.position.y = float(y)
+            index.pose.position.z = 0.102
+            index.scale.z = 0.07
+            index.color.r, index.color.g, index.color.b, index.color.a = arrow_c
+            index.text = str(visit_pos)
+            marker_array.markers.append(index)
+
             text = Marker()
             text.header.stamp = header_stamp
             text.header.frame_id = self.arena_frame
@@ -1158,15 +1193,10 @@ class Task1Runner(Node):
             text.action = Marker.ADD
             text.pose.position.x = float(x)
             text.pose.position.y = float(y)
-            text.pose.position.z = 0.18
-            text.scale.z = 0.08
+            text.pose.position.z = self.get_parameter('obstacle_label_height_m').value
+            text.scale.z = 0.07
             text.color.r, text.color.g, text.color.b, text.color.a = arrow_c
-            # No "CP" prefix - checkpoint markers are already colour-coded
-            # distinctly from obstacle markers (checkpoint_color vs
-            # obstacle_color). Number shown is visit_pos (see above), NOT
-            # the obstacle's own #N. .1f, not .2f - see obstacle label
-            # above, same 10cm-grid-resolution reasoning.
-            text.text = f"#{visit_pos} ({x:.1f}, {y:.1f}, {math.degrees(theta):.0f}deg)"
+            text.text = f"({cell_x},{cell_y})"
             marker_array.markers.append(text)
 
         self.checkpoint_marker_pub.publish(marker_array)

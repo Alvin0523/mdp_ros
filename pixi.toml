@@ -19,9 +19,9 @@ clean = { cmd = "rm -rf build install log", description = "Delete build, install
 #   pixi run sim task:=1                         the same in Gazebo (laptop)
 #   pixi run sim task:=1 obstacles:=tablet       Gazebo, obstacles only from the real tablet
 #   obstacles:=tablet|yaml  layout:=<cells.yaml>  gui:=false (sim)
-#   start_x start_y start_yaw  serial_port:=/dev/ttyACM0  bluetooth_device:=/dev/rfcomm0
-real = { cmd = "ros2 launch mdp_bringup mdp.launch.py sim:=false serial_port:=/dev/ttyACM0", description = "Real robot bringup. Args: task:=0|1|2 vision:=true|false obstacles:=tablet|yaml start_x start_y start_yaw serial_port bluetooth_device" }
-drive = { cmd = "ros2 launch mdp_bringup mdp.launch.py sim:=false serial_port:=/dev/ttyACM0 task:=0 vision:=false", description = "Alias: bare car (no runner, no camera) for motion tests" }
+#   start_x start_y start_yaw  serial_port:=/dev/serial/by-id/usb-1a86_USB_Single_Serial_5A6C068008-if00  bluetooth_device:=/dev/rfcomm0
+real = { cmd = "ros2 launch mdp_bringup mdp.launch.py sim:=false serial_port:=/dev/serial/by-id/usb-1a86_USB_Single_Serial_5A6C068008-if00", description = "Real robot bringup. Args: task:=0|1|2 vision:=true|false obstacles:=tablet|yaml start_x start_y start_yaw serial_port bluetooth_device" }
+drive = { cmd = "ros2 launch mdp_bringup mdp.launch.py sim:=false serial_port:=/dev/serial/by-id/usb-1a86_USB_Single_Serial_5A6C068008-if00 task:=0 vision:=false", description = "Alias: bare car (no runner, no camera) for motion tests" }
 sim = { cmd = "ros2 launch mdp_bringup mdp.launch.py sim:=true", description = "Gazebo bringup, same args as real (+ gui:=false)" }
 sim1 = { cmd = "ros2 launch mdp_bringup mdp.launch.py sim:=true task:=1", description = "Alias: Gazebo task 1" }
 sim2 = { cmd = "ros2 launch mdp_bringup mdp.launch.py sim:=true task:=2", description = "Alias: Gazebo task 2" }
