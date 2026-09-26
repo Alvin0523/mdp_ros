@@ -17,8 +17,10 @@ from typing import Callable, List, Optional, Tuple
 
 from .hamiltonian import Hamiltonian, obstacle_to_checkpoint
 from .hybrid_astar import HybridAStar
-from .occupancy_map import Obstacle, OccupancyMap
-from ..common.planning_constants import MIN_TURN_RADIUS_CM
+from .footprint_astar import FootprintHybridAStar
+from .occupancy_map import Obstacle, OccupancyMap, snap_to_cell_centre
+from ..common.planning_constants import (
+    MIN_TURN_RADIUS_CM, PLAN_TURN_RADIUS_LEFT_CM, PLAN_TURN_RADIUS_RIGHT_CM)
 
 CM_PER_M = 100.0
 
@@ -90,7 +92,10 @@ def plan_visiting_order(obstacles_grid: List[ObstacleSpec], start_pose_m: Pose,
     """
     minR = min_turn_radius_cm if min_turn_radius_cm is not None else MIN_TURN_RADIUS_CM
 
-    obstacles = [Obstacle(x_cm=x_cm, y_cm=y_cm, facing=facing, id=i)
+    # An obstacle is a cell: its centre is the cell's centre, whatever precise
+    # coordinate was given (the tablet only knows cells).
+    obstacles = [Obstacle(x_cm=snap_to_cell_centre(x_cm), y_cm=snap_to_cell_centre(y_cm),
+                          facing=facing, id=i)
                  for i, (x_cm, y_cm, facing) in enumerate(obstacles_grid)]
     occ_map = OccupancyMap(obstacles)
 
@@ -152,7 +157,10 @@ def plan_visiting_order_min_time(
     """
     minR = min_turn_radius_cm if min_turn_radius_cm is not None else MIN_TURN_RADIUS_CM
 
-    obstacles = [Obstacle(x_cm=x_cm, y_cm=y_cm, facing=facing, id=i)
+    # An obstacle is a cell: its centre is the cell's centre, whatever precise
+    # coordinate was given (the tablet only knows cells).
+    obstacles = [Obstacle(x_cm=snap_to_cell_centre(x_cm), y_cm=snap_to_cell_centre(y_cm),
+                          facing=facing, id=i)
                  for i, (x_cm, y_cm, facing) in enumerate(obstacles_grid)]
     occ_map = OccupancyMap(obstacles)
 
@@ -218,18 +226,24 @@ def plan_leg(occ_map: OccupancyMap, start_pose_m: Pose, target_pose_m: Pose,
     not just its (x, y, theta). Dropping this used to send the car forward
     along paths only valid in reverse - see DensePose's own comment above.
     """
-    minR = min_turn_radius_cm if min_turn_radius_cm is not None else MIN_TURN_RADIUS_CM
+    # One radius per side (left steers harder than right on this car), each with
+    # headroom - see planning_constants.PLAN_TURN_RADIUS_*. An explicit
+    # min_turn_radius_cm overrides both (symmetric).
+    if min_turn_radius_cm is not None:
+        r_left = r_right = min_turn_radius_cm
+    else:
+        r_left, r_right = PLAN_TURN_RADIUS_LEFT_CM, PLAN_TURN_RADIUS_RIGHT_CM
 
     cm_callback = None
     if progress_callback is not None:
         def cm_callback(points_cm: List[Tuple[float, float]]) -> None:
             progress_callback([(x / CM_PER_M, y / CM_PER_M) for x, y in points_cm])
 
-    planner = HybridAStar(
+    planner = FootprintHybridAStar(
         occ_map,
         x_0=start_pose_m[0] * CM_PER_M, y_0=start_pose_m[1] * CM_PER_M, theta_0=start_pose_m[2],
         x_f=target_pose_m[0] * CM_PER_M, y_f=target_pose_m[1] * CM_PER_M, theta_f=target_pose_m[2],
-        theta_offset=theta_offset, L=step_cm, minR=minR, heuristic='hybriddiag',
+        step_cm=step_cm, r_left=r_left, r_right=r_right,
         progress_callback=cm_callback, progress_interval=progress_interval,
     )
     nodes, _ = planner.find_path()
