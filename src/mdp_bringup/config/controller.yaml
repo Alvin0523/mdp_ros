@@ -1,0 +1,55 @@
+# ros2_control for the car - the same file for sim (gz_ros2_control) and real
+# (ros2_control_node). The car's dimensions are NOT here: mdp.launch.py fills in
+# wheelbase, traction_track_width and the wheel radii from the URDF
+# (mdp_description/urdf/mdp_robot.urdf.xacro).
+controller_manager:
+  ros__parameters:
+    update_rate: 50
+
+    joint_state_broadcaster:
+      type: joint_state_broadcaster/JointStateBroadcaster
+
+    ackermann_steering_controller:
+      type: ackermann_steering_controller/AckermannSteeringController
+
+ackermann_steering_controller:
+  ros__parameters:
+    reference_timeout: 10.0
+    cmd_vel_timeout: 10.0
+    publish_limited_velocity: true
+    use_stamped_vel: true
+    open_loop: false
+
+    # RIGHT joint first, then LEFT - the order steering_controllers_library
+    # expects. Left-first made the inner wheel spin faster than the outer one.
+    steering_joints_names: ['right_joint', 'left_joint']
+    traction_joints_names: ['rb_joint', 'lb_joint']
+
+    # wheelbase, traction_track_width, steering_wheels_radius,
+    # traction_wheels_radius: from the URDF (mdp.launch.py).
+
+    # ~0, not the real 0.104 m, ON PURPOSE: ONE servo drives the right wheel and
+    # a tie rod the left, so both front wheels always have the same angle (43 deg
+    # full left, 32.5 deg full right). A real track makes the controller split the
+    # angle into Ackermann inner/outer angles (sim: the inner wheel hit its limit
+    # first; real: the serial bridge averaged them, ~1 deg off). 0.0 itself means
+    # "use traction_track_width", hence 0.0001.
+    steering_track_width: 0.0001
+
+    # The EKF (ekf.yaml) owns odom -> base_footprint, in sim as on the car; the
+    # controller still publishes ~/odometry for it.
+    enable_odom_tf: false
+    odom_frame_id: odom
+    base_frame_id: base_footprint
+
+    # (vx, vy, vz, vroll, vpitch, vyaw). The library's default is placeholder
+    # numbers [0, 7, 14, 21, 28, 35] (vx trusted infinitely, vyaw not at all).
+    # vyaw 1.0: the EKF takes yaw rate from the gyro - wheel odometry yaw
+    # over-read a physical 180 deg turn by 9% (it takes the commanded steering
+    # angle as the real one), and in sim drifted up to 119 deg through tight
+    # turns while the IMU stayed within 2 deg of ground truth.
+    twist_covariance_diagonal: [0.01, 0.01, 0.01, 0.01, 0.01, 1.0]
+
+    gains:
+      left_joint: {p: 100.0, i: 0.1, d: 5.0}
+      right_joint: {p: 100.0, i: 0.1, d: 5.0}

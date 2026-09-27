@@ -4,7 +4,7 @@
  *
  * The link is a plain serial device (default /dev/rfcomm0). Every message is one
  * line ending in '\n'. The bridge only translates - all decisions live in
- * task1_runner.py.
+ * task1_runner.
  *
  * Tablet -> ROS
  *   OBSTACLE,<n>,<x>,<y>,<N|E|S|W>  collected; x,y are the tablet cell's lower-left
@@ -14,6 +14,8 @@
  *                                   CELL CENTRE = corner + 5 cm)
  *   BEGIN                           call /start_run
  *   STOP                            call /stop_run
+ *   RESET                           call /reset_pose (car back at the start pose,
+ *                                   like `pixi run reset`)
  *   CLEAR                           resend the current ROBOT line
  *   f b fl fr bl br                 publish on /manual_drive
  *
@@ -146,6 +148,7 @@ public:
       [this](const std_msgs::msg::String::SharedPtr msg) {onTx(msg->data);});
     start_client_ = create_client<std_srvs::srv::Trigger>("/start_run");
     stop_client_ = create_client<std_srvs::srv::Trigger>("/stop_run");
+    reset_client_ = create_client<std_srvs::srv::Trigger>("/reset_pose");
 
     timer_ = create_wall_timer(std::chrono::milliseconds(10), [this]() {poll();});
     RCLCPP_INFO(get_logger(), "bluetooth_bridge_node: waiting for %s", device_.c_str());
@@ -160,11 +163,18 @@ private:
   {
     fd_ = ::open(device_.c_str(), O_RDWR | O_NOCTTY | O_NONBLOCK);
     if (fd_ < 0) {
-      RCLCPP_WARN_THROTTLE(
-        get_logger(), *get_clock(), 10000, "cannot open %s: %s (retrying)",
-        device_.c_str(), std::strerror(errno));
+      // Keep retrying every reopen_period_s, but say so once (and again only
+      // if the reason changes) - the live state is on /diagnostics
+      // (mdp/Tablet link) and /bluetooth_bridge/link_ok.
+      const std::string why = std::strerror(errno);
+      if (why != last_open_error_) {
+        last_open_error_ = why;
+        RCLCPP_WARN(get_logger(), "cannot open %s: %s - retrying quietly until the tablet connects",
+          device_.c_str(), why.c_str());
+      }
       return;
     }
+    last_open_error_.clear();
     termios tio{};
     if (tcgetattr(fd_, &tio) == 0) {
       cfmakeraw(&tio);
@@ -339,6 +349,8 @@ private:
       callTrigger(start_client_, "/start_run");
     } else if (cmd == "STOP" && f.size() == 1) {
       callTrigger(stop_client_, "/stop_run");
+    } else if (cmd == "RESET" && f.size() == 1) {
+      callTrigger(reset_client_, "/reset_pose");
     } else if (cmd == "CLEAR" && f.size() == 1) {
       if (!robot_line_.empty()) {
         queueLine(robot_line_);
@@ -437,6 +449,7 @@ private:
   std::string rx_buf_;
   std::string tx_buf_;
   bool got_rx_since_open_{false};
+  std::string last_open_error_;   // last open() failure already logged
 
   std::vector<Obstacle> obstacles_;
   bool set_closed_{false};
@@ -451,6 +464,7 @@ private:
   rclcpp::Subscription<std_msgs::msg::String>::SharedPtr tx_sub_;
   rclcpp::Client<std_srvs::srv::Trigger>::SharedPtr start_client_;
   rclcpp::Client<std_srvs::srv::Trigger>::SharedPtr stop_client_;
+  rclcpp::Client<std_srvs::srv::Trigger>::SharedPtr reset_client_;
   rclcpp::TimerBase::SharedPtr timer_;
 };
 

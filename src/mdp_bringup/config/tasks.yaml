@@ -1,0 +1,36 @@
+# Obstacle layouts - ONE file for Gazebo AND the planners. Change a block here
+# and relaunch: the sim arena and the runner both get it.
+#
+#   task1  mdp.launch.py builds the Gazebo arena with these blocks, and (with
+#          obstacles:=yaml, the sim default, or `pixi run setup`) publishes them
+#          on /obstacle_setup exactly as the tablet's bridge would. In a real
+#          run the tablet sends the layout; in sim, a tablet layout that differs
+#          from this one replaces the Gazebo blocks too (sim_obstacles).
+#   task2  mdp.launch.py builds the task 2 arena with these blocks, and
+#          task2_runner plans its slalom around them.
+#
+# Another file: `pixi run sim task:=1 layout:=/path/my_tasks.yaml`.
+
+task1:
+  # By CELL, exactly like the tablet's 20 x 20 grid: cell_x, cell_y 0..19,
+  # 10 cm cells, (0, 0) bottom-left. The 10 cm block fills its cell, so cell
+  # (3, 3) is the block centred on (0.35, 0.35) m. The car starts in the 40 cm
+  # start box = cells 0..3 x 0..3.
+  # facing: N/E/S/W - the side of the block with the image.
+  # symbol: sim only - models/symbols/<symbol>.obj printed on that side.
+  # A made-up layout for testing, NOT a competition layout.
+  obstacles:
+    - {id: 1, cell_x: 5,  cell_y: 10, facing: S, symbol: 20_AlphabetA}
+    - {id: 2, cell_x: 12, cell_y: 4,  facing: W, symbol: 11_One}
+    - {id: 3, cell_x: 17, cell_y: 15, facing: N, symbol: 36_ArrowUp}
+    - {id: 4, cell_x: 15, cell_y: 9,  facing: S, symbol: 12_Two}
+
+task2:
+  # Metres. The car starts in the carpark at (0, 0) facing +x (east) and drives
+  # out toward the blocks; it passes block 1 on the side its arrow shows and
+  # block 2 on the other, round the back of block 2 and home.
+  # size: x y z of the block; facing: the side with the arrow (W = toward the
+  # carpark).
+  obstacles:
+    - {id: 1, x: 1.0, y: 0.0, size: [0.10, 0.10, 0.20], facing: W, symbol: 39_ArrowLeft}
+    - {id: 2, x: 1.8, y: 0.0, size: [0.10, 0.30, 0.20], facing: W, symbol: 38_ArrowRight}

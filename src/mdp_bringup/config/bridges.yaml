@@ -1,0 +1,14 @@
+# The two serial links. Override a device at launch:
+#   pixi run real serial_port:=/dev/ttyUSB0 bluetooth_device:=/dev/rfcomm1
+
+serial_bridge_node:            # STM32 (real robot only)
+  ros__parameters:
+    # by-id, not /dev/ttyUSB0: the number changes when another USB serial
+    # device is plugged in, this name never does (it is the CH340's serial).
+    serial_port: /dev/serial/by-id/usb-1a86_USB_Single_Serial_5A6C068008-if00
+    baud_rate: 115200
+
+bluetooth_bridge_node:         # the tablet (sim and real)
+  ros__parameters:
+    device: /dev/rfcomm0
+    reopen_period_s: 1.0       # s between attempts to reopen a lost link

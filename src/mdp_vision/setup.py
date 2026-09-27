@@ -12,9 +12,8 @@ setup(
         ('share/ament_index/resource_index/packages',
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
-        (os.path.join('share', package_name, 'launch'), glob('launch/*.launch.py')),
-        # Install every exported model dir under models/ (best_ncnn_model =
-        # MDP-trained default, yolo26n_ncnn_model = stock COCO debug net), each
+        # Install every exported model dir under models/ (mdp_v2_ncnn_model =
+        # default, mdp_v1_ncnn_model = older), each
         # to its own share/mdp_vision/models/<name>/ so the detector's
         # model_path=<name> switch can resolve any of them.
         *[
@@ -22,7 +21,6 @@ setup(
                 [f for f in glob(os.path.join(d, '*')) if os.path.isfile(f)])
             for d in glob('models/*') if os.path.isdir(d)
         ],
-        (os.path.join('share', package_name, 'config'), glob('config/*.yaml')),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
@@ -36,9 +34,7 @@ setup(
     entry_points={
         'console_scripts': [
             'rpi_cam_publisher = mdp_vision.rpi_cam_publisher:main',
-            'rpi_cam_publisher.py = mdp_vision.rpi_cam_publisher:main',
             'yolo_detector = mdp_vision.yolo_detector:main',
-            'yolo_detector.py = mdp_vision.yolo_detector:main',
         ],
     },
 )

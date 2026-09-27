@@ -1,7 +1,7 @@
 """The one bringup for the robot - real hardware or Gazebo, any task.
 
     ros2 launch mdp_bringup mdp.launch.py sim:=true  task:=1
-    ros2 launch mdp_bringup mdp.launch.py sim:=false task:=2 vision:=false
+    ros2 launch mdp_bringup mdp.launch.py sim:=false task:=2 vision:=false   (no camera)
 
 (`pixi run sim ...` / `pixi run real ...` wrap these; any argument below can be
 appended.)
@@ -11,29 +11,42 @@ Arguments
              false -> STM32 over `serial_port`, Pi camera            (default)
   task       0 bare car (manual drive, no runner), 1 explore + recognise,
              2 slalom                                                 (default 0)
-  vision     true/false - camera + YOLO                               (default false)
+  vision     true/false - camera + YOLO                               (default true) 
   obstacles  tablet -> only the tablet (over Bluetooth on `bluetooth_device`)
              yaml   -> also publish `layout` once at startup, like `pixi run setup`
              (default: yaml in sim, tablet on the robot). The tablet link is up
              either way, so the tablet can always send a new set.
              Task 1 only.
-  layout     obstacle layout YAML in tablet cells (config/test_obstacles.yaml).
-             In sim it also places the Gazebo obstacles, so the planner and the
-             arena always agree.
-  start_x/start_y/start_yaw  arena-frame start pose (metres, rad).
-             Default per task: 1/0 -> (0.15, 0.15, pi/2), 2 -> (0, 0, 0).
+  layout     obstacle layouts YAML (config/tasks.yaml: task1 in tablet cells,
+             task2 in metres). In sim it also places the Gazebo obstacles, so
+             the planner and the arena always agree.
+  start_cell tablet cell COL,ROW (0..19) under base_link - the centre of the
+             REAR AXLE - at start                         (default 1,1)
+  start_dir  N / E / S / W, the way the car faces at start   (default N)
+             Task 2 without start_cell keeps its arena origin, facing E.
   gui        sim only - Gazebo window                                 (default true)
-  model      YOLO model dir under mdp_vision/models/                  (default best_ncnn_model_v2)
-  serial_port, bluetooth_device  real device paths
+  model      YOLO model dir under mdp_vision/models/                  (default mdp_v2_ncnn_model)
+  serial_port, bluetooth_device  device paths    (default: config/bridges.yaml)
+  log        quiet -> this terminal shows warnings/errors from everything, plus
+                      the task runners and the tablet/STM32 bridges; Gazebo's
+                      output goes to the log file only           (default)
+             full   -> every node's full output, as before
+             Either way every node's log is saved in ~/.ros/log/.
 
-SHARED by sim and real, so they cannot drift apart: the Bluetooth bridge and
-its log, robot_pose_feedback (ROBOT lines + /reset_pose), manual drive, the
-task runners, YOLO, and the `map -> odom` transform. Only the robot underneath
-differs:
-  sim   Gazebo + gz_ros2_control; the controller owns odom -> base_footprint
-        and the EKF (ekf_sim.yaml) only publishes /odometry/filtered.
-  real  STM32 serial bridge + ros2_control_node; the EKF (ekf.yaml) owns
-        odom -> base_footprint.
+CONFIG (all in config/): navigation.yaml (everything that drives the car, all
+the speeds), controller.yaml, ekf.yaml, bridges.yaml,
+vision.yaml, tasks.yaml. The car's measured size and steering are the URDF's
+(mdp_description/urdf/mdp_robot.urdf.xacro); this file copies them into the
+controller's and the planner's parameters, so they exist once.
+
+SHARED by sim and real, so they cannot drift apart: the controller and EKF
+config (the EKF owns odom -> base_footprint in both), the Bluetooth bridge and its log, robot_pose_feedback (ROBOT lines +
+/reset_pose), manual drive, the task runners, YOLO, and the `map -> odom`
+transform. Only the robot underneath differs:
+  sim   Gazebo + gz_ros2_control
+  real  STM32 serial bridge + ros2_control_node
+The robot itself is one description, mdp_description/urdf/mdp_robot.urdf.xacro
+(sim:=true adds the Gazebo-only parts).
 
 Every argument is resolved while the description is BUILT (not as a
 LaunchConfiguration), so the graph contains only the nodes this run uses. The
@@ -46,26 +59,39 @@ import os
 import sys
 import tempfile
 
-from ament_index_python.packages import get_package_prefix, get_package_share_directory
+from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, SetEnvironmentVariable
+from launch.actions import (DeclareLaunchArgument, ExecuteProcess, IncludeLaunchDescription,
+                            SetEnvironmentVariable)
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch_ros.actions import Node
+from launch_ros.actions import Node as RosNode
+import xacro
+import yaml
 
-# obstacle_layout lives with the scripts: the source tree when this file is a
-# (symlinked) source file, else the installed lib/mdp_bringup.
-for _path in (os.path.join(os.path.dirname(os.path.realpath(__file__)), '..', 'scripts'),
-              os.path.join(get_package_prefix('mdp_bringup'), 'lib', 'mdp_bringup')):
-    if os.path.isfile(os.path.join(_path, 'obstacle_layout.py')):
-        sys.path.insert(0, _path)
-        break
-import obstacle_layout  # noqa: E402
+from mdp_algorithm.utils.params import car_from_urdf
+from mdp_bringup.utils import obstacle_layout
 
-START_POSE = {  # task -> default arena start pose
-    '0': (0.15, 0.15, math.pi / 2.0),
-    '1': (0.15, 0.15, math.pi / 2.0),   # rear axle in the start box, facing North
-    '2': (0.0, 0.0, 0.0),               # task2_runner's arena conversion assumes this
-}
+TASKS = ('0', '1', '2')
+CELL_M = 0.10                  # tablet grid: 20 x 20 cells of 10 cm, (0,0) bottom-left
+DIR_YAW = {'N': math.pi / 2.0, 'E': 0.0, 'S': -math.pi / 2.0, 'W': math.pi}
+DEFAULT_START_CELL = '1,1'     # base_link (rear axle centre) over cell (1,1): inside the 4x4-cell start box
+DEFAULT_START_DIR = 'N'
+TASK2_ORIGIN_POSE = (0.0, 0.0, 0.0)   # task2_runner's arena conversion assumes this
+
+
+def start_pose(cell: str, direction: str):
+    """'col,row' + N/E/S/W -> arena (x, y, yaw) of base_link, metres/rad: the
+    centre of that cell. The only place cells become metres for the start."""
+    try:
+        col, row = (int(v) for v in cell.replace(' ', '').split(','))
+    except ValueError:
+        raise ValueError(f"start_cell:={cell} - expected COL,ROW, e.g. 1,1")
+    if not (0 <= col <= 19 and 0 <= row <= 19):
+        raise ValueError(f"start_cell:={cell} - cells are 0..19")
+    d = direction.strip().upper()
+    if d not in DIR_YAW:
+        raise ValueError(f"start_dir:={direction} - expected N, E, S or W")
+    return ((col + 0.5) * CELL_M, (row + 0.5) * CELL_M, DIR_YAW[d])
 
 
 def _launch_arg(name, default, argv=None):
@@ -77,6 +103,38 @@ def _launch_arg(name, default, argv=None):
         if entry.startswith(prefix):
             return entry[len(prefix):]
     return default
+
+
+# Nodes whose normal (INFO) output is the story of the run; with log:=quiet
+# every other node shows only its warnings and errors in the terminal.
+_STORY_NODES = {'task1_runner', 'task2_runner', 'bluetooth_bridge_node',
+                'serial_bridge_node', 'manual_drive', 'sim_obstacles'}
+
+
+# Nodes whose INFO lines go to /rosout only (not the terminal), at any log:=.
+_ROSOUT_ONLY_NODES = {'bt_monitor'}
+
+
+def _temp_file(name: str, text: str) -> str:
+    """Write a generated file for this launch (per-launch name, so two bringups
+    on one machine never share it)."""
+    path = os.path.join(tempfile.gettempdir(), f'mdp_{name}_{os.getpid()}')
+    with open(path, 'w') as f:
+        f.write(text)
+    return path
+
+
+def _controller_config(template: str, car: dict) -> str:
+    """controller.yaml with the car's dimensions (from the URDF) filled in."""
+    with open(template) as f:
+        config = yaml.safe_load(f)
+    config['ackermann_steering_controller']['ros__parameters'].update({
+        'wheelbase': car['wheelbase'],
+        'traction_track_width': car['rear_track'],
+        'steering_wheels_radius': car['wheel_radius'],
+        'traction_wheels_radius': car['wheel_radius'],
+    })
+    return _temp_file('controller.yaml', yaml.safe_dump(config))
 
 
 def _true(value: str) -> bool:
@@ -92,83 +150,101 @@ def generate_launch_description(argv=None):
 
     sim = _true(arg('sim', 'false'))
     task = arg('task', '0')
-    if task not in START_POSE:
+    if task not in TASKS:
         raise ValueError(f"task:={task} - expected 0, 1 or 2")
-    vision = _true(arg('vision', 'false'))
+    vision = _true(arg('vision', 'true'))
     obstacles = arg('obstacles', 'yaml' if sim else 'tablet')
     if obstacles not in ('yaml', 'tablet'):
         raise ValueError(f"obstacles:={obstacles} - expected yaml or tablet")
-    layout = arg('layout', os.path.join(pkg_bringup, 'config', 'test_obstacles.yaml'))
+    layout = arg('layout', os.path.join(pkg_bringup, 'config', 'tasks.yaml'))
     gui = _true(arg('gui', 'true'))
-    model = arg('model', 'best_ncnn_model_v2')
-    serial_port = arg('serial_port', '/dev/ttyUSB0')
-    bluetooth_device = arg('bluetooth_device', '/dev/rfcomm0')
-    dx, dy, dyaw = START_POSE[task]
-    start_x = float(arg('start_x', str(dx)))
-    start_y = float(arg('start_y', str(dy)))
-    start_yaw = float(arg('start_yaw', str(dyaw)))
+    model = arg('model', 'mdp_v2_ncnn_model')
+    quiet = arg('log', 'quiet') != 'full'
+    serial_port = arg('serial_port', '')              # '' = config/bridges.yaml
+    bluetooth_device = arg('bluetooth_device', '')
+    cell, direction = arg('start_cell', ''), arg('start_dir', DEFAULT_START_DIR)
+    if task == '2' and not cell:
+        start_x, start_y, start_yaw = TASK2_ORIGIN_POSE
+    else:
+        start_x, start_y, start_yaw = start_pose(cell or DEFAULT_START_CELL, direction)
 
     declared = [
         DeclareLaunchArgument('sim', default_value='false', description='true: Gazebo, false: real robot'),
         DeclareLaunchArgument('task', default_value='0', description='0 bare car (manual drive), 1 explore+recognise, 2 slalom'),
-        DeclareLaunchArgument('vision', default_value='false', description='camera + YOLO'),
+        DeclareLaunchArgument('vision', default_value='true', description='camera + YOLO (false: without)'),
         DeclareLaunchArgument('obstacles', default_value='yaml in sim, tablet on real',
                               description='tablet: only the tablet; yaml: also publish `layout` once at startup (task 1)'),
-        DeclareLaunchArgument('layout', default_value='config/test_obstacles.yaml',
-                              description='obstacle layout YAML in tablet cells (also the sim arena obstacles)'),
-        DeclareLaunchArgument('start_x', default_value='per task', description='arena start x, metres'),
-        DeclareLaunchArgument('start_y', default_value='per task', description='arena start y, metres'),
-        DeclareLaunchArgument('start_yaw', default_value='per task', description='arena start yaw, rad'),
+        DeclareLaunchArgument('layout', default_value='config/tasks.yaml',
+                              description='obstacle layouts (task1 cells, task2 metres) - planner AND sim arena'),
+        DeclareLaunchArgument('start_cell', default_value=DEFAULT_START_CELL,
+                              description='COL,ROW tablet cell under the rear axle centre (base_link) at start'),
+        DeclareLaunchArgument('start_dir', default_value=DEFAULT_START_DIR, description='N/E/S/W facing at start'),
         DeclareLaunchArgument('gui', default_value='true', description='sim: Gazebo window'),
-        DeclareLaunchArgument('model', default_value='best_ncnn_model_v2', description='YOLO model under mdp_vision/models/'),
-        DeclareLaunchArgument('serial_port', default_value='/dev/ttyUSB0', description='real: STM32 USART3 device'),
-        DeclareLaunchArgument('bluetooth_device', default_value='/dev/rfcomm0', description='tablet RFCOMM device'),
+        DeclareLaunchArgument('model', default_value='mdp_v2_ncnn_model', description='YOLO model under mdp_vision/models/'),
+        DeclareLaunchArgument('serial_port', default_value='config/bridges.yaml', description='real: STM32 USART3 device'),
+        DeclareLaunchArgument('bluetooth_device', default_value='config/bridges.yaml', description='tablet RFCOMM device'),
+        DeclareLaunchArgument('log', default_value='quiet',
+                              description='quiet: warnings/errors + runner/bridges only; full: everything'),
     ]
+
+    def Node(**kw):
+        """launch_ros Node, with this launch's log:= policy applied."""
+        if quiet:
+            kw['output_format'] = '{line}'   # no '[name-N] ' launch prefix
+            if kw.get('executable') not in _STORY_NODES | _ROSOUT_ONLY_NODES:
+                kw['ros_arguments'] = list(kw.get('ros_arguments', [])) + ['--log-level', 'warn']
+        return RosNode(**kw)
+
     sim_time = {'use_sim_time': sim}
     actions = []
+    if quiet:
+        # One short line per message: '[INFO] [task1_runner]: Leg 1/4 planned'.
+        actions.append(SetEnvironmentVariable('RCUTILS_CONSOLE_OUTPUT_FORMAT', '[{severity}] [{name}]: {message}'))
 
     # ------------------------------------------------------------ robot ----
+    config = os.path.join(pkg_bringup, 'config')
+    xacro_file = os.path.join(pkg_description, 'urdf', 'mdp_robot.urdf.xacro')
+    car = car_from_urdf(xacro_file)   # the car's measured numbers - the URDF is their one copy
+    controller_config = _controller_config(os.path.join(config, 'controller.yaml'), car)
+    bridges = os.path.join(config, 'bridges.yaml')
+    navigation = os.path.join(config, 'navigation.yaml')
+    # The robot, sim or real: one xacro. Task 1's camera looks out of the car's
+    # left side, otherwise forward.
+    robot_desc = xacro.process_file(
+        xacro_file,
+        mappings={'sim': str(sim).lower(), 'camera_yaw': repr(math.pi / 2.0 if task == '1' else 0.0),
+                  'controller_config': controller_config}).toxml()
+
     if sim:
         pkg_ros_gz_sim = get_package_share_directory('ros_gz_sim')
-        controller_config = os.path.join(pkg_bringup, 'config', 'ackermann_controller.yaml')
-        # Task 1's camera is mounted facing the car's left; otherwise forward
-        # (see mini_akm_robot.urdf's camera_joint).
-        camera_yaw = math.pi / 2.0 if task == '1' else 0.0
-        with open(os.path.join(pkg_description, 'urdf', 'mini_akm_robot.urdf')) as f:
-            robot_desc = f.read().replace(
-                'package://mdp_bringup/config/ackermann_controller.yaml', controller_config
-            ).replace('CAMERA_YAW_RAD', repr(camera_yaw))
 
-        if task == '2':
-            world_file = os.path.join(pkg_description, 'worlds', 'task2_arena.sdf')
-            world_name = 'task2_arena'
-        else:
-            # Obstacles baked in from the layout - the same file that
-            # obstacles:=yaml publishes to the planner, see obstacle_layout.py.
-            # Per-launch name, so two bringups on one machine never share it.
-            with open(os.path.join(pkg_description, 'worlds', 'task1_arena.sdf')) as f:
-                world = obstacle_layout.world_sdf(f.read(), obstacle_layout.load(layout))
-            world_file = os.path.join(tempfile.gettempdir(), f'mdp_task1_arena_{os.getpid()}.sdf')
-            world_name = 'task1_arena'
-            with open(world_file, 'w') as f:
-                f.write(world)
+        # Obstacles baked in from the layout - the same file the runner plans
+        # with (see obstacle_layout.py).
+        world_name = 'task2_arena' if task == '2' else 'task1_arena'
+        with open(os.path.join(pkg_description, 'worlds', f'{world_name}.sdf')) as f:
+            world = obstacle_layout.world_sdf(
+                f.read(), obstacle_layout.load(layout, 'task2' if task == '2' else 'task1'))
+        world_file = _temp_file(f'{world_name}.sdf', world)
 
         pixi_lib_dir = os.path.abspath(os.path.join(pkg_ros_gz_sim, '../..', 'lib'))
-        gz_launch = os.path.join(pkg_ros_gz_sim, 'launch', 'gz_sim.launch.py')
+        # Gazebo started directly (not via ros_gz_sim's gz_sim.launch.py, which
+        # always prints to the screen): server and GUI as separate processes (on
+        # macOS `gz sim` cannot run both in one, gazebosim/gz-sim#44). With
+        # log:=quiet their output - including gz_ros2_control's INFO lines,
+        # which cannot be given a log level - goes to the log file only; a
+        # crash is still reported here by launch itself.
+        gz_output = 'own_log' if quiet else 'screen'   # own_log: stdout AND stderr to a file (plain 'log' still shows stderr)
         actions += [
             SetEnvironmentVariable('GZ_SIM_RESOURCE_PATH', os.path.join(pkg_description, '..')),
             SetEnvironmentVariable('GZ_SIM_SYSTEM_PLUGIN_PATH',
                                    pixi_lib_dir + ':' + os.environ.get('GZ_SIM_SYSTEM_PLUGIN_PATH', '')),
             SetEnvironmentVariable('IGN_GAZEBO_SYSTEM_PLUGIN_PATH',
                                    pixi_lib_dir + ':' + os.environ.get('IGN_GAZEBO_SYSTEM_PLUGIN_PATH', '')),
-            # Server and GUI as separate processes: on macOS `gz sim` cannot
-            # run both in one (gazebosim/gz-sim#44); identical on Linux.
-            IncludeLaunchDescription(PythonLaunchDescriptionSource(gz_launch),
-                                     launch_arguments={'gz_args': f'-s -r -v 4 {world_file}'}.items()),
+            ExecuteProcess(cmd=['gz', 'sim', '-s', '-r', '-v', '2' if quiet else '4', world_file],
+                           name='gazebo', output=gz_output),
         ]
         if gui:
-            actions.append(IncludeLaunchDescription(PythonLaunchDescriptionSource(gz_launch),
-                                                    launch_arguments={'gz_args': '-g'}.items()))
+            actions.append(ExecuteProcess(cmd=['gz', 'sim', '-g'], name='gazebo_gui', output=gz_output))
         actions += [
             Node(package='robot_state_publisher', executable='robot_state_publisher', output='screen',
                  parameters=[{'robot_description': robot_desc}, sim_time]),
@@ -209,34 +285,25 @@ def generate_launch_description(argv=None):
                             '--child-frame-id', 'mini_akm_robot/base_footprint/camera']),
             Node(package='tf2_ros', executable='static_transform_publisher', name='imu_sensor_frame_tf',
                  output='screen', parameters=[sim_time],
-                 arguments=['--frame-id', 'base_link',
+                 arguments=['--frame-id', 'imu_link',   # the IMU sensor sits on imu_link (URDF)
                             '--child-frame-id', 'mini_akm_robot/base_footprint/imu_sensor']),
-            Node(package='robot_localization', executable='ekf_node', name='ekf_filter_node', output='screen',
-                 parameters=[os.path.join(pkg_bringup, 'config', 'ekf_sim.yaml')]),
+
             # One spawner for both controllers - two racing spawners gave
             # intermittent "No controllers loaded".
             Node(package='controller_manager', executable='spawner', output='screen',
                  arguments=['joint_state_broadcaster', 'ackermann_steering_controller',
                             '--controller-manager', '/controller_manager',
                             '--controller-manager-timeout', '60',
-                            # steering_controllers_library publishes its odom TF on
-                            # ~/tf_odometry, not /tf; without this remap nothing
-                            # owned odom -> base_footprint in sim and the car
-                            # never moved in Foxglove.
                             '--controller-ros-args',
-                            '-r /ackermann_steering_controller/reference:=/cmd_vel '
-                            '-r /ackermann_steering_controller/tf_odometry:=/tf']),
+                            '-r /ackermann_steering_controller/reference:=/cmd_vel']),
         ]
         camera_topic = '/camera/image_raw'
     else:
-        with open(os.path.join(pkg_description, 'urdf', 'mini_akm_real_robot.urdf')) as f:
-            robot_desc = f.read()
         actions += [
             Node(package='robot_state_publisher', executable='robot_state_publisher', output='screen',
                  parameters=[{'robot_description': robot_desc}]),
             Node(package='controller_manager', executable='ros2_control_node', output='screen',
-                 parameters=[{'robot_description': robot_desc},
-                             os.path.join(pkg_bringup, 'config', 'real_controller.yaml')],
+                 parameters=[{'robot_description': robot_desc}, controller_config],
                  remappings=[('/ackermann_steering_controller/reference', '/cmd_vel')]),
             Node(package='controller_manager', executable='spawner', output='screen',
                  arguments=['joint_state_broadcaster', 'ackermann_steering_controller',
@@ -245,19 +312,14 @@ def generate_launch_description(argv=None):
             # The bridge's JointState is TopicBasedSystem's raw feedback input;
             # joint_state_broadcaster owns /joint_states.
             Node(package='mdp_bridge', executable='serial_bridge_node', output='screen',
-                 parameters=[{'serial_port': serial_port, 'baud_rate': 115200}],
+                 parameters=[bridges] + ([{'serial_port': serial_port}] if serial_port else []),
                  remappings=[('/joint_states', '/joint_states_raw')]),
-            Node(package='robot_localization', executable='ekf_node', name='ekf_filter_node', output='screen',
-                 parameters=[os.path.join(pkg_bringup, 'config', 'ekf.yaml')]),
         ]
-        if vision:
-            actions.append(Node(
-                package='mdp_vision', executable='rpi_cam_publisher.py', name='rpi_cam_publisher', output='screen',
-                parameters=[{'image_width': 640, 'image_height': 480, 'frame_rate': 30.0,
-                             'camera_topic': '/image_raw'}]))
         camera_topic = '/image_raw'
 
     # ----------------------------------------------------------- shared ----
+    actions.append(Node(package='robot_localization', executable='ekf_node', name='ekf_filter_node',
+                        output='screen', parameters=[os.path.join(config, 'ekf.yaml'), sim_time]))
     # map -> odom: `odom` is created at the start pose with identity
     # orientation, so this STATIC transform is exactly the start pose. The
     # same numbers go to the runner below.
@@ -269,45 +331,58 @@ def generate_launch_description(argv=None):
                    '--frame-id', 'map', '--child-frame-id', 'odom']))
 
     if vision:
-        actions.append(Node(
-            package='mdp_vision', executable='yolo_detector.py', output='screen',
-            parameters=[{'camera_topic': camera_topic, 'model_path': model}, sim_time]))
+        # Camera (real only - Gazebo has its own) + YOLO: launch/vision.launch.py.
+        actions.append(IncludeLaunchDescription(
+            PythonLaunchDescriptionSource(os.path.join(pkg_bringup, 'launch', 'vision.launch.py')),
+            launch_arguments={'model': model, 'camera': str(not sim).lower(), 'camera_topic': camera_topic,
+                              'use_sim_time': str(sim).lower(),
+                              'log_level': 'warn' if quiet else 'info'}.items()))
 
     # Tablet link - the real tablet, in sim as on the robot.
     actions.append(Node(
         package='mdp_bridge', executable='bluetooth_bridge_node', output='screen',
-        parameters=[{'device': bluetooth_device}, sim_time]))
+        parameters=[bridges] + ([{'device': bluetooth_device}] if bluetooth_device else []) + [sim_time]))
+    if sim and task == '1':
+        # A tablet layout that differs from the file replaces Gazebo's blocks.
+        actions.append(Node(package='mdp_bringup', executable='sim_obstacles', output='screen',
+                            parameters=[{'layout': layout, 'world': 'task1_arena'}, sim_time]))
     if obstacles == 'yaml' and task == '1':
         # The layout, published once to /obstacle_setup after task1_runner
         # subscribes - exactly what `pixi run setup` does.
         actions.append(Node(
-            package='mdp_bringup', executable='publish_test_obstacles.py', output='screen',
+            package='mdp_bringup', executable='publish_obstacles', output='screen',
             arguments=[layout], parameters=[sim_time]))
 
     # Base nodes, any task: ROBOT,<cell>,<cell>,<dir> to the tablet + the
-    # /reset_pose service, and bt_log - the tablet link's traffic on its own
-    # /bt_log topic (not /rosout, not this terminal).
+    # /reset_pose service, and bt_monitor - the tablet link's traffic as log
+    # lines on /rosout (`pixi run btlog`), kept off this terminal.
     actions += [
-        Node(package='mdp_bringup', executable='robot_pose_feedback.py', output='screen',
+        Node(package='mdp_bringup', executable='robot_pose_feedback', output='screen',
              parameters=[sim_time]),
-        Node(package='mdp_bringup', executable='bt_monitor.py', name='bt_log', output='screen',
-             arguments=['--quiet'], parameters=[sim_time]),
+        # One-glance health on /diagnostics (STM32/tablet links, sensor rates,
+        # camera/YOLO, runner) - Foxglove "Diagnostics" panels.
+        Node(package='mdp_bringup', executable='health_monitor', output='screen',
+             parameters=[{'sim': sim, 'vision': vision, 'task': task, 'camera_topic': camera_topic},
+                         sim_time]),
+        Node(package='mdp_bringup', executable='bt_monitor', output='screen',
+             ros_arguments=['--disable-stdout-logs'], parameters=[sim_time]),
     ]
 
     if task == '0':
         # Bare car: the tablet's manual drive buttons, no runner.
-        actions.append(Node(package='mdp_bringup', executable='manual_drive.py', output='screen',
-                            parameters=[sim_time]))
+        actions.append(Node(package='mdp_bringup', executable='manual_drive', output='screen',
+                            parameters=[navigation, sim_time]))
     elif task == '1':
         # Idle in WAITING_FOR_SETUP until the tablet's DONE, plans, then holds
         # for `go` (tablet BEGIN / pixi run go).
         actions.append(Node(
-            package='mdp_bringup', executable='task1_runner.py', output='screen',
-            parameters=[os.path.join(pkg_bringup, 'config', 'occupancy_grid_viz.yaml'),
+            package='mdp_bringup', executable='task1_runner', output='screen',
+            parameters=[navigation,
+                        {f'robot.{k}': car[k] for k in ('wheelbase', 'steering_limit_left', 'steering_limit_right')},
                         {'start_x': start_x, 'start_y': start_y, 'start_yaw': start_yaw}, sim_time]))
     elif task == '2':
         actions.append(Node(
-            package='mdp_bringup', executable='task2_runner.py', output='screen',
-            parameters=[sim_time]))
+            package='mdp_bringup', executable='task2_runner', output='screen',
+            parameters=[navigation, {'layout': layout}, sim_time]))
 
     return LaunchDescription(declared + actions)
