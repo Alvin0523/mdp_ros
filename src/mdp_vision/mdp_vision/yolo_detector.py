@@ -8,7 +8,10 @@ and publishes detected target/arrow string to /yolo_result.
 
 import os
 
+import signal
+
 import rclpy
+from rclpy.executors import ExternalShutdownException
 from ament_index_python.packages import get_package_share_directory
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
@@ -30,19 +33,17 @@ except ImportError:
 MODELS_DIR = os.path.join(get_package_share_directory('mdp_vision'), 'models')
 
 # Default to the latest MDP-trained model (classes = Arrow/Letter/Number/
-# Circle - the actual task symbols), NOT the stock yolo26n COCO model
-# (person/car/...) which cannot detect any MDP symbol. Available models:
-#   best_ncnn_model_v2  - latest MDP model (default)
-#   best_ncnn_model_v1  - older MDP model (kept for comparison)
-#   yolo26n_ncnn_model  - stock YOLO26n COCO net (debug only)
+# Circle - the actual task symbols). Available models:
+#   mdp_v2_ncnn_model  - latest MDP model (default)
+#   mdp_v1_ncnn_model  - older MDP model (kept for comparison)
 # Switch with the `model_path` parameter (see vision.launch.py /
-# task2_sim.launch.py `model:=` launch arg), which accepts either a bare
+# mdp.launch.py `model:=` launch arg), which accepts either a bare
 # model-dir name under models/ or an absolute path.
-DEFAULT_MODEL = 'best_ncnn_model_v2'
+DEFAULT_MODEL = 'mdp_v2_ncnn_model'
 
 
 def resolve_model_path(value: str) -> str:
-    """Accept either a bare model name (e.g. 'best_ncnn_model', resolved under
+    """Accept either a bare model name (e.g. 'mdp_v2_ncnn_model', resolved under
     the package models/ dir) or an absolute/relative path to a model dir."""
     if os.path.isabs(value) or os.path.sep in value:
         return value
@@ -55,7 +56,7 @@ def resolve_model_path(value: str) -> str:
 # prefix the asset PNG filenames (e.g. 20_AlphabetA.png -> 20), so the ID is
 # authoritative regardless of what a given model happens to name its classes.
 #
-# The model's class NAMES vary (best_ncnn_model uses "Letter A"/"Number 1"/
+# The model's class NAMES vary (mdp_v2_ncnn_model uses "Letter A"/"Number 1"/
 # "Arrow Up"/"Circle"; a raw dataset export might use "AlphabetA"/"One"/...),
 # so we map by a normalised key (lowercased, non-alphanumerics stripped)
 # rather than the exact string. Publishing the ID - not the name - is what
@@ -211,11 +212,18 @@ def main(args=None):
     node = YoloDetector()
     try:
         rclpy.spin(node)
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, ExternalShutdownException):
         pass
+    except Exception:
+        if rclpy.ok():
+            raise        # a real error; after Ctrl+C it is only the shutdown racing a callback
     finally:
-        node.destroy_node()
-        rclpy.shutdown()
+        signal.signal(signal.SIGINT, signal.SIG_IGN)   # already stopping: ignore a second Ctrl+C
+        try:
+            node.destroy_node()
+        except (Exception, KeyboardInterrupt):
+            pass         # ROS already shut down / a second Ctrl+C
+        rclpy.try_shutdown()
 
 if __name__ == '__main__':
     main()

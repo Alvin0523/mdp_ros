@@ -5,7 +5,7 @@ RPi Camera Publisher Node for MDP Vision.
 Captures raw YUV420 frames from the Pi Camera Module (IMX219) via
 `rpicam-vid` (no libcamera/camera_ros build required) and republishes them as
 ROS 2 sensor_msgs/Image (bgr8) on `camera_topic` - same topic/type
-yolo_detector.py already expects.
+yolo_detector already expects.
 
 Single-threaded, fixed-size reads: `rpicam-vid --codec yuv420` emits frames
 of exactly width*height*3/2 bytes each with no framing/parsing needed (unlike
@@ -52,7 +52,7 @@ class RpiCamPublisher(Node):
         self.frame_size = self.width * self.height * 3 // 2  # I420 (YUV420 planar)
         self.bridge = CvBridge()
 
-        # BEST_EFFORT + depth 1 (KEEP_LAST): matches yolo_detector.py's
+        # BEST_EFFORT + depth 1 (KEEP_LAST): matches yolo_detector's
         # subscription QoS - if a consumer falls slightly behind, it always
         # gets handed the newest frame instead of working through a growing
         # backlog of stale ones. camera_ros's default publisher QoS is

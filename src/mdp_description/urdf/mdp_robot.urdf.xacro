@@ -1,0 +1,333 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The MDP car - ONE description for the real robot and the Gazebo sim.
+
+       xacro mdp_robot.urdf.xacro sim:=true camera_yaw:=1.5708 controller_config:=/abs/path/controller.yaml
+
+     The car's measured numbers (the "dimensions" block below) are the ONE
+     copy: mdp.launch.py fills them into controller.yaml, and the planner reads
+     wheelbase and steering limits from here too (mdp_algorithm utils/params.py
+     car_from_urdf) - keep them plain numbers.
+
+     sim:=true adds what only Gazebo needs (collision shapes, inertias, the
+     front wheels spinning, friction, IMU and camera sensors, gz_ros2_control);
+     sim:=false uses topic_based_ros2_control for the STM32 bridge. Every
+     dimension is shared, so sim and real cannot drift apart.
+
+     FRAMES (REP-105 names, car convention as Autoware):
+       base_footprint  on the table under base_link - the URDF root;
+                       odom -> base_footprint is the car's pose (EKF).
+       base_link       centre of the REAR AXLE at axle height - the body. The
+                       controller's odometry, the EKF, the planner and the start
+                       cell all describe the car by this point. Every part is
+                       placed from it: +x forward, +y left, +z up.
+
+     The chassis, knuckle and sensor placement below come from the WHEELTEC
+     SolidWorks export unless marked measured. -->
+<robot name="mini_akm_robot" xmlns:xacro="http://www.ros.org/wiki/xacro">
+  <xacro:arg name="sim" default="false"/>
+  <xacro:arg name="camera_yaw" default="0.0"/>        <!-- task 1: 1.5708 (camera looks LEFT) -->
+  <xacro:arg name="controller_config" default=""/>    <!-- sim: absolute path of controller.yaml -->
+  <xacro:property name="sim" value="$(arg sim)"/>
+
+  <!-- ===================================================== dimensions (m) === -->
+  <!-- Measured on the car 2026-09-27 (the measuring sheet). -->
+  <xacro:property name="wheelbase" value="0.143"/>     <!-- rear axle to front axle -->
+  <xacro:property name="rear_track" value="0.162"/>    <!-- wheel centre to centre -->
+  <xacro:property name="front_track" value="0.164"/>
+  <!-- 66.2 mm tyre: what the tyres roll like (tape vs odometry, 4 x 2.0 m: the
+       car went 1.018x what 65 mm predicts). Front and rear the same tyre. -->
+  <xacro:property name="wheel_radius" value="0.0331"/>
+  <!-- Front wheel centre sits this far outboard of its steering pivot, and the
+       pivot this far above the wheel centre (CAD). -->
+  <xacro:property name="knuckle_out" value="0.030126"/>
+  <xacro:property name="knuckle_up" value="0.011"/>
+  <!-- Steering, both wheels: ONE servo drives the right wheel and a tie rod the
+       left, so both always have the same angle. Protractor at the wheel
+       2026-09-18 at the mechanical limits (850 us left = chassis contact,
+       2400 us right = mechanical stop). Positive = left. Must match the STM32
+       clamp (mdp_stm32 include/servo.h). -->
+  <xacro:property name="steer_left" value="0.7505"/>   <!-- 43.0 deg -->
+  <xacro:property name="steer_right" value="0.5672"/>  <!-- 32.5 deg -->
+  <!-- Where the SolidWorks body origin sits from base_link: every CAD mesh
+       below is drawn from it. -->
+  <xacro:property name="cad_x" value="0.069657"/>
+  <xacro:property name="cad_z" value="-0.0162"/>
+  <xacro:property name="mesh" value="package://mdp_description/meshes/mini_akm_robot_meshes"/>
+
+  <material name="body_blue"><color rgba="0.741 0.902 0.957 1"/></material>
+  <material name="tyre_white"><color rgba="1 1 1 1"/></material>
+  <material name="picam_green"><color rgba="0.0 0.45 0.15 1"/></material>
+  <material name="lens_black"><color rgba="0.05 0.05 0.05 1"/></material>
+
+  <!-- =========================================================== body === -->
+  <link name="base_footprint"/>
+  <joint name="base_footprint_joint" type="fixed">
+    <origin xyz="0 0 ${wheel_radius}" rpy="0 0 0"/>
+    <parent link="base_footprint"/>
+    <child link="base_link"/>
+  </joint>
+
+  <link name="base_link">
+    <visual>
+      <origin xyz="${cad_x} 0 ${cad_z}" rpy="0 0 0"/>
+      <geometry><mesh filename="${mesh}/base_link.STL"/></geometry>
+      <material name="body_blue"/>
+    </visual>
+    <xacro:if value="${sim}">
+      <inertial>
+        <origin xyz="${cad_x - 0.0119755} -0.000133 ${cad_z + 0.0210178}" rpy="0 0 0"/>
+        <mass value="0.4315"/>
+        <inertia ixx="2.5453e-04" ixy="1.908e-06" ixz="-8.816e-07" iyy="3.7244e-04" iyz="4.031e-07" izz="5.4033e-04"/>
+      </inertial>
+      <!-- The body mesh's bounding box: 31 mm behind to 199 mm ahead of the
+           rear axle, as measured. A box, not the mesh: DART drops mesh
+           collision on links lumped into the root (the body passed through
+           obstacles). -->
+      <collision>
+        <origin xyz="${cad_x + 0.0142} 0 ${cad_z + 0.024}" rpy="0 0 0"/>
+        <geometry><box size="0.2296 0.1536 0.055"/></geometry>
+      </collision>
+    </xacro:if>
+  </link>
+
+  <!-- The WHEELTEC controller board on its plate. -->
+  <link name="controller_link">
+    <visual>
+      <geometry><mesh filename="${mesh}/controller_link.STL"/></geometry>
+      <material name="body_blue"/>
+    </visual>
+    <xacro:if value="${sim}">
+      <inertial>
+        <origin xyz="-0.051353 0.047496 0.044407" rpy="0 0 0"/>
+        <mass value="0.0335"/>
+        <inertia ixx="1.9176e-05" ixy="9.527e-07" ixz="-5.84e-08" iyy="2.1981e-05" iyz="3.142e-07" izz="4.0089e-05"/>
+      </inertial>
+      <collision>
+        <origin xyz="-0.0425 0.0624 0.0314" rpy="0 0 0"/>
+        <geometry><box size="0.1135 0.1349 0.0629"/></geometry>
+      </collision>
+    </xacro:if>
+  </link>
+  <joint name="controller_joint" type="fixed">
+    <origin xyz="${cad_x - 0.000357} -0.04684 ${cad_z + 0.0515}" rpy="0 0 0"/>
+    <parent link="base_link"/>
+    <child link="controller_link"/>
+  </joint>
+
+  <!-- ICM-20948 on the controller board. Axes = the car's (mdp_stm32 imu.c
+       reads the chip's axes with no remap). Only its angular velocity is
+       fused, which is the same anywhere on the body. Measured 2026-09-28:
+       12 mm ahead of the rear axle, 26 mm right of the centre line, 95.5 mm
+       above the table. -->
+  <link name="imu_link"/>
+  <joint name="imu_joint" type="fixed">
+    <origin xyz="0.012 -0.026 ${0.0955 - wheel_radius}" rpy="0 0 0"/>
+    <parent link="base_link"/>
+    <child link="imu_link"/>
+  </joint>
+
+  <!-- Raspberry Pi Camera v2 (25 x 24 mm board, 9 mm deep). Looks along this
+       link's +x; camera_yaw turns it (task 1: left). Placed 2026-09-28 at the
+       middle of the chassis on the centre line, 84 mm ahead of the rear axle
+       (the body runs 31 mm behind to 199 mm ahead), at the CAD mount's height
+       (60 mm above the axle). TODO measure once mounted (sheet rows H1-H5). -->
+  <link name="camera_link">
+    <visual>
+      <geometry><box size="0.009 0.025 0.024"/></geometry>
+      <material name="picam_green"/>
+    </visual>
+    <!-- The lens, on the board's +x face: shows which way the camera looks. -->
+    <visual>
+      <origin xyz="0.0075 0 0" rpy="0 ${pi / 2} 0"/>
+      <geometry><cylinder radius="0.0045" length="0.006"/></geometry>
+      <material name="lens_black"/>
+    </visual>
+    <xacro:if value="${sim}">
+      <inertial>
+        <mass value="0.003"/>
+        <inertia ixx="3.0e-07" ixy="0" ixz="0" iyy="1.64e-07" iyz="0" izz="1.77e-07"/>
+      </inertial>
+      <collision><geometry><box size="0.009 0.025 0.024"/></geometry></collision>
+    </xacro:if>
+  </link>
+  <joint name="camera_joint" type="fixed">
+    <origin xyz="0.084 0 ${cad_z + 0.076204}" rpy="0 0 $(arg camera_yaw)"/>
+    <parent link="base_link"/>
+    <child link="camera_link"/>
+  </joint>
+
+  <!-- ========================================================= wheels === -->
+  <!-- One tyre: mesh for the look; in sim a plain cylinder (the tyre mesh
+       made the wheels chatter), radius = the rolling radius, and friction. -->
+  <xacro:macro name="tyre" params="name mesh_name width y_offset">
+    <link name="${name}">
+      <visual>
+        <geometry><mesh filename="${mesh}/${mesh_name}.STL"/></geometry>
+        <material name="tyre_white"/>
+      </visual>
+      <xacro:if value="${sim}">
+        <inertial>
+          <mass value="0.045"/>
+          <inertia ixx="1.818e-05" ixy="0" ixz="0" iyy="3.144e-05" iyz="0" izz="1.818e-05"/>
+        </inertial>
+        <collision>
+          <origin xyz="0 ${y_offset} 0" rpy="${pi/2} 0 0"/>
+          <geometry><cylinder radius="${wheel_radius}" length="${width}"/></geometry>
+        </collision>
+      </xacro:if>
+    </link>
+    <xacro:if value="${sim}">
+      <gazebo reference="${name}">
+        <mu1>1.5</mu1>
+        <mu2>1.5</mu2>
+        <kp>1000000.0</kp>
+        <kd>1.0</kd>
+      </gazebo>
+    </xacro:if>
+  </xacro:macro>
+
+  <!-- Rear: driven, on the rear axle = base_link. -->
+  <xacro:macro name="rear_wheel" params="side sign">
+    <xacro:tyre name="${side}b_link" mesh_name="${side}b_link" width="0.0286" y_offset="${-sign * 0.00173}"/>
+    <joint name="${side}b_joint" type="continuous">
+      <origin xyz="0 ${sign * rear_track / 2} 0" rpy="0 0 0"/>
+      <parent link="base_link"/>
+      <child link="${side}b_link"/>
+      <axis xyz="0 1 0"/>
+    </joint>
+  </xacro:macro>
+  <xacro:rear_wheel side="l" sign="1"/>
+  <xacro:rear_wheel side="r" sign="-1"/>
+
+  <!-- Front: steering knuckle (left_link / right_link, both at the same angle -
+       one servo and a tie rod), then the free-spinning wheel (sim only: the
+       real car has no front encoders). -->
+  <xacro:macro name="front_wheel" params="side knuckle sign">
+    <link name="${knuckle}_link">
+      <visual>
+        <geometry><mesh filename="${mesh}/${knuckle}_link.STL"/></geometry>
+        <material name="body_blue"/>
+      </visual>
+      <xacro:if value="${sim}">
+        <inertial>
+          <origin xyz="-0.00429 ${sign * 0.011174} -0.011" rpy="0 0 0"/>
+          <mass value="0.00477"/>
+          <inertia ixx="2.069e-07" ixy="${-sign * 1.0497e-07}" ixz="0" iyy="3.933e-07" iyz="0" izz="4.634e-07"/>
+        </inertial>
+        <collision>
+          <origin xyz="-0.0118 ${sign * 0.0121} -0.011" rpy="0 0 0"/>
+          <geometry><box size="0.0397 0.0396 0.022"/></geometry>
+        </collision>
+      </xacro:if>
+    </link>
+    <joint name="${knuckle}_joint" type="revolute">
+      <origin xyz="${wheelbase} ${sign * (front_track / 2 - knuckle_out)} ${knuckle_up}" rpy="0 0 0"/>
+      <parent link="base_link"/>
+      <child link="${knuckle}_link"/>
+      <axis xyz="0 0 1"/>
+      <limit lower="${-steer_right}" upper="${steer_left}" effort="10.0" velocity="5.0"/>
+    </joint>
+    <xacro:if value="${sim}">
+      <xacro:tyre name="${side}f_link" mesh_name="${side}f_link" width="0.026" y_offset="${-sign * 0.00045}"/>
+      <joint name="${side}f_joint" type="continuous">
+        <origin xyz="0 ${sign * knuckle_out} ${-knuckle_up}" rpy="0 0 0"/>
+        <parent link="${knuckle}_link"/>
+        <child link="${side}f_link"/>
+        <axis xyz="0 1 0"/>
+      </joint>
+    </xacro:if>
+  </xacro:macro>
+  <xacro:front_wheel side="l" knuckle="left" sign="1"/>
+  <xacro:front_wheel side="r" knuckle="right" sign="-1"/>
+
+  <!-- =================================================== ros2_control === -->
+  <xacro:macro name="steer_and_drive_joints">
+    <joint name="left_joint">
+      <command_interface name="position"/>
+      <state_interface name="position"/>
+      <state_interface name="velocity"/>
+    </joint>
+    <joint name="right_joint">
+      <command_interface name="position"/>
+      <state_interface name="position"/>
+      <state_interface name="velocity"/>
+    </joint>
+    <joint name="lb_joint">
+      <command_interface name="velocity"/>
+      <state_interface name="position"/>
+      <state_interface name="velocity"/>
+    </joint>
+    <joint name="rb_joint">
+      <command_interface name="velocity"/>
+      <state_interface name="position"/>
+      <state_interface name="velocity"/>
+    </joint>
+  </xacro:macro>
+
+  <xacro:if value="${sim}">
+    <ros2_control name="GazeboSimSystem" type="system">
+      <hardware><plugin>gz_ros2_control/GazeboSimSystem</plugin></hardware>
+      <xacro:steer_and_drive_joints/>
+      <joint name="lf_joint"><state_interface name="position"/><state_interface name="velocity"/></joint>
+      <joint name="rf_joint"><state_interface name="position"/><state_interface name="velocity"/></joint>
+    </ros2_control>
+    <gazebo>
+      <plugin filename="gz_ros2_control-system" name="gz_ros2_control::GazeboSimROS2ControlPlugin">
+        <parameters>$(arg controller_config)</parameters>
+        <ros><remapping>/ackermann_steering_controller/reference:=/cmd_vel</remapping></ros>
+      </plugin>
+    </gazebo>
+  </xacro:if>
+  <xacro:unless value="${sim}">
+    <ros2_control name="TopicBasedSystem" type="system">
+      <hardware>
+        <plugin>topic_based_ros2_control/TopicBasedSystem</plugin>
+        <param name="joint_commands_topic">/joint_commands</param>
+        <!-- Not /joint_states: joint_state_broadcaster publishes the
+             aggregated states there; the bridge's raw feedback on the same
+             name would collide. -->
+        <param name="joint_states_topic">/joint_states_raw</param>
+      </hardware>
+      <xacro:steer_and_drive_joints/>
+    </ros2_control>
+  </xacro:unless>
+
+  <!-- ================================================ Gazebo sensors === -->
+  <xacro:if value="${sim}">
+    <!-- IMU like the real ICM-20948 on /imu/data. The noise makes Gazebo fill
+         in a covariance: with none it reports zeros, which the EKF reads as
+         perfect certainty. -->
+    <gazebo reference="imu_link">
+      <sensor name="imu_sensor" type="imu">
+        <always_on>true</always_on>
+        <update_rate>100</update_rate>
+        <topic>imu/data</topic>
+        <imu>
+          <angular_velocity>
+            <x><noise type="gaussian"><mean>0.0</mean><stddev>0.01</stddev></noise></x>
+            <y><noise type="gaussian"><mean>0.0</mean><stddev>0.01</stddev></noise></y>
+            <z><noise type="gaussian"><mean>0.0</mean><stddev>0.01</stddev></noise></z>
+          </angular_velocity>
+          <linear_acceleration>
+            <x><noise type="gaussian"><mean>0.0</mean><stddev>0.05</stddev></noise></x>
+            <y><noise type="gaussian"><mean>0.0</mean><stddev>0.05</stddev></noise></y>
+            <z><noise type="gaussian"><mean>0.0</mean><stddev>0.05</stddev></noise></z>
+          </linear_acceleration>
+        </imu>
+      </sensor>
+    </gazebo>
+    <gazebo reference="camera_link">
+      <sensor name="camera" type="camera">
+        <camera>
+          <horizontal_fov>1.089</horizontal_fov>
+          <image><width>640</width><height>480</height><format>R8G8B8</format></image>
+          <clip><near>0.05</near><far>10.0</far></clip>
+        </camera>
+        <always_on>true</always_on>
+        <update_rate>30</update_rate>
+        <visualize>true</visualize>
+        <topic>camera/image_raw</topic>
+      </sensor>
+    </gazebo>
+  </xacro:if>
+</robot>

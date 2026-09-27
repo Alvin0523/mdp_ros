@@ -1,3 +1,5 @@
+# robot_localization EKF - the same file in sim and on the car. It owns
+# odom -> base_footprint (publish_tf) in both; use_sim_time comes from the launch.
 ekf_filter_node:
   ros__parameters:
     # --- Timing ---
@@ -24,8 +26,6 @@ ekf_filter_node:
     odom_frame: odom
     base_link_frame: base_footprint   # URDF root on both real and sim
     world_frame: odom           # single EKF instance operating in odom frame (no map-fusion stage)
-
-    use_sim_time: false
 
     # --- Input 0: wheel odometry (ackermann_steering_controller) ---
     # Forward velocity (vx) AND yaw rate (vyaw) are fused - NOT position
@@ -92,7 +92,7 @@ ekf_filter_node:
     # enough - recorded on hardware (rosbag 2026-09-21 rotate 90): gyro and
     # wheel odometry read ~30 deg/s from t=0.5s, the EKF's wz sat at 8.8 deg/s
     # until t~2.0s, so /odometry/filtered under-reported yaw (92 deg vs gyro
-    # 104 deg) and rotate_angle stopped early. Any sudden change in curvature
+    # 104 deg) and `calib rotate` (then rotate_angle) stopped early. Any sudden change in curvature
     # would be rejected the same way. Removing the thresholds means no
     # rejection (robot_localization default); add a LARGE value back only if
     # single-frame glitches are actually seen.

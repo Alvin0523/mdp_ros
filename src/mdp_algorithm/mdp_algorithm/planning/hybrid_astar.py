@@ -1,271 +1,307 @@
 #!/usr/bin/env python3
 """
-Hybrid A* search: 6-primitive (forward/reverse x left/straight/right) grid
-search with a Reeds-Shepp-heuristic-admissible cost, producing a
-collision-checked, kinematically-feasible path between two poses.
+Hybrid A* for the Ackermann car on the arena costmap (Nav2 Smac Hybrid-A*
+style). Used by planner.plan_leg(). Settings: planner.* and robot.* in
+mdp_bringup/config/navigation.yaml (utils/params.py).
 
-Ported from the teammate's mdp_algo package (pathfinding/hybrid_astar.py) -
-matplotlib import/plotting removed (this runs headless on the Pi), the
-"to remove" matplotlib import the teammate had already flagged is gone,
-and utils.normalise_theta() (an angle-wrap helper that looked error-prone
-to hand-port faithfully - see geometry_utils.py) is replaced with the
-simpler, verified M() wrap, which serves the same purpose here (keeping
-accumulated heading in a canonical range across primitives).
+  * MOTION: from every pose, forward/reverse x left/straight/right, each
+    planner.step_size long; one turning radius PER SIDE (left steers harder
+    than right on this car) - robot.minimum_turning_radius_* x
+    planner.turning_radius_margin.
+  * COLLISION: the padded footprint against the costmap (costmap.Costmap:
+    blocks and off-arena lethal, inflation around them), as Nav2's
+    GridCollisionChecker does it.
+  * PRUNING: one state per planner.xy_search_resolution cell and heading bin
+    (planner.angle_quantization_bins), kept in a dict.
+  * HEURISTIC: max(Reeds-Shepp length, obstacle-aware 2D shortest path to the
+    goal on the costmap). The 2D one stops the search wandering into dead ends
+    behind blocks.
+  * ANALYTIC SHOT: from time to time, and always when close, try a Reeds-Shepp
+    curve straight to the goal; the first collision-free one ends the search.
+    This is what lands the exact goal pose. As Smac's
+    analytic_expansion_max_cost, a shot through a pose costlier than that is
+    rejected, except within two turning radii of the goal (checkpoints sit next
+    to a block).
+  * COST: path length; reverse steps cost planner.reverse_penalty x; plus
+    direction-change and steering-change penalties (each direction change is a
+    stop). Every step is also scaled by (1 + cost_penalty * costmap cost / 252),
+    Smac's cost_penalty, so the search keeps room from blocks when that is cheap.
 
-All positions/lengths are in CENTIMETRES (see occupancy_map.py's module
-docstring) - x_0/y_0/x_f/y_f are the REAR AXLE position, matching the
-teammate's original convention.
+Units: centimetres and radians (the planner's internal unit). find_path()
+returns (list of nodes without the start, None); each node has x, y, theta and
+prevAction = (gear, steering).
 """
 
 import heapq
 import math
+import time
 from typing import Callable, List, Optional, Tuple
 
-import numpy as np
+from ..utils import geometry as utils
+from ..utils import params as planner_params
+from ..utils.motion_primitives import Gear, Steering
+from . import reeds_shepp as rs
+from .costmap import ARENA_SIZE_CM, INSCRIBED, LETHAL, MAX_NON_OBSTACLE, Costmap
 
-from ..common import geometry_utils as utils
-from . import reeds_shepp_curves as rs
-from ..common.motion_primitives import Gear, Steering
-from .occupancy_map import GRID_SIZE, OccupancyMap, coords_to_grid
-from ..common.planning_constants import REAR_AXLE_TO_CENTER_CM
-
-
-# How far off the checkpoint's exact heading is still "close enough" to
-# count as arrived, for Node.__eq__'s goal check below. The camera has a
-# real field of view - it doesn't need to be perfectly perpendicular to the
-# obstacle's image to capture it, so the goal doesn't need to be that
-# precise either. 20deg per direct user instruction (2026-09-04) - was
-# 7.5deg (pi/24), which forced Hybrid A* to hunt for a near-exact heading
-# match that was never actually required by the camera itself. A looser
-# tolerance also gives the search more valid final poses to land on, which
-# should help the per-leg search time too, not just goal precision.
-GOAL_HEADING_TOLERANCE_RAD = math.pi / 9  # 20 degrees
+_INF = float('inf')
 
 
-class Node:
-    def __init__(self, x: float, y: float, theta: float, prevAction, parent=None) -> None:
-        self.x = x
-        self.y = y
-        self.theta = theta
-        self.x_g, self.y_g, self.theta_g = self._discretize(x, y, theta)
-        self.parent = parent
+class SNode:
+    __slots__ = ('x', 'y', 'theta', 'prevAction', 'parent', 'g', 'f')
+
+    def __init__(self, x, y, theta, prevAction, parent=None):
+        self.x, self.y, self.theta = x, y, theta
         self.prevAction = prevAction
+        self.parent = parent
         self.g = 0.0
-        self.h = 0.0
         self.f = 0.0
-
-    @staticmethod
-    def _discretize(x, y, theta, thetaBins=24):
-        # Was a duplicated inline copy of this formula (hardcoded 200/GRID_SIZE,
-        # no margin offset) - found during the 2026-09-04 arena-padding change
-        # (occupancy_map.py's module docstring) to silently drift out of sync:
-        # GRID_SIZE now refers to the padded array, and any pose planned in
-        # the new margin needs the offset coords_to_grid() applies, or this
-        # would produce a negative/wrapped array index into openList/closedList.
-        x_g, y_g = coords_to_grid(x, y)
-        theta_g = int(((theta * 180 / math.pi + 180) // (360 / thetaBins)))
-        return x_g, y_g, theta_g
-
-    def __eq__(self, other):
-        return (abs(self.x - other.x) <= 3.5 and abs(self.y - other.y) <= 3.5
-                and (abs(self.theta - other.theta) <= GOAL_HEADING_TOLERANCE_RAD
-                     or abs(abs(self.theta - other.theta) - 2 * math.pi) <= GOAL_HEADING_TOLERANCE_RAD))
-
-    def __lt__(self, other):
-        return self.f < other.f
 
 
 class HybridAStar:
-    def __init__(self, map: OccupancyMap, x_0: float, y_0: float, theta_0: float,
-                 x_f: float, y_f: float, theta_f: float, theta_offset: float = 0.0,
-                 steeringChangeCost: float = 10, gearChangeCost: float = 20,
-                 L: float = 5, minR: float = 25, heuristic: str = 'hybriddiag',
-                 simulate: bool = False, thetaBins: int = 24,
-                 cost_mode: str = 'distance', forward_speed: float = 20.,
-                 reverse_speed: float = 15., gear_change_time: float = .5,
-                 steering_change_time: float = .15,
+    """Settings default to planner.* / robot.* of navigation.yaml (utils/params.py
+    ACTIVE, read here - not at import); any keyword given overrides that one
+    setting. Arguments are in cm, the planner's unit."""
+
+    def __init__(self, costmap: Costmap, x_0: float, y_0: float, theta_0: float,
+                 x_f: float, y_f: float, theta_f: float,
+                 step_cm: float = None, r_left: float = None, r_right: float = None,
+                 theta_bins: int = None, xy_res_cm: float = None,
+                 steering_change_cost: float = None, gear_change_cost: float = None,
+                 reverse_factor: float = None,
+                 shot_interval: int = None, shot_range_cm: float = None,
+                 max_expansions: int = None, time_limit_s: float = None,
                  progress_callback: Optional[Callable[[List[Tuple[float, float]]], None]] = None,
-                 progress_interval: int = 200):
-        """
-        Args:
-            map: OccupancyMap to search/collide against.
-            x_0/y_0/theta_0: starting rear-axle pose (cm, cm, rad).
-            x_f/y_f/theta_f: goal rear-axle pose (cm, cm, rad).
-            L: distance travelled per primitive step, cm.
-            minR: minimum turning radius, cm - see planning_constants.py's
-                MIN_TURN_RADIUS_CM for how this is set for this chassis.
-            progress_callback: if given, called every `progress_interval`
-                node expansions with the full list of (x, y) points explored
-                SO FAR (cm, cheap - just the two floats per node, not the
-                whole Node object) - lets a caller (task1_runner.py)
-                publish live search progress to Foxglove instead of the
-                search being a black box until it returns. None (default)
-                adds no overhead - the list still gets built (cheap append),
-                just never handed anywhere.
-            progress_interval: how many node expansions between callback
-                calls - 200 is frequent enough to feel "live" without the
-                callback itself (a ROS publish) becoming the bottleneck.
-        """
-        self.map = map
-        self.x, self.y, self.theta = x_0, y_0, theta_0
-        self.x_f, self.y_f, self.theta_f = x_f, y_f, theta_f
-        self.theta_offset = theta_offset
-        self.steeringChangeCost = steeringChangeCost
-        self.gearChangeCost = gearChangeCost
-        self.L = L
-        self.minR = minR
-        self.heuristic = heuristic
-        self.simulate = simulate
-        self.thetaBins = thetaBins
-        self.cost_mode = cost_mode
-        self.forward_speed = forward_speed
-        self.reverse_speed = reverse_speed
-        self.gear_change_time = gear_change_time
-        self.steering_change_time = steering_change_time
+                 progress_interval: int = 200,
+                 params: planner_params.PlannerParams = None):
+        p = params or planner_params.ACTIVE
+
+        def pick(value, default):
+            return default if value is None else value
+
+        self.costmap = costmap
+        self.x0, self.y0, self.th0 = x_0, y_0, theta_0
+        self.xf, self.yf, self.thf = x_f, y_f, theta_f
+        self.L = pick(step_cm, p.step_size * 100.0)
+        self.r_left = pick(r_left, p.plan_turn_radius_left_cm)
+        self.r_right = pick(r_right, p.plan_turn_radius_right_cm)
+        self.r_min = min(self.r_left, self.r_right)   # smaller radius -> shorter RS length -> admissible
+        self.r_shot = max(self.r_left, self.r_right)  # a curve this wide is drivable on both sides
+        self.theta_bins = pick(theta_bins, p.angle_quantization_bins)
+        self.xy_res = pick(xy_res_cm, p.xy_search_resolution * 100.0)
+        self.steering_change_cost = pick(steering_change_cost, p.steering_change_penalty)
+        self.gear_change_cost = pick(gear_change_cost, p.change_penalty)
+        self.reverse_factor = pick(reverse_factor, p.reverse_penalty)
+        self.shot_interval = pick(shot_interval, p.analytic_expansion_interval)
+        self.shot_range = pick(shot_range_cm, p.analytic_expansion_max_length * 100.0)
+        self.max_expansions = pick(max_expansions, p.max_iterations)
+        self.time_limit_s = pick(time_limit_s, p.max_planning_time)
+        self.cost_penalty = p.cost_penalty
+        self.shot_max_cost = p.analytic_expansion_max_cost
+        self.goal_xy_tol = p.goal_xy_tolerance * 100.0
+        self.goal_heading_tol = p.goal_yaw_tolerance
         self.progress_callback = progress_callback
         self.progress_interval = progress_interval
+        self.expansions = 0
+        self.found_by_shot = False
 
-    def transition_cost(self, previous_action, action) -> float:
-        if self.cost_mode == 'time':
-            speed = self.forward_speed if action[0] == Gear.FORWARD else self.reverse_speed
-            cost = self.L / speed
-            if previous_action[0] != action[0]:
-                cost += self.gear_change_time
-            if previous_action[1] != action[1]:
-                cost += self.steering_change_time
-            return cost
-        return (self.L + self.gearChangeCost * abs(previous_action[0] - action[0])
-                + self.steeringChangeCost * abs(previous_action[1] - action[1]))
+    def _step_cost(self, length, gear, x, y, th, cost=None):
+        """Cost of driving `length` cm into pose (x, y, th), or None if the
+        footprint there collides. `cost`: the pose's costmap cost, if known."""
+        if cost is None:
+            cost = self.costmap.footprint_cost(x, y, th)
+        if cost >= LETHAL:
+            return None
+        return (length * (self.reverse_factor if gear == Gear.REVERSE else 1.0)
+                * (1.0 + self.cost_penalty * cost / MAX_NON_OBSTACLE))
 
-    def _heuristic(self, childNode: Node, endNode: Node) -> float:
-        if self.cost_mode == 'time':
-            return utils.l2(childNode.x, childNode.y, endNode.x, endNode.y) / max(self.forward_speed, self.reverse_speed)
-        if self.heuristic == 'euclidean':
-            return utils.l2(childNode.x, childNode.y, endNode.x, endNode.y)
-        if self.heuristic == 'manhattan':
-            return utils.l1(childNode.x, childNode.y, endNode.x, endNode.y)
-        if self.heuristic == 'diag':
-            return utils.diag_dist(childNode.x, childNode.y, endNode.x, endNode.y)
-        if self.heuristic == 'reeds-shepp':
-            return rs.get_optimal_path_length((childNode.x, childNode.y, childNode.theta),
-                                               (endNode.x, endNode.y, endNode.theta), self.minR)
-        if self.heuristic == 'hybridl2':
-            return max(utils.l2(childNode.x, childNode.y, endNode.x, endNode.y),
-                       rs.get_optimal_path_length((childNode.x, childNode.y, childNode.theta),
-                                                   (endNode.x, endNode.y, endNode.theta), self.minR))
-        if self.heuristic == 'hybridl1':
-            return min(utils.l1(childNode.x, childNode.y, endNode.x, endNode.y),
-                       rs.get_optimal_path_length((childNode.x, childNode.y, childNode.theta),
-                                                   (endNode.x, endNode.y, endNode.theta), self.minR))
-        if self.heuristic == 'hybriddiag':
-            return min(utils.diag_dist(childNode.x, childNode.y, endNode.x, endNode.y),
-                       rs.get_optimal_path_length((childNode.x, childNode.y, childNode.theta),
-                                                   (endNode.x, endNode.y, endNode.theta), self.minR))
-        return 0.0  # 'greedy'
+    # -- motion ------------------------------------------------------------
+    def _move(self, x, y, th, gear, steer, ds, radius=None):
+        """Advance the rear axle by arc length ds along a straight line or an
+        arc of the given side's turning radius (bicycle model)."""
+        if steer == Steering.STRAIGHT:
+            return x + gear * ds * math.cos(th), y + gear * ds * math.sin(th), th
+        r = radius if radius is not None else (self.r_left if steer == Steering.LEFT else self.r_right)
+        xc = x + steer * r * math.sin(th)
+        yc = y - steer * r * math.cos(th)
+        a = gear * (-steer * ds / r)
+        xa, ya = x - xc, y - yc
+        ca, sa = math.cos(a), math.sin(a)
+        return xc + xa * ca - ya * sa, yc + xa * sa + ya * ca, utils.M(th + a)
 
-    def find_path(self) -> Tuple[Optional[List[Node]], Optional[List[Node]]]:
-        pathHistory = []
-        gearChoices = [Gear.FORWARD, Gear.REVERSE]
-        steeringChoices = [Steering.LEFT, Steering.STRAIGHT, Steering.RIGHT]
-        choices = [(gear, steering) for gear in gearChoices for steering in steeringChoices]
+    def _key(self, x, y, th):
+        tb = int(((th + math.pi) / (2.0 * math.pi)) * self.theta_bins) % self.theta_bins
+        return int(x // self.xy_res), int(y // self.xy_res), tb
 
-        startNode = Node(self.x, self.y, self.theta, (Gear.FORWARD, Steering.STRAIGHT))
-        endNode = Node(self.x_f, self.y_f, self.theta_f, (Gear.FORWARD, Steering.STRAIGHT))
+    def _at_goal(self, x, y, th):
+        if abs(x - self.xf) > self.goal_xy_tol or abs(y - self.yf) > self.goal_xy_tol:
+            return False
+        d = abs(utils.M(th - self.thf))
+        return d <= self.goal_heading_tol
 
-        # heapq, not queue.PriorityQueue - PriorityQueue's lock-per-push/pop
-        # is pure overhead here (single-threaded search), and this heap gets
-        # pushed to on every one of the up to 6 children of every expanded
-        # node, so that overhead was compounding across the whole search.
-        open_heap: List[Tuple[float, "Node"]] = []
-        openList = 999999 * np.ones((GRID_SIZE, GRID_SIZE, self.thetaBins + 1))
-        closedList = 999999 * np.ones((GRID_SIZE, GRID_SIZE, self.thetaBins + 1))
+    # -- heuristic ---------------------------------------------------------
+    def _build_2d_table(self):
+        """Shortest distance from every 5 cm cell to the goal (8-connected
+        Dijkstra) on the costmap, Nav2's obstacle heuristic: a cell whose centre
+        is INSCRIBED or LETHAL is blocked (base_link there puts the body on an
+        obstacle), and each step is weighted by (1 + cost_penalty * cost / 252)
+        like the search itself. The goal cell and its neighbours are never
+        blocked."""
+        n = int(ARENA_SIZE_CM // self.xy_res)
+        res = self.xy_res
+        cell_cost = [[self.costmap.cost_at((i + 0.5) * res, (j + 0.5) * res) for j in range(n)]
+                     for i in range(n)]
+        blocked = [[cell_cost[i][j] >= INSCRIBED for j in range(n)] for i in range(n)]
+        gi = min(n - 1, max(0, int(self.xf // res)))
+        gj = min(n - 1, max(0, int(self.yf // res)))
+        for di in (-1, 0, 1):
+            for dj in (-1, 0, 1):
+                if 0 <= gi + di < n and 0 <= gj + dj < n:
+                    blocked[gi + di][gj + dj] = False
+        dist = [[_INF] * n for _ in range(n)]
+        dist[gi][gj] = 0.0
+        heap = [(0.0, gi, gj)]
+        diag = res * math.sqrt(2.0)
+        while heap:
+            d, i, j = heapq.heappop(heap)
+            if d > dist[i][j]:
+                continue
+            for di, dj, w in ((1, 0, res), (-1, 0, res), (0, 1, res), (0, -1, res),
+                              (1, 1, diag), (1, -1, diag), (-1, 1, diag), (-1, -1, diag)):
+                ni, nj = i + di, j + dj
+                if 0 <= ni < n and 0 <= nj < n and not blocked[ni][nj]:
+                    nd = d + w * (1.0 + self.cost_penalty * cell_cost[ni][nj] / MAX_NON_OBSTACLE)
+                    if nd < dist[ni][nj]:
+                        dist[ni][nj] = nd
+                        heapq.heappush(heap, (nd, ni, nj))
+        self._n2d = n
+        return dist
 
-        heapq.heappush(open_heap, (startNode.f, startNode))
-        pathFound = False
-        nodesExpanded = 0
-        currentNode = startNode
-        explored_points: List[Tuple[float, float]] = []   # (x, y) cm, one per expansion - for progress_callback
+    def _h(self, x, y, th):
+        h_rs = rs.get_optimal_path_length((x, y, th), (self.xf, self.yf, self.thf), self.r_min)
+        i = min(self._n2d - 1, max(0, int(x // self.xy_res)))
+        j = min(self._n2d - 1, max(0, int(y // self.xy_res)))
+        return max(h_rs, self._dist2d[i][j])
 
-        while open_heap and not pathFound:
-            currentNode = heapq.heappop(open_heap)[1]
-            openList[currentNode.x_g, currentNode.y_g, currentNode.theta_g] = 999999
-            nodesExpanded += 1
+    # -- analytic shot -----------------------------------------------------
+    def _shot(self, node: SNode) -> Optional[List[SNode]]:
+        """A collision-free Reeds-Shepp curve from `node` to the goal, sampled every
+        <= 2.5 cm, or None: rejected if any pose collides, or costs more than
+        planner.analytic_expansion_max_cost while still over two turning radii from the
+        goal (Smac's analytic expansion limits). Its last node's g is the full
+        path cost through it."""
+        r = self.r_shot
+        elements = rs.get_optimal_path((node.x / r, node.y / r, node.theta),
+                                       (self.xf / r, self.yf / r, self.thf))
+        if not elements:
+            return None
+        x, y, th = node.x, node.y, node.theta
+        out: List[SNode] = []
+        parent = node
+        g = node.g
+        prev = node.prevAction
+        for e in elements:
+            length = e.param * r
+            if length < 1e-6:
+                continue
+            n = max(1, int(math.ceil(length / 2.5)))
+            ds = length / n
+            action = (int(e.gear), int(e.steering))
+            g += (self.gear_change_cost * abs(prev[0] - action[0])
+                  + self.steering_change_cost * abs(prev[1] - action[1]))
+            prev = action
+            for _ in range(n):
+                x, y, th = self._move(x, y, th, e.gear, e.steering, ds, radius=r)
+                cost = self.costmap.footprint_cost(x, y, th)
+                if (cost > self.shot_max_cost
+                        and math.hypot(x - self.xf, y - self.yf) > 2.0 * self.r_min):
+                    return None
+                step = self._step_cost(ds, e.gear, x, y, th, cost)
+                if step is None:
+                    return None
+                g += step
+                nd = SNode(x, y, th, action, parent)
+                nd.g = g
+                out.append(nd)
+                parent = nd
+        if not out or not self._at_goal(out[-1].x, out[-1].y, out[-1].theta):
+            return None
+        return out
 
-            if endNode == currentNode:
-                pathFound = True
+    # -- search ------------------------------------------------------------
+    def find_path(self) -> Tuple[Optional[List[SNode]], None]:
+        t_start = time.time()
+        self._dist2d = self._build_2d_table()
+        start = SNode(self.x0, self.y0, self.th0, (Gear.FORWARD, Steering.STRAIGHT))
+        start.f = self._h(start.x, start.y, start.theta)
+        if self._dist2d[min(self._n2d - 1, int(self.x0 // self.xy_res))][
+                min(self._n2d - 1, int(self.y0 // self.xy_res))] == _INF:
+            return None, None     # the start cell cannot reach the goal cell at all
+
+        choices = [(g, s) for g in (Gear.FORWARD, Gear.REVERSE)
+                   for s in (Steering.LEFT, Steering.STRAIGHT, Steering.RIGHT)]
+        counter = 0
+        heap = [(start.f, counter, start)]
+        best_g = {self._key(start.x, start.y, start.theta): 0.0}
+        explored: List[Tuple[float, float]] = []
+        goal_node: Optional[SNode] = None
+
+        while heap:
+            _, _, node = heapq.heappop(heap)
+            key = self._key(node.x, node.y, node.theta)
+            if node.g > best_g.get(key, _INF) + 1e-9:
+                continue                                  # a better route to this state exists
+            self.expansions += 1
+            if self.expansions > self.max_expansions or time.time() - t_start > self.time_limit_s:
                 break
 
-            if self.simulate:
-                pathHistory.append(currentNode)
+            if self._at_goal(node.x, node.y, node.theta):
+                goal_node = node
+                break
 
             if self.progress_callback is not None:
-                explored_points.append((currentNode.x, currentNode.y))
-                if nodesExpanded % self.progress_interval == 0:
-                    self.progress_callback(explored_points)
+                explored.append((node.x, node.y))
+                if self.expansions % self.progress_interval == 0:
+                    self.progress_callback(explored)
 
-            for choice in choices:
-                if choice[0] == -currentNode.prevAction[0] and choice[1] == -currentNode.prevAction[1]:
-                    continue  # no immediate direction reversal on the same primitive
+            dist_goal = math.hypot(node.x - self.xf, node.y - self.yf)
+            if dist_goal <= self.shot_range and (self.expansions % self.shot_interval == 0
+                                                 or dist_goal < 40.0):
+                shot = self._shot(node)
+                if shot:
+                    goal_node = shot[-1]                  # Smac: first valid shot ends the search
+                    self.found_by_shot = True
+                    break
 
-                x_child, y_child, theta_child = self.calculate_next_node(currentNode, choice)
-
-                front_x = x_child + REAR_AXLE_TO_CENTER_CM * np.cos(theta_child)
-                front_y = y_child + REAR_AXLE_TO_CENTER_CM * np.sin(theta_child)
-                if self.map.collide_with_point(front_x, front_y):
+            for gear, steer in choices:
+                x, y, th = self._move(node.x, node.y, node.theta, gear, steer, self.L)
+                step = self._step_cost(self.L, gear, x, y, th)
+                if step is None:
                     continue
-
-                childNode = Node(x_child, y_child, theta_child, prevAction=choice, parent=currentNode)
-                childNode.g = currentNode.g + self.transition_cost(currentNode.prevAction, choice)
-                childNode.h = self._heuristic(childNode, endNode)
-                childNode.f = childNode.g + childNode.h
-
-                out_of_bounds = (childNode.x_g < 0 or childNode.x_g >= GRID_SIZE
-                                  or childNode.y_g < 0 or childNode.y_g >= GRID_SIZE)
-                if out_of_bounds or openList[childNode.x_g, childNode.y_g, childNode.theta_g] <= childNode.g:
+                i = min(self._n2d - 1, max(0, int(x // self.xy_res)))
+                j = min(self._n2d - 1, max(0, int(y // self.xy_res)))
+                if self._dist2d[i][j] == _INF:
                     continue
-                if out_of_bounds or closedList[childNode.x_g, childNode.y_g, childNode.theta_g] <= childNode.g:
+                g = (node.g + step
+                     + self.gear_change_cost * abs(node.prevAction[0] - gear)
+                     + self.steering_change_cost * abs(node.prevAction[1] - steer))
+                child_key = self._key(x, y, th)
+                if g >= best_g.get(child_key, _INF):
                     continue
-
-                heapq.heappush(open_heap, (childNode.f, childNode))
-                openList[childNode.x_g, childNode.y_g, childNode.theta_g] = childNode.g
-
-            closedList[currentNode.x_g, currentNode.y_g, currentNode.theta_g] = currentNode.g
+                best_g[child_key] = g
+                child = SNode(x, y, th, (gear, steer), node)
+                child.g = g
+                child.f = g + self._h(x, y, th)
+                counter += 1
+                heapq.heappush(heap, (child.f, counter, child))
 
         if self.progress_callback is not None:
-            self.progress_callback(explored_points)   # final call - last partial batch + lets caller know it's done
-
-        path = None
-        if pathFound:
-            path = []
-            node = currentNode
-            while node != startNode:
-                path.append(node)
-                node = node.parent
-            path.reverse()
-
-        if self.simulate:
-            return path, pathHistory
+            self.progress_callback(explored)
+        if goal_node is None:
+            return None, None
+        path = []
+        n = goal_node
+        while n.parent is not None:
+            path.append(n)
+            n = n.parent
+        path.reverse()
         return path, None
-
-    def calculate_next_node(self, currentNode: Node, choice) -> Tuple[float, float, float]:
-        gear, steering = choice
-
-        if steering == Steering.STRAIGHT:
-            x_b = currentNode.x + gear * self.L * np.cos(currentNode.theta)
-            y_b = currentNode.y + gear * self.L * np.sin(currentNode.theta)
-            theta_b = currentNode.theta
-            return x_b, y_b, theta_b
-
-        x_c = currentNode.x + steering * self.minR * np.sin(currentNode.theta)
-        y_c = currentNode.y - steering * self.minR * np.cos(currentNode.theta)
-
-        theta_t = -steering * self.L / self.minR
-        theta_b = utils.M(currentNode.theta + gear * theta_t)
-
-        x_ca = currentNode.x - x_c
-        y_ca = currentNode.y - y_c
-
-        x_b = x_c + (x_ca * np.cos(gear * theta_t) - y_ca * np.sin(gear * theta_t))
-        y_b = y_c + (x_ca * np.sin(gear * theta_t) + y_ca * np.cos(gear * theta_t))
-
-        return x_b, y_b, theta_b

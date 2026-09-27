@@ -3,13 +3,12 @@
 <package format="3">
   <name>mdp_bringup</name>
   <version>0.0.1</version>
-  <description>Top-level launch files to bring up the mdp_car robot</description>
+  <description>Launch, config and task nodes for the MDP car</description>
   <maintainer email="alvinwm0523@gmail.com">wm_u26</maintainer>
   <license>TODO</license>
 
-  <buildtool_depend>ament_cmake</buildtool_depend>
-
   <exec_depend>mdp_description</exec_depend>
+  <exec_depend>xacro</exec_depend>
   <exec_depend>mdp_bridge</exec_depend>
   <exec_depend>mdp_vision</exec_depend>
   <exec_depend>mdp_algorithm</exec_depend>
@@ -18,20 +17,20 @@
   <exec_depend>rclpy</exec_depend>
   <exec_depend>geometry_msgs</exec_depend>
   <exec_depend>std_msgs</exec_depend>
+  <exec_depend>diagnostic_msgs</exec_depend>
+  <exec_depend>tf2_msgs</exec_depend>
   <exec_depend>std_srvs</exec_depend>
   <exec_depend>sensor_msgs</exec_depend>
   <exec_depend>nav_msgs</exec_depend>
   <exec_depend>visualization_msgs</exec_depend>
   <exec_depend>tf2_ros</exec_depend>
-  <!-- task1_runner.py transforms the /odometry/filtered pose into the arena
+  <!-- task1_runner transforms the /odometry/filtered pose into the arena
        frame; tf2_geometry_msgs supplies do_transform_pose. -->
   <exec_depend>tf2_geometry_msgs</exec_depend>
 
-  <test_depend>ament_cmake_pytest</test_depend>
   <test_depend>python3-pytest</test_depend>
-  <test_depend>python3-hypothesis</test_depend>
 
   <export>
-    <build_type>ament_cmake</build_type>
+    <build_type>ament_python</build_type>
   </export>
 </package>

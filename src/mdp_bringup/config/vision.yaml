@@ -1,0 +1,16 @@
+# Camera + YOLO (launch/vision.launch.py). The model and the image topic YOLO
+# reads are launch arguments (model:=, camera_topic:=), not set here.
+
+rpi_cam_publisher:             # the Pi camera (real robot only; Gazebo has its own)
+  ros__parameters:
+    image_width: 640
+    image_height: 480
+    frame_rate: 30.0
+    camera_topic: /image_raw
+    jpeg_quality: 80
+
+yolo_detector:
+  ros__parameters:
+    result_topic: /yolo_result
+    annotated_topic: /yolo_result/image_annotated
+    jpeg_quality: 80

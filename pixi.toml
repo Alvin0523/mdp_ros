@@ -12,37 +12,32 @@ test = { cmd = "colcon test", description = "Run the package tests" }
 clean = { cmd = "rm -rf build install log", description = "Delete build, install and log folders" }
 
 # --- Robot bringup: ONE launch for real and sim (launch/mdp.launch.py) --------
-# All options are launch arguments, appended to any of these:
-#   pixi run real                                bare car: no task runner, no camera
-#   pixi run real task:=1                        task 1 runner (tablet, planning, status)
-#   pixi run real task:=2 vision:=true           task 2 runner + camera and YOLO
-#   pixi run sim task:=1                         the same in Gazebo (laptop)
-#   pixi run sim task:=1 obstacles:=tablet       Gazebo, obstacles only from the real tablet
-#   obstacles:=tablet|yaml  layout:=<cells.yaml>  gui:=false (sim)
-#   start_x start_y start_yaw  serial_port:=/dev/serial/by-id/usb-1a86_USB_Single_Serial_5A6C068008-if00  bluetooth_device:=/dev/rfcomm0
-real = { cmd = "ros2 launch mdp_bringup mdp.launch.py sim:=false serial_port:=/dev/serial/by-id/usb-1a86_USB_Single_Serial_5A6C068008-if00", description = "Real robot bringup. Args: task:=0|1|2 vision:=true|false obstacles:=tablet|yaml start_x start_y start_yaw serial_port bluetooth_device" }
-drive = { cmd = "ros2 launch mdp_bringup mdp.launch.py sim:=false serial_port:=/dev/serial/by-id/usb-1a86_USB_Single_Serial_5A6C068008-if00 task:=0 vision:=false", description = "Alias: bare car (no runner, no camera) for motion tests" }
+# Settings: src/mdp_bringup/config/ (planner, controller, ekf, bridges, vision,
+# tasks). All options are launch arguments, appended to either:
+#   pixi run real                                bare car: no task runner (camera + YOLO on)
+#   pixi run real task:=1                        task 1: tablet, planning, camera + YOLO
+#   pixi run real vision:=false                  without camera + YOLO (vision is on by default)
+#   pixi run sim task:=2                         task 2 in Gazebo (laptop)
+#   pixi run sim task:=1 obstacles:=tablet       Gazebo, obstacles only from the tablet
+#   task:=0|1|2  vision:=true|false  model:=mdp_v1_ncnn_model  obstacles:=tablet|yaml
+#   layout:=<tasks.yaml>  start_cell:=1,1  start_dir:=N  gui:=false (sim)  log:=full
+#   serial_port:=...  bluetooth_device:=...      (default: config/bridges.yaml)
+real = { cmd = "ros2 launch mdp_bringup mdp.launch.py sim:=false", description = "Real robot bringup. Args: task:=0|1|2 vision:=true|false obstacles:=tablet|yaml start_cell:=COL,ROW start_dir:=N|E|S|W" }
 sim = { cmd = "ros2 launch mdp_bringup mdp.launch.py sim:=true", description = "Gazebo bringup, same args as real (+ gui:=false)" }
-sim1 = { cmd = "ros2 launch mdp_bringup mdp.launch.py sim:=true task:=1", description = "Alias: Gazebo task 1" }
-sim2 = { cmd = "ros2 launch mdp_bringup mdp.launch.py sim:=true task:=2", description = "Alias: Gazebo task 2" }
-vision = { cmd = "ros2 launch mdp_vision vision.launch.py", description = "Camera and YOLO only, no robot" }
+vision = { cmd = "ros2 launch mdp_bringup vision.launch.py", description = "Camera and YOLO only, no robot" }
 
 # --- Run control (same for real and sim; reset works on any bringup; setup/go/stop need task:=1)
-setup = { cmd = "ros2 run mdp_bringup publish_test_obstacles.py", description = "Publish the test obstacle set (cells, from test_obstacles.yaml)" }
-reset = { cmd = "ros2 run mdp_bringup trigger.py /reset_pose", description = "Reset the EKF pose to the start pose (base bringup, any task)" }
-go = { cmd = "ros2 run mdp_bringup trigger.py /start_run", description = "Start the planned run (like the tablet's BEGIN)" }
-stop = { cmd = "ros2 run mdp_bringup trigger.py /stop_run", description = "Stop the run and hold zero velocity" }
+setup = { cmd = "ros2 run mdp_bringup publish_obstacles", description = "Publish the task 1 obstacles from config/tasks.yaml (like the tablet), optional path: setup my_tasks.yaml" }
+reset = { cmd = "ros2 run mdp_bringup trigger /reset_pose", description = "Reset the EKF pose to the start pose (base bringup, any task)" }
+go = { cmd = "ros2 run mdp_bringup trigger /start_run", description = "Start the planned run (like the tablet's BEGIN)" }
+stop = { cmd = "ros2 run mdp_bringup trigger /stop_run", description = "Stop the run and hold zero velocity" }
 status = { cmd = "ros2 topic echo /run_status mdp_interfaces/msg/RunStatus", description = "Live task-1 state (mdp_interfaces/RunStatus, 2 Hz): target, checkpoint, distance, chased waypoint, FWD/REV, cmd, scan/YOLO" }
-runlog = { cmd = "ros2 topic echo /run_log rcl_interfaces/msg/Log --field msg", description = "Task logic events: GO, leg -> obstacle/checkpoint, arrived, YOLO, TARGET, next, finished, stop" }
-btlog = { cmd = "ros2 topic echo /bt_log rcl_interfaces/msg/Log --field msg", description = "Tablet link traffic (LINK UP/DOWN, TABLET -> RPI, RPI -> TABLET)" }
-guard = { cmd = "ros2 run mdp_bringup grid_guard.py", description = "TEMP: stop when off the 20x20 tablet grid" }
+btlog = { cmd = "ros2 run mdp_bringup bt_monitor --ros-args -r __node:=bt_monitor_view", description = "Tablet link traffic: LINK UP/DOWN, TABLET -> RPI, RPI -> TABLET (add --all for the 2 s repeats)" }
 
-target = { cmd = "ros2 run mdp_bringup send_target.py", description = "Debug: send TARGET,<obstacle>,<id> to the tablet: target 2 20" }
 
-# --- Motion tests (bare car: pixi run drive) ---------------------------------
-dist = { cmd = "ros2 run mdp_bringup drive_distance.py", description = "Drive a straight distance: dist <m> [--speed m/s] [--steer-deg deg]" }
-rotate = { cmd = "ros2 run mdp_bringup rotate_angle.py", description = "Turn by an angle: rotate <deg> [--direction left|right]" }
-circle = { cmd = "ros2 run mdp_bringup circle_obstacle.py", description = "Approach an obstacle and go around it: circle [--right-only|--full]" }
+# --- Calibration and tests (bare car: pixi run real / pixi run sim) ----------
+calib = { cmd = "ros2 run mdp_bringup calib", description = "Calibrate: calib straight 1.0 | calib rotate 90 | calib turn left|right | calib goto COL ROW N|E|S|W  (-h for options)" }
+around-obstacle = { cmd = "ros2 run mdp_bringup around_obstacle", description = "Checklist: approach a block on the ultrasonic and drive a square round it [--direction right]" }
 teleop = { cmd = "ros2 run teleop_twist_keyboard teleop_twist_keyboard --ros-args -p stamped:=true", description = "Keyboard driving" }
 
 # --- Viewing and recording ---------------------------------------------------
@@ -114,6 +109,11 @@ pnnx = "*"
 
 [activation]
 scripts = ["install/setup.bash"]
+
+# NVIDIA GPU for Gazebo rendering when the driver is present (no-op otherwise).
+# A target's scripts REPLACE the list above, so install/setup.bash is repeated.
+[target.linux-64.activation]
+scripts = ["install/setup.bash", "scripts/activate_gpu.sh"]
 
 [activation.env]
 ROS_DOMAIN_ID = "0"

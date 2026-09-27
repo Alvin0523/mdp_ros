@@ -1,0 +1,128 @@
+# Everything that DRIVES the car - the one place to change it:
+#
+#   SPEEDS AT A GLANCE (m/s)
+#     task 1 path following    task1_runner  follower.desired_linear_vel   0.2
+#     task 2 slalom            task2_runner  fast_speed / slow_speed       0.45 / 0.22
+#     tablet arrow buttons     all nodes     manual_speed_mps              0.15
+#
+#   task1_runner  the car's outline and turning circles (like Nav2's footprint /
+#                 minimum_turning_radius), costmap, Hybrid A* planner, path follower
+#   task2_runner  slalom speeds and lookahead
+#   /**           the tablet's arrow buttons (manual_drive in task 0,
+#                 task1_runner in task 1)
+#
+# The car's wheelbase and steering limits are NOT here: they are the URDF's
+# (mdp_description/urdf/mdp_robot.urdf.xacro), and mdp.launch.py passes them
+# in as robot.wheelbase / robot.steering_limit_*. task1_runner hands its
+# settings to the planner library (mdp_algorithm utils/params.py), which reads
+# this file + the URDF when used without ROS.
+#
+# Units: SI, as everywhere in ROS - metres, radians, seconds, m/s.
+# Names: Nav2's where Nav2 has the same setting (costmap_2d inflation layer,
+# Smac Hybrid-A* planner, Regulated Pure Pursuit controller).
+#
+# When a change takes effect: restart the launch - except the speeds, the
+# lookaheads and the button settings, which are also read live:
+#   ros2 param set /task1_runner follower.desired_linear_vel 0.3
+#   ros2 param set /task2_runner fast_speed 0.35
+#   ros2 param set /manual_drive manual_speed_mps 0.25
+# Faster than the 0.2 m/s the turning circles were measured at means wider
+# turns than planned - test in sim first.
+
+task1_runner:
+  ros__parameters:
+
+    # ---------------------------------------------------------------- robot --
+    # base_link = centre of the rear axle (REP-105 car convention).
+    robot:
+      # Body outline around base_link, measured on the car 2026-09-27: 230 mm
+      # long with 31 mm behind the rear axle, 190 mm wide (outside of the tyres).
+      footprint_rear: 0.031           # m behind base_link
+      footprint_front: 0.199          # m ahead of base_link
+      footprint_half_width: 0.095     # m each side
+
+      # Nav2 minimum_turning_radius, per side: the circle the rear axle ACTUALLY
+      # drives at full lock - MEASURED, not wheelbase / tan(angle) (that says
+      # 0.154 / 0.225 m): with same-angle steering the tyres scrub and the car
+      # turns wider. Measured in SIM 2026-09-27 (Gazebo ground truth, circle
+      # fitted to the rear-axle track, 0.2 m/s).
+      # TODO: replace with the REAL car's circles (full lock, slow full circle,
+      # radius traced by the middle of the rear axle).
+      minimum_turning_radius_left: 0.177    # m
+      minimum_turning_radius_right: 0.257   # m
+
+    # -------------------------------------------------------------- costmap --
+    # One costmap of the 2 x 2 m arena (planning/costmap.py), published on
+    # /occupancy_grid: blocks and everything outside the arena are LETHAL (254),
+    # cells the car's base_link cannot reach without touching are INSCRIBED
+    # (253), and an inflation layer spreads cost 252 -> 0 around them.
+    costmap:
+      resolution: 0.01                # m per costmap cell (the tablet's 10 cm
+                                      # cells are too coarse for a 19 cm car)
+      footprint_padding: 0.03         # m added on every side of the footprint
+                                      # for the hard collision check. Nav2's
+                                      # default is 0.01; with 0.01 the planner
+                                      # passed blocks at ~1 cm, less than the
+                                      # car tracks (hit obstacle 1 in sim).
+      inflation_radius: 0.25          # m from a lethal cell over which cost is
+                                      # spread. Nav2 advises >= the circumscribed
+                                      # radius (base_link to the far front corner
+                                      # of the padded footprint, 0.26 m now) so
+                                      # the full footprint check can be skipped
+                                      # far from obstacles; below it the check
+                                      # always runs (slower, still correct).
+      cost_scaling_factor: 15.0       # 1/m: cost = 252 * exp(-factor * (d - inscribed))
+
+    # -------------------------------------------------------------- planner --
+    # Hybrid A* with body-footprint collision (planning/hybrid_astar.py).
+    planner:
+      turning_radius_margin: 1.30     # plan turns this much wider than the
+                                      # minimum, so the follower keeps steering
+                                      # in reserve to correct errors
+      step_size: 0.05                 # m, length of one motion primitive
+      xy_search_resolution: 0.05      # m, one search state per cell of this size
+      angle_quantization_bins: 72     # ... and per 5 deg of heading
+      cost_penalty: 2.0               # Smac: step cost x (1 + cost_penalty * cost / 252)
+      reverse_penalty: 1.5            # reverse steps cost this x forward
+      change_penalty: 20.0            # per direction change (forward <-> reverse);
+                                      # counted twice per change, so 40 per stop
+      steering_change_penalty: 10.0   # per steering change (L/S/R)
+      analytic_expansion_max_cost: 200      # reject a Reeds-Shepp shot to the goal that
+                                            # passes a pose costlier than this (except
+                                            # within 2 turning radii of the goal)
+      analytic_expansion_max_length: 0.90   # m, try shots only this close to the goal
+      analytic_expansion_interval: 10       # try a shot every N expansions (always
+                                            # when closer than 0.4 m)
+      max_iterations: 60000
+      max_planning_time: 60.0         # s per leg
+      goal_xy_tolerance: 0.035        # m, the path must end this close to the checkpoint
+      goal_yaw_tolerance: 0.3491      # rad = 20 deg
+      checkpoint_standoff: 0.20       # m, base_link stops this far from the
+                                      # obstacle's centre, straight out from its
+                                      # image face (planning/visiting_order.py)
+
+    # ------------------------------------------------------------- follower --
+    # Pure pursuit on the planned path (control/pure_pursuit_follower.py).
+    follower:
+      lookahead_dist: 0.10            # m at 0.2 m/s (live)
+      use_velocity_scaled_lookahead_dist: true   # above 0.2 m/s the lookahead
+                                                 # grows with the speed
+      desired_linear_vel: 0.2         # m/s (live), clamped to 0.05 - 0.5
+      xy_goal_tolerance: 0.05         # m, arrived at a checkpoint (Nav2 goal checker)
+      cusp_tolerance: 0.01            # m, drive this close to a direction change
+                                      # before switching gear (RPP style)
+
+task2_runner:
+  ros__parameters:
+    fast_speed: 0.45           # m/s on the straights (live)
+    slow_speed: 0.22           # m/s when the curve needs over half the steering (live)
+    lookahead_dist: 0.30       # m, pure pursuit on the slalom spline (live)
+
+# The tablet's arrow buttons (f b fl fr bl br): a short burst, then stop.
+# Every node loading this file gets them - manual_drive (task 0) and
+# task1_runner (task 1, while idle).
+/**:
+  ros__parameters:
+    manual_speed_mps: 0.15     # m/s, clamped 0.05 - 0.5 (live)
+    manual_steer_deg: 25.0     # deg of wheel angle for fl/fr/bl/br, clamped 5 - 30 (live)
+    manual_burst_s: 0.3        # s per press, clamped 0.1 - 1.0 (live)
