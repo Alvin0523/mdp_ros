@@ -1,0 +1,768 @@
+{
+  "configById": {
+    "3D!arena": {
+      "followTf": "base_link",
+      "followMode": "follow-heading",
+      "cameraState": {
+        "distance": 2.3522940499996885,
+        "perspective": true,
+        "phi": 31.712741692739545,
+        "target": [
+          0,
+          0,
+          0
+        ],
+        "targetOffset": [
+          0.5015560829795852,
+          -0.7829906977072477,
+          1.5347526020307037e-16
+        ],
+        "targetOrientation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "thetaOffset": 90.14047942546607,
+        "fovy": 45,
+        "near": 0.5,
+        "far": 5000
+      },
+      "scene": {
+        "transforms": {
+          "showLabel": false,
+          "axisSize": 0.3
+        },
+        "meshUpAxis": "z_up",
+        "enableStats": true,
+        "syncCamera": true
+      },
+      "transforms": {
+        "frame:": {
+          "visible": false
+        },
+        "frame:map": {
+          "visible": true
+        },
+        "frame:odom": {
+          "visible": true
+        },
+        "frame:base_footprint": {
+          "visible": false
+        },
+        "frame:base_link": {
+          "visible": true
+        },
+        "frame:camera_link": {
+          "visible": false
+        },
+        "frame:mini_akm_robot/base_footprint/camera": {
+          "visible": false
+        },
+        "frame:controller_link": {
+          "visible": false
+        },
+        "frame:imu_link": {
+          "visible": false
+        },
+        "frame:mini_akm_robot/base_footprint/imu_sensor": {
+          "visible": false
+        },
+        "frame:lb_link": {
+          "visible": false
+        },
+        "frame:left_link": {
+          "visible": false
+        },
+        "frame:lf_link": {
+          "visible": false
+        },
+        "frame:rb_link": {
+          "visible": false
+        },
+        "frame:right_link": {
+          "visible": false
+        },
+        "frame:rf_link": {
+          "visible": false
+        }
+      },
+      "topics": {
+        "/grid_markers": {
+          "visible": true
+        },
+        "/occupancy_grid": {
+          "visible": true,
+          "colorMode": "map"
+        },
+        "/obstacle_markers": {
+          "visible": true
+        },
+        "/checkpoint_markers": {
+          "visible": true
+        },
+        "/planned_path": {
+          "visible": true,
+          "lineWidth": 0.02,
+          "gradient": [
+            "#ff6b6bff",
+            "rgba(124, 107, 255, 0.5)"
+          ]
+        },
+        "/path_markers": {
+          "visible": true
+        },
+        "/search_progress": {
+          "visible": true
+        },
+        "/robot_description": {
+          "visible": true,
+          "showOutlines": false,
+          "opacity": 0.9,
+          "showAxis": false
+        },
+        "/camera/camera_info": {
+          "visible": true,
+          "distance": 0.15
+        },
+        "/odometry/filtered": {
+          "visible": true,
+          "convertTo": "geometry_msgs/msg/PoseStamped",
+          "schemaSettings": {
+            "foxglove.SceneUpdate": {
+              "showOutlines": true
+            }
+          },
+          "type": "arrow",
+          "arrowScale": [
+            0.5,
+            0.04,
+            0.01
+          ]
+        }
+      },
+      "layers": {
+        "robot": {
+          "visible": false,
+          "layerId": "foxglove.Urdf",
+          "sourceType": "topic",
+          "topic": "/robot_description",
+          "order": 1
+        }
+      },
+      "publish": {
+        "type": "point",
+        "poseTopic": "/move_base_simple/goal",
+        "pointTopic": "/clicked_point",
+        "poseEstimateTopic": "/initialpose",
+        "poseEstimateXDeviation": 0.5,
+        "poseEstimateYDeviation": 0.5,
+        "poseEstimateThetaDeviation": 0.26179939
+      },
+      "imageMode": {},
+      "fixedFrame": "map",
+      "synchronize": false
+    },
+    "StateTransitions!run": {
+      "paths": [
+        {
+          "value": "/run_status.plan_state",
+          "timestampMethod": "receiveTime",
+          "customStates": {
+            "type": "discrete",
+            "states": []
+          },
+          "label": "plan"
+        },
+        {
+          "value": "/run_status.state",
+          "timestampMethod": "receiveTime",
+          "customStates": {
+            "type": "discrete",
+            "states": []
+          },
+          "label": "state"
+        },
+        {
+          "value": "/run_status.obstacle",
+          "timestampMethod": "receiveTime",
+          "customStates": {
+            "type": "discrete",
+            "states": []
+          },
+          "label": "target obstacle"
+        },
+        {
+          "value": "/run_status.detected_id",
+          "timestampMethod": "receiveTime",
+          "customStates": {
+            "type": "discrete",
+            "states": []
+          },
+          "label": "scan result"
+        },
+        {
+          "value": "/yolo_result.data",
+          "timestampMethod": "receiveTime",
+          "customStates": {
+            "type": "discrete",
+            "states": []
+          },
+          "label": "YOLO sees"
+        },
+        {
+          "value": "/run_status.reverse",
+          "timestampMethod": "receiveTime",
+          "customStates": {
+            "type": "discrete",
+            "states": []
+          },
+          "label": "reverse gear"
+        }
+      ],
+      "isSynced": true,
+      "showPoints": true,
+      "showLegend": true,
+      "xAxisDisplayMethod": "relative"
+    },
+    "Plot!progress": {
+      "title": "Progress",
+      "paths": [
+        {
+          "value": "/run_status.cmd_v",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "label": "cmd v (m/s)"
+        },
+        {
+          "value": "/run_status.cmd_w",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "label": "cmd yaw rate (rad/s)"
+        },
+        {
+          "value": "/run_status.dist_to_checkpoint",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "label": "to checkpoint (m)"
+        }
+      ],
+      "showXAxisLabels": true,
+      "showYAxisLabels": true,
+      "showLegend": true,
+      "legendDisplay": "floating",
+      "showPlotValuesInLegend": true,
+      "isSynced": true,
+      "xAxisVal": "timestamp",
+      "followingViewWidth": 30,
+      "sidebarDimension": 240
+    },
+    "Indicator!stm32": {
+      "path": "/hardware_bridge/link_ok.data",
+      "style": "bulb",
+      "fallbackColor": "#808080",
+      "fallbackLabel": "Sim",
+      "rules": [
+        {
+          "operator": "=",
+          "rawValue": "true",
+          "color": "#2eb82e",
+          "label": "STM32 OK"
+        },
+        {
+          "operator": "=",
+          "rawValue": "false",
+          "color": "#e02020",
+          "label": "STM32 DOWN"
+        }
+      ],
+      "fontSize": 36,
+      "foxglovePanelTitle": "Serial"
+    },
+    "Indicator!motor": {
+      "path": "/estop.data",
+      "style": "bulb",
+      "fallbackColor": "#808080",
+      "fallbackLabel": "Sim",
+      "rules": [
+        {
+          "operator": "=",
+          "rawValue": "false",
+          "color": "#2eb82e",
+          "label": "Motors ON"
+        },
+        {
+          "operator": "=",
+          "rawValue": "true",
+          "color": "#e0a020",
+          "label": "Motors OFF (switch)"
+        }
+      ],
+      "fontSize": 36,
+      "foxglovePanelTitle": "ESTOP"
+    },
+    "Indicator!tablet": {
+      "path": "/bluetooth_bridge/link_ok.data",
+      "style": "bulb",
+      "fallbackColor": "#808080",
+      "fallbackLabel": "Tablet: no data",
+      "rules": [
+        {
+          "operator": "=",
+          "rawValue": "true",
+          "color": "#2eb82e",
+          "label": "Tablet OK"
+        },
+        {
+          "operator": "=",
+          "rawValue": "false",
+          "color": "#e02020",
+          "label": "Tablet DOWN"
+        }
+      ],
+      "fontSize": 36,
+      "foxglovePanelTitle": "Bluetooth"
+    },
+    "Gauge!battery": {
+      "path": "/battery_state.voltage",
+      "minValue": 9,
+      "maxValue": 12.6,
+      "colorMap": "red-yellow-green",
+      "colorMode": "colormap",
+      "gradient": [
+        "#0000ff",
+        "#ff00ff"
+      ],
+      "reverse": false,
+      "style": "bar",
+      "tickInterval": 0.1,
+      "showTicks": false,
+      "reverseDirection": false,
+      "foxglovePanelTitle": "Battery"
+    },
+    "Image!yolo": {
+      "imageMode": {
+        "imageTopic": "/yolo_result/image_annotated"
+      },
+      "cameraState": {
+        "distance": 20,
+        "perspective": true,
+        "phi": 60,
+        "target": [
+          0,
+          0,
+          0
+        ],
+        "targetOffset": [
+          0,
+          0,
+          0
+        ],
+        "targetOrientation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "thetaOffset": 60,
+        "fovy": 45,
+        "near": 0.5,
+        "far": 5000
+      },
+      "followMode": "follow-pose",
+      "scene": {},
+      "transforms": {},
+      "topics": {},
+      "layers": {},
+      "publish": {
+        "type": "point",
+        "poseTopic": "/move_base_simple/goal",
+        "pointTopic": "/clicked_point",
+        "poseEstimateTopic": "/initialpose",
+        "poseEstimateXDeviation": 0.5,
+        "poseEstimateYDeviation": 0.5,
+        "poseEstimateThetaDeviation": 0.26179939
+      },
+      "synchronize": false,
+      "foxglovePanelTitle": "Camera"
+    },
+    "CallService!reset_pose": {
+      "serviceName": "/reset_pose",
+      "requestPayload": "{}",
+      "buttonText": "RESET POSE",
+      "buttonColor": "#1565c0",
+      "layout": "vertical",
+      "editingMode": false,
+      "timeoutSeconds": 10,
+      "foxglovePanelTitle": "Rest"
+    },
+    "CallService!go": {
+      "serviceName": "/start_run",
+      "requestPayload": "{}",
+      "buttonText": "GO",
+      "buttonColor": "#2e7d32",
+      "layout": "vertical",
+      "editingMode": false,
+      "timeoutSeconds": 10,
+      "foxglovePanelTitle": "Go"
+    },
+    "CallService!stop": {
+      "serviceName": "/stop_run",
+      "requestPayload": "{}",
+      "buttonText": "STOP",
+      "buttonColor": "#c62828",
+      "layout": "vertical",
+      "editingMode": false,
+      "timeoutSeconds": 10,
+      "foxglovePanelTitle": "Stop"
+    },
+    "RosOut!6mutlw": {
+      "minLogLevel": 1,
+      "searchTerms": [],
+      "nameFilter": {
+        "foxglove_bridge": {
+          "visible": false
+        },
+        "bt_monitor": {
+          "visible": false
+        }
+      },
+      "fontSize": 12,
+      "showLevel": false,
+      "showDate": false,
+      "showTime": true,
+      "showTimezone": false,
+      "showName": false,
+      "showSourceLocation": false,
+      "foxglovePanelTitle": "Task"
+    },
+    "RosOut!sibm87": {
+      "minLogLevel": 1,
+      "searchTerms": [],
+      "nameFilter": {
+        "foxglove_bridge": {
+          "visible": false
+        },
+        "task1_runner": {
+          "visible": false
+        }
+      },
+      "fontSize": 12,
+      "showLevel": false,
+      "showDate": false,
+      "showTime": true,
+      "showTimezone": false,
+      "showName": false,
+      "showSourceLocation": false,
+      "foxglovePanelTitle": "Bluetooth"
+    },
+    "DiagnosticSummary!health": {
+      "minLevel": 0,
+      "pinnedIds": [],
+      "hardwareIdFilter": "",
+      "topicToRender": "/diagnostics",
+      "sortByLevel": true,
+      "secondsUntilStale": 5
+    },
+    "DiagnosticStatusPanel!detail": {
+      "topicToRender": "/diagnostics",
+      "collapsedSections": []
+    },
+    "RosOut!2w86lxz": {
+      "minLogLevel": 1,
+      "searchTerms": [],
+      "nameFilter": {},
+      "fontSize": 12,
+      "showLevel": true,
+      "showDate": true,
+      "showTime": true,
+      "showTimezone": true,
+      "showName": true,
+      "showSourceLocation": false
+    },
+    "RawMessages!status": {
+      "topicPath": "/run_status",
+      "diffEnabled": false,
+      "diffMethod": "custom",
+      "diffTopicPath": "",
+      "showFullMessageForDiff": false,
+      "expansion": "all",
+      "defaultExpanded": false
+    },
+    "Plot!speed": {
+      "title": "Speed: commanded vs actual",
+      "paths": [
+        {
+          "value": "/run_status.cmd_v",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "label": "cmd v (m/s)"
+        },
+        {
+          "value": "/odometry/filtered.twist.twist.linear.x",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "label": "EKF v (m/s)"
+        },
+        {
+          "value": "/ackermann_steering_controller/odometry.twist.twist.linear.x",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "label": "wheel odom v (m/s)"
+        }
+      ],
+      "showXAxisLabels": true,
+      "showYAxisLabels": true,
+      "showLegend": true,
+      "legendDisplay": "floating",
+      "showPlotValuesInLegend": true,
+      "isSynced": true,
+      "xAxisVal": "timestamp",
+      "followingViewWidth": 30,
+      "sidebarDimension": 240
+    },
+    "Plot!steering": {
+      "title": "Steering (rad, + left; limits +0.75 / -0.57)",
+      "paths": [
+        {
+          "value": "/ackermann_steering_controller/controller_state.steering_angle_command[0]",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "label": "commanded"
+        },
+        {
+          "value": "/ackermann_steering_controller/controller_state.steer_positions[0]",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "label": "actual"
+        }
+      ],
+      "showXAxisLabels": true,
+      "showYAxisLabels": true,
+      "showLegend": true,
+      "legendDisplay": "floating",
+      "showPlotValuesInLegend": true,
+      "isSynced": true,
+      "xAxisVal": "timestamp",
+      "followingViewWidth": 30,
+      "sidebarDimension": 240
+    },
+    "Plot!yawrate": {
+      "title": "Yaw rate: IMU vs wheels (rad/s)",
+      "paths": [
+        {
+          "value": "/imu/data.angular_velocity.z",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "label": "IMU"
+        },
+        {
+          "value": "/ackermann_steering_controller/odometry.twist.twist.angular.z",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "label": "wheel odom"
+        },
+        {
+          "value": "/odometry/filtered.twist.twist.angular.z",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "label": "EKF"
+        }
+      ],
+      "showXAxisLabels": true,
+      "showYAxisLabels": true,
+      "showLegend": true,
+      "legendDisplay": "floating",
+      "showPlotValuesInLegend": true,
+      "isSynced": true,
+      "xAxisVal": "timestamp",
+      "followingViewWidth": 30,
+      "sidebarDimension": 240
+    },
+    "Plot!range": {
+      "title": "Range sensors (m)",
+      "paths": [
+        {
+          "value": "/ultrasonic.range",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "label": "ultrasonic (front)"
+        },
+        {
+          "value": "/ir.range",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "label": "IR"
+        },
+        {
+          "value": "/ir2.range",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "label": "IR 2"
+        }
+      ],
+      "showXAxisLabels": true,
+      "showYAxisLabels": true,
+      "showLegend": true,
+      "legendDisplay": "floating",
+      "showPlotValuesInLegend": true,
+      "isSynced": true,
+      "xAxisVal": "timestamp",
+      "followingViewWidth": 30,
+      "sidebarDimension": 240
+    },
+    "Plot!truth": {
+      "title": "Sim only: pose estimate vs Gazebo truth (m)",
+      "paths": [
+        {
+          "value": "/run_status.x",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "label": "estimate x"
+        },
+        {
+          "value": "/sim/ground_truth.transforms[0].transform.translation.x",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "label": "truth x"
+        },
+        {
+          "value": "/run_status.y",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "label": "estimate y"
+        },
+        {
+          "value": "/sim/ground_truth.transforms[0].transform.translation.y",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "label": "truth y"
+        }
+      ],
+      "showXAxisLabels": true,
+      "showYAxisLabels": true,
+      "showLegend": true,
+      "legendDisplay": "floating",
+      "showPlotValuesInLegend": true,
+      "isSynced": true,
+      "xAxisVal": "timestamp",
+      "followingViewWidth": 120,
+      "sidebarDimension": 240
+    },
+    "Tab!main": {
+      "activeTabIdx": 0,
+      "tabs": [
+        {
+          "title": "Run",
+          "layout": {
+            "direction": "row",
+            "first": {
+              "direction": "column",
+              "first": "3D!arena",
+              "second": {
+                "direction": "row",
+                "first": "StateTransitions!run",
+                "second": "Plot!progress",
+                "splitPercentage": 55
+              },
+              "splitPercentage": 58.33018137167999
+            },
+            "second": {
+              "direction": "column",
+              "first": {
+                "first": {
+                  "first": {
+                    "first": "Indicator!stm32",
+                    "second": "Indicator!motor",
+                    "direction": "column"
+                  },
+                  "second": {
+                    "first": "Indicator!tablet",
+                    "second": "Gauge!battery",
+                    "direction": "column"
+                  },
+                  "direction": "column"
+                },
+                "second": "Image!yolo",
+                "direction": "row"
+              },
+              "second": {
+                "direction": "column",
+                "first": {
+                  "direction": "row",
+                  "first": {
+                    "direction": "row",
+                    "first": "CallService!reset_pose",
+                    "second": "CallService!go",
+                    "splitPercentage": 50
+                  },
+                  "second": "CallService!stop",
+                  "splitPercentage": 68.26528187896686
+                },
+                "second": {
+                  "direction": "column",
+                  "first": "RosOut!6mutlw",
+                  "second": "RosOut!sibm87",
+                  "splitPercentage": 52.977214134126704
+                },
+                "splitPercentage": 14
+              },
+              "splitPercentage": 35.500544101609506
+            },
+            "splitPercentage": 55.024390243902445
+          }
+        },
+        {
+          "title": "Health & tuning",
+          "layout": {
+            "direction": "row",
+            "first": {
+              "direction": "column",
+              "first": {
+                "direction": "row",
+                "first": "DiagnosticSummary!health",
+                "second": "DiagnosticStatusPanel!detail",
+                "splitPercentage": 47.90243902439024
+              },
+              "second": {
+                "direction": "column",
+                "first": "RosOut!2w86lxz",
+                "second": "RawMessages!status",
+                "splitPercentage": 55
+              },
+              "splitPercentage": 45.219184867181674
+            },
+            "second": {
+              "direction": "column",
+              "first": {
+                "direction": "column",
+                "first": "Plot!speed",
+                "second": "Plot!steering",
+                "splitPercentage": 50
+              },
+              "second": {
+                "direction": "column",
+                "first": {
+                  "direction": "column",
+                  "first": "Plot!yawrate",
+                  "second": "Plot!range",
+                  "splitPercentage": 50
+                },
+                "second": "Plot!truth",
+                "splitPercentage": 66
+              },
+              "splitPercentage": 40
+            },
+            "splitPercentage": 50
+          }
+        }
+      ]
+    }
+  },
+  "globalVariables": {},
+  "userNodes": {},
+  "playbackConfig": {
+    "speed": 1
+  },
+  "layout": "Tab!main"
+}
