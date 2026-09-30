@@ -21,6 +21,33 @@ How it drives:
     on only dithers beside the goal).
   * Steering is clamped PER SIDE to the measured wheel limits (43 deg left,
     32.5 deg right) and converted to yaw rate with the bicycle model.
+  * The pose comes in pose_latency late (EKF + transport: ~60 ms in Gazebo,
+    2026-09-30 - the car was ~2 cm further along than its pose said at 0.3 m/s),
+    so it is moved forward by the last command over that time first.
+  * Steering (tracking): 'pure_pursuit' steers onto the arc through the
+    lookahead point - it cuts inside curves by ~lookahead^2 / (2 radius).
+    'feedback' (rear-axle path feedback, e.g. PythonRobotics
+    rear_wheel_feedback) steers by the planned path's own curvature at the
+    nearest point (looked up feedforward_preview_time ahead, for the steering
+    lag) and corrects the sideways error and heading error:
+        w = |v| k_path - k_theta |v| e_theta - k_e v e sin(e_theta)/e_theta
+    (a Lyapunov-stable law, forward and reverse). Tried for task 1 because pure
+    pursuit drifted ~5 cm off its paths at every speed (sim, 2026-09-30).
+    'lqr' holds the same nearest-point errors plus the wheel angle in a small
+    model - sideways error e, heading error, wheel angle lagging its command
+    with steering_time_constant (Gazebo: 90% of a step in ~0.5 s) - and steers
+    with the optimal gain for it (discrete LQR, solved once per speed). Knowing
+    the lag, it starts turning before a curve instead of after. The wheel angle
+    is not measured: it is the model's estimate from the commands sent.
+  * Speed (regulate=True, task 1 - as Nav2's Regulated Pure Pursuit): target_speed
+    on straights, less where it is tight - the path's sharpest curve in the next
+    stretch caps it at sqrt(max_lateral_accel x radius), reversing at
+    max_reverse_linear_vel, and it slows over the last
+    approach_velocity_scaling_dist before every cusp and the goal. The lookahead
+    grows with the speed actually driven, not the target. Why: at 0.4 m/s flat
+    out the car ran 5.6 cm off its path reversing into a checkpoint and touched
+    the block (sim, 2026-09-30) - the steering takes ~0.66 s to swing over and a
+    long lookahead cuts corners. task2_runner sets its own speed (regulate=False).
 
 Settings default to robot.* / follower.* in mdp_bringup/config/navigation.yaml
 (utils/params.py, read when the controller is built); any argument overrides.
@@ -32,6 +59,9 @@ import math
 from typing import List, Optional, Tuple
 
 from ..utils import params as planner_params
+
+CONTROL_DT = 0.05             # s, compute_cmd() is called at 20 Hz (task1_runner, goto)
+LOOKAHEAD_REF_SPEED = 0.2    # m/s at which lookahead_dist applies (it was tuned there)
 
 Pose = Tuple[float, float, float]
 DensePose = Tuple[float, float, float, int]   # (x, y, theta, gear): gear +1 forward, -1 reverse
@@ -60,14 +90,34 @@ class PurePursuitController:
         self.target_speed = pick(target_speed, p.desired_linear_vel)                 # m/s
         self.goal_tolerance = pick(goal_tolerance, p.xy_goal_tolerance)              # m
         self.cusp_tolerance = pick(cusp_tolerance, p.cusp_tolerance)                 # m
+        self.velocity_scaled_lookahead = p.use_velocity_scaled_lookahead_dist
+        self.regulate = p.use_regulated_linear_velocity_scaling
+        self.max_lateral_accel = p.max_lateral_accel                                 # m/s^2
+        self.min_regulated_speed = p.regulated_linear_scaling_min_speed              # m/s
+        self.max_reverse_speed = p.max_reverse_linear_vel                            # m/s
+        self.approach_dist = p.approach_velocity_scaling_dist                        # m
+        self.min_approach_speed = p.min_approach_linear_velocity                     # m/s
+        self.speed = 0.0               # |speed| of the last command
+        self.pose_latency = p.pose_latency                                           # s
+        self._last_cmd = (0.0, 0.0)    # (v, w) sent last tick, for the latency prediction
+        self.tracking = p.path_tracking                                              # pure_pursuit | feedback
+        self.k_e = p.feedback_k_e                                                    # 1/m^2
+        self.k_theta = p.feedback_k_theta                                            # 1/m
+        self.preview_time = p.feedforward_preview_time                               # s
+        self.lqr_weights = (p.lqr_q_lateral, p.lqr_q_heading, p.lqr_q_steer, p.lqr_r)
+        self.steer_tau = p.steering_time_constant                                    # s
+        self.steer_est = 0.0           # rad, the model's wheel angle (lqr)
+        self._lqr_cache = {}
 
         self.path: List[DensePose] = []
         self.current_pose: Pose = (0.0, 0.0, 0.0)
+        self.measured_pose: Pose = (0.0, 0.0, 0.0)
         self.active = False
         self.last_target = None        # (x, y, gear) last steered at - for /run_status
         self._search_idx = 0           # never searches behind this point
         self._seg_ends: List[int] = []  # last path index of each same-gear segment
         self._seg = 0                  # segment being driven
+        self._near_idx = 0             # path point nearest the car (only moves forward)
 
     def set_path(self, path_waypoints: List[DensePose]) -> None:
         """(x, y, theta, gear) points; a point without gear is driven forward."""
@@ -78,12 +128,76 @@ class PurePursuitController:
         self._seg_ends = [i - 1 for i in range(1, len(self.path))
                           if self.path[i][3] != self.path[i - 1][3]] + [len(self.path) - 1]
         self._seg = 0
+        self._near_idx = 0
+        self.speed = 0.0
+        self.steer_est = 0.0
+        self._last_cmd = (0.0, 0.0)
 
     def update_pose(self, x: float, y: float, yaw: float) -> None:
-        self.current_pose = (x, y, yaw)
+        self.measured_pose = (x, y, yaw)
+        self.current_pose = self.predicted_pose()
+
+    def predicted_pose(self) -> Pose:
+        """The measured pose moved on by the last command over pose_latency."""
+        x, y, yaw = self.measured_pose
+        v, w = self._last_cmd
+        dt = self.pose_latency
+        if dt <= 0.0 or (v == 0.0 and w == 0.0):
+            return x, y, yaw
+        mid = yaw + 0.5 * w * dt
+        return x + v * dt * math.cos(mid), y + v * dt * math.sin(mid), yaw + w * dt
 
     def is_done(self) -> bool:
         return not self.active
+
+    def lookahead(self) -> float:
+        """lookahead_dist at LOOKAHEAD_REF_SPEED, growing with the speed driven."""
+        if not self.velocity_scaled_lookahead:
+            return self.lookahead_dist
+        return self.lookahead_dist * max(1.0, self.speed / LOOKAHEAD_REF_SPEED)
+
+    def _update_near(self, seg_end: int) -> int:
+        x, y, _ = self.current_pose
+        i = max(self._near_idx, self._seg_start())
+        best = math.hypot(self.path[i][0] - x, self.path[i][1] - y)
+        for j in range(i + 1, seg_end + 1):
+            d = math.hypot(self.path[j][0] - x, self.path[j][1] - y)
+            if d > best + 0.05:        # past the nearest (don't jump to a later pass nearby)
+                break
+            if d <= best:
+                i, best = j, d
+        self._near_idx = i
+        return i
+
+    def _seg_start(self) -> int:
+        return self._seg_ends[self._seg - 1] + 1 if self._seg > 0 else 0
+
+    def regulated_speed(self, gear: int) -> float:
+        """|speed| for this tick (module docstring)."""
+        v = self.target_speed
+        if not self.regulate:
+            return v
+        if gear < 0:
+            v = min(v, self.max_reverse_speed)
+        seg_end = self._seg_ends[self._seg]
+        i = self._update_near(seg_end)
+        # Sharpest curve over the stretch the car covers before it could slow
+        # down, and how much of this segment is left (to the cusp / goal).
+        preview = self.lookahead() + v * v / (2.0 * self.max_lateral_accel) + 0.05
+        s, kappa = 0.0, 0.0
+        for j in range(i, seg_end):
+            a, b = self.path[j], self.path[j + 1]
+            ds = math.hypot(b[0] - a[0], b[1] - a[1])
+            if s < preview and ds > 1e-4:
+                dth = math.atan2(math.sin(b[2] - a[2]), math.cos(b[2] - a[2]))
+                kappa = max(kappa, abs(dth) / ds)
+            s += ds
+        left = s
+        if kappa > 1e-6:
+            v = min(v, max(self.min_regulated_speed, math.sqrt(self.max_lateral_accel / kappa)))
+        if left < self.approach_dist:
+            v = min(v, max(self.min_approach_speed, self.target_speed * left / self.approach_dist))
+        return v
 
     def find_lookahead_point(self) -> Optional[Tuple[float, float, int]]:
         """(x, y, gear) of the first point in this segment at least
@@ -92,9 +206,10 @@ class PurePursuitController:
             return None
         seg_end = self._seg_ends[self._seg]
         x, y, _ = self.current_pose
+        look = self.lookahead()
         for i in range(self._search_idx, seg_end + 1):
             px, py, _, gear = self.path[i]
-            if math.hypot(px - x, py - y) >= self.lookahead_dist:
+            if math.hypot(px - x, py - y) >= look:
                 self._search_idx = i
                 return px, py, gear
         self._search_idx = seg_end
@@ -130,9 +245,74 @@ class PurePursuitController:
         local_y = -dx * math.sin(yaw) + dy * math.cos(yaw)
         if (local_x <= 0.0) if gear >= 0 else (local_x >= 0.0):
             return 0.0
-        curvature = 2.0 * local_y / self.lookahead_dist ** 2
+        curvature = 2.0 * local_y / self.lookahead() ** 2
         steering = math.atan(self.wheelbase * curvature)
         return max(-self.max_steering_right, min(self.max_steering_left, steering))
+
+    def _path_curvature(self, i: int, seg_end: int) -> float:
+        """Signed d(heading)/d(distance travelled) of the path at point i."""
+        j = min(i + 1, seg_end)
+        k = max(j - 2, self._seg_start())
+        a, b = self.path[k], self.path[j]
+        ds = math.hypot(b[0] - a[0], b[1] - a[1])
+        if ds < 1e-4:
+            return 0.0
+        return math.atan2(math.sin(b[2] - a[2]), math.cos(b[2] - a[2])) / ds
+
+    def feedback_yaw_rate(self, v: float) -> float:
+        """Yaw rate from the path feedback law (module docstring); v signed."""
+        seg_end = self._seg_ends[self._seg]
+        i = self._update_near(seg_end)
+        px, py, pth, _ = self.path[i]
+        x, y, yaw = self.current_pose
+        e = -(x - px) * math.sin(pth) + (y - py) * math.cos(pth)          # + = car left of the path
+        e_th = math.atan2(math.sin(yaw - pth), math.cos(yaw - pth))
+        # Curvature where the car will be once the steering has swung over.
+        j, travelled = i, 0.0
+        while j < seg_end and travelled < abs(v) * self.preview_time:
+            travelled += math.hypot(self.path[j + 1][0] - self.path[j][0], self.path[j + 1][1] - self.path[j][1])
+            j += 1
+        k_path = self._path_curvature(j, seg_end)
+        sinc = math.sin(e_th) / e_th if abs(e_th) > 1e-6 else 1.0
+        return abs(v) * k_path - self.k_theta * abs(v) * e_th - self.k_e * v * e * sinc
+
+    def _lqr_gain(self, v: float, dt: float):
+        key = (round(v, 2), dt, self.lqr_weights, self.steer_tau)
+        if key not in self._lqr_cache:
+            import numpy as np
+            a = dt / max(self.steer_tau, dt)
+            A = np.array([[1.0, v * dt, 0.0], [0.0, 1.0, v * dt / self.wheelbase], [0.0, 0.0, 1.0 - a]])
+            B = np.array([[0.0], [0.0], [a]])
+            q_e, q_th, q_d, r = self.lqr_weights
+            Q, R = np.diag([q_e, q_th, q_d]), np.array([[r]])
+            P = Q.copy()
+            for _ in range(300):       # discrete Riccati equation, by iteration
+                K = np.linalg.solve(R + B.T @ P @ B, B.T @ P @ A)
+                P = Q + A.T @ P @ (A - B @ K)
+            self._lqr_cache[key] = K[0]
+        return self._lqr_cache[key]
+
+    def lqr_steering(self, v: float, dt: float = CONTROL_DT) -> float:
+        """Wheel angle command (rad) from the LQR (module docstring); v signed."""
+        seg_end = self._seg_ends[self._seg]
+        i = self._update_near(seg_end)
+        px, py, pth, _ = self.path[i]
+        x, y, yaw = self.current_pose
+        e = -(x - px) * math.sin(pth) + (y - py) * math.cos(pth)
+        e_th = math.atan2(math.sin(yaw - pth), math.cos(yaw - pth))
+        j, travelled = i, 0.0
+        while j < seg_end and travelled < abs(v) * self.preview_time:
+            travelled += math.hypot(self.path[j + 1][0] - self.path[j][0], self.path[j + 1][1] - self.path[j][1])
+            j += 1
+        # The wheel angle the path needs there: heading change per metre driven,
+        # turned into a wheel angle; in reverse the same curve needs the opposite.
+        k = self._path_curvature(j, seg_end)
+        ref = math.atan(self.wheelbase * k) * (1.0 if v > 0 else -1.0)
+        kv = self._lqr_gain(v, dt)
+        cmd = ref - (kv[0] * e + kv[1] * e_th + kv[2] * (self.steer_est - ref))
+        cmd = max(-self.max_steering_right, min(self.max_steering_left, cmd))
+        self.steer_est += (cmd - self.steer_est) * min(1.0, dt / max(self.steer_tau, dt))
+        return cmd
 
     def compute_cmd(self) -> Optional[Tuple[float, float]]:
         """(linear_x, angular_z) for this tick; (0, 0) when the path is done,
@@ -141,6 +321,7 @@ class PurePursuitController:
         a final reverse (2026-09-17)."""
         if not self.active or not self.path:
             return None
+        self.current_pose = self.predicted_pose()
         target = self.find_lookahead_point()
 
         seg_end = self._seg_ends[self._seg]
@@ -148,6 +329,7 @@ class PurePursuitController:
         if self._search_idx >= seg_end and self._segment_end_reached(seg_end, final):
             if final:
                 self.active = False
+                self._last_cmd = (0.0, 0.0)
                 return 0.0, 0.0
             self._seg += 1
             self._search_idx = seg_end + 1
@@ -165,7 +347,16 @@ class PurePursuitController:
             gear = 1
         self.last_target = (tx, ty, gear)
 
-        steering = self.calculate_pure_pursuit((tx, ty), gear)
-        speed = self.target_speed if gear >= 0 else -self.target_speed
+        self.speed = self.regulated_speed(gear)
+        speed = self.speed if gear >= 0 else -self.speed
+        if self.tracking == 'lqr' and abs(speed) > 1e-3:
+            steering = self.lqr_steering(speed)
+        elif self.tracking == 'feedback' and abs(speed) > 1e-3:
+            w = self.feedback_yaw_rate(speed)
+            steering = math.atan(self.wheelbase * w / speed)
+            steering = max(-self.max_steering_right, min(self.max_steering_left, steering))
+        else:
+            steering = self.calculate_pure_pursuit((tx, ty), gear)
         # ackermann_steering_controller takes yaw rate: w = v * tan(delta) / L.
-        return speed, speed * math.tan(steering) / self.wheelbase
+        self._last_cmd = (speed, speed * math.tan(steering) / self.wheelbase)
+        return self._last_cmd

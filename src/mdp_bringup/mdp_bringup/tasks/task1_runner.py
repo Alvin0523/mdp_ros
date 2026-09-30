@@ -53,6 +53,14 @@ from mdp_bringup.utils import manual, markers
 RESET_POS_TOL_M = 0.03
 RESET_YAW_TOL_RAD = math.radians(5.0)
 RESET_CONFIRM_TIMEOUT_S = 3.0
+# A leg is planned again from where the car really is when it has no path, or
+# the car is this far from where the leg starts (the previous leg failed or
+# ended off its checkpoint). Legs are planned checkpoint to checkpoint ahead of
+# time; in sim 2026-09-30 a NO PATH leg left the car following the next leg from
+# a checkpoint it never reached, and it drove off the table.
+REPLAN_POS_M = 0.08
+REPLAN_YAW_RAD = math.radians(30.0)
+REPLAN_FALLBACK_M = 0.15   # car inside the safety margin this close to the leg's start: plan from there
 
 
 class State(Enum):
@@ -74,18 +82,26 @@ class Task1Runner(RunnerBase):
         self.declare_parameter('start_x', 0.15)
         self.declare_parameter('start_y', 0.15)
         self.declare_parameter('start_yaw', math.pi / 2.0)
-        self.declare_parameter('scan_pause_s', 3.0)        # stand still this long while YOLO looks
+        # At a stop the car waits for YOLO: reads in the first scan_settle_s are
+        # dropped, then it is done once the same id is read scan_confirm_count
+        # times, or after scan_pause_s at most. Measured in sim 2026-09-30: the
+        # third right read came 0.7-1.2 s after stopping, so a fixed 3 s wasted
+        # ~2 s per obstacle. The settle: YOLO answers ~0.3 s after its frame, so
+        # the first answers after stopping are of frames taken while still
+        # turning in - a neighbour's image, or the image at an angle (read 36 as 33).
+        self.declare_parameter('scan_pause_s', 3.0)
+        self.declare_parameter('scan_settle_s', 0.5)
+        self.declare_parameter('scan_confirm_count', 3)
         # true: don't stream zeros while idle, so another publisher (dist, rotate,
         # circle, teleop) can move the car. A run and STOP are unaffected.
         self.declare_parameter('external_control', False)
         manual.declare_params(self)   # the tablet's movement buttons, see utils/manual.py
         # robot.wheelbase / steering_limit_* (URDF) + navigation.yaml, passed
         # by the launch; the same files are the defaults for a bare `ros2 run`.
-        settings = planner_params.to_flat(planner_params.load())
-        for name, value in settings.items():
+        self.planner_settings = list(planner_params.to_flat(planner_params.load()).items())
+        for name, value in self.planner_settings:
             self.declare_parameter(name, value)
-        planner_params.configure(planner_params.from_flat(
-            {name: self.get_parameter(name).value for name in settings}))
+        self.configure_planner()
 
         # (/cmd_vel, /run_status, the Foxglove drawings, /start_run ...: RunnerBase)
         self.create_subscription(String, '/obstacle_setup', self.setup_callback, 10)
@@ -101,6 +117,7 @@ class Task1Runner(RunnerBase):
         self.visiting_order = []     # obstacle indices in visit order
         self.checkpoints = []        # (x, y, theta) per visit, same order
         self.leg_paths = []          # per visit: path, [] = no path, None = still planning
+        self._replanned = set()      # legs already planned again this run (start_leg)
         self.unreachable = []
         self.current_target_idx = 0
         self.costmap = None
@@ -212,6 +229,8 @@ class Task1Runner(RunnerBase):
         target_id = msg.data.strip()
         if self.state != State.PAUSE_FOR_SCAN or not target_id:
             return
+        if self.now() - self.state_start < float(self.get_parameter('scan_settle_s').value):
+            return   # a frame from before the car stopped
         self.scan_detections.append(target_id)
         self.detected_target_id = Counter(self.scan_detections).most_common(1)[0][0]
 
@@ -242,6 +261,7 @@ class Task1Runner(RunnerBase):
             self._manual_until = 0.0
             self.reset_done = False     # the car is leaving the start
             self.run_start, self.run_end = self.now(), None
+            self._replanned = set()
             response.message = "Run started - navigating to targets."
             self.get_logger().info(f"GO        {' -> '.join(self.tablet_id(i) for i in self.visiting_order)}")
             self.publish_checkpoints()
@@ -365,7 +385,10 @@ class Task1Runner(RunnerBase):
             self.navigate()
         elif self.state == State.PAUSE_FOR_SCAN:
             self.send_cmd(0.0, 0.0)
-            if now - self.state_start >= float(self.get_parameter('scan_pause_s').value):
+            confirmed = (self.detected_target_id is not None
+                         and Counter(self.scan_detections)[self.detected_target_id]
+                         >= int(self.get_parameter('scan_confirm_count').value))
+            if confirmed or now - self.state_start >= float(self.get_parameter('scan_pause_s').value):
                 self.finish_scan()
         elif self.state == State.STOPPED:
             self.send_cmd(0.0, 0.0)
@@ -373,8 +396,16 @@ class Task1Runner(RunnerBase):
             if not self.get_parameter('external_control').value:
                 self.send_cmd(0.0, 0.0)   # idle: hold the car still
 
+    def configure_planner(self):
+        """Hand the planner the current parameter values - at startup and before
+        every plan, so `ros2 param set` + a new obstacle set (`pixi run setup`)
+        tries e.g. another planner.checkpoint_standoff without a restart."""
+        planner_params.configure(planner_params.from_flat(
+            {name: self.get_parameter(name).value for name, _ in self.planner_settings}))
+
     def plan(self):
         """Order + checkpoints now; every leg in a background thread."""
+        self.configure_planner()
         camera_yaw = self.camera_yaw()
         if camera_yaw is None:
             return   # tried again next tick
@@ -392,6 +423,7 @@ class Task1Runner(RunnerBase):
         self.get_logger().info(f"PLAN      order {' -> '.join(self.tablet_id(i) for i in self.visiting_order)}")
 
         self.leg_paths = [None] * len(self.visiting_order)
+        self._replanned = set()
         self.current_target_idx = 0
         self.set_state(State.WAITING_FOR_GO)
         threading.Thread(target=self.plan_legs, daemon=True,
@@ -432,12 +464,24 @@ class Task1Runner(RunnerBase):
             return                     # start_leg() skipped an empty leg
 
         self.publish_leg()
-        # Speed and lookahead are live parameters; the lookahead grows with speed.
-        speed = min(0.5, max(0.05, float(self.get_parameter('follower.desired_linear_vel').value)))
-        look = float(self.get_parameter('follower.lookahead_dist').value)
-        if self.get_parameter('follower.use_velocity_scaled_lookahead_dist').value:
-            look = max(look, look * speed / 0.2)
-        self.follower.target_speed, self.follower.lookahead_dist = speed, look
+        # Speed, lookahead and the slow-downs are live parameters (the follower
+        # lowers the speed where it is tight and grows the lookahead with it).
+        f, p = self.follower, lambda name: self.get_parameter(f'follower.{name}').value
+        f.target_speed = min(0.5, max(0.05, float(p('desired_linear_vel'))))
+        f.lookahead_dist = float(p('lookahead_dist'))
+        f.velocity_scaled_lookahead = bool(p('use_velocity_scaled_lookahead_dist'))
+        f.regulate = bool(p('use_regulated_linear_velocity_scaling'))
+        f.max_lateral_accel = float(p('max_lateral_accel'))
+        f.min_regulated_speed = float(p('regulated_linear_scaling_min_speed'))
+        f.max_reverse_speed = float(p('max_reverse_linear_vel'))
+        f.approach_dist = float(p('approach_velocity_scaling_dist'))
+        f.min_approach_speed = float(p('min_approach_linear_velocity'))
+        f.tracking = str(p('path_tracking'))
+        f.k_e, f.k_theta = float(p('feedback_k_e')), float(p('feedback_k_theta'))
+        f.preview_time = float(p('feedforward_preview_time'))
+        f.lqr_weights = tuple(float(p(n)) for n in ('lqr_q_lateral', 'lqr_q_heading', 'lqr_q_steer', 'lqr_r'))
+        f.steer_tau = float(p('steering_time_constant'))
+        f.pose_latency = float(p('pose_latency'))
         cmd = self.follower.compute_cmd()
         if cmd is None or self.follower.is_done():
             self.send_cmd(0.0, 0.0)
@@ -458,6 +502,15 @@ class Task1Runner(RunnerBase):
         path = self.leg_paths[idx]
         if path is None:
             return False
+        if idx not in self._replanned and (not path or self.off_leg_start(path)):
+            self._replanned.add(idx)
+            self.leg_paths[idx] = None
+            why = 'no path' if not path else f'leg starts at {self.fmt(path[0][:3])}'
+            self.get_logger().warn(f"REPLAN    leg {idx + 1}/{len(self.visiting_order)} from "
+                                   f"{self.fmt(self.current_pose)} ({why})")
+            threading.Thread(target=self.replan_leg, daemon=True,
+                             args=(idx, tuple(self.current_pose), self._plan_gen)).start()
+            return False
         self.follower.set_path(path)
         if not path:
             self.get_logger().warn(f"LEG {idx + 1}/{len(self.visiting_order)}   #{self.current_label()}: NO PATH - "
@@ -472,13 +525,43 @@ class Task1Runner(RunnerBase):
                                f"{self.fmt(self.checkpoints[idx])}  {moves}")
         return True
 
+    def off_leg_start(self, path) -> bool:
+        x, y, yaw = self.current_pose
+        px, py, ptheta = path[0][:3]
+        dyaw = abs(math.atan2(math.sin(yaw - ptheta), math.cos(yaw - ptheta)))
+        return math.hypot(x - px, y - py) > REPLAN_POS_M or dyaw > REPLAN_YAW_RAD
+
+    def replan_leg(self, idx, start, gen):
+        """Background thread: one leg from the car's real pose (current settings)."""
+        try:
+            self.configure_planner()
+            if self.costmap.in_collision(start[0] * 100.0, start[1] * 100.0, start[2]):
+                # Stopped a little inside the safety margin (2 cm closer to the block
+                # than planned is enough) - the planner refuses such a start. Plan
+                # from where the leg was meant to start; the follower gets onto it.
+                planned = self.checkpoints[idx - 1] if idx > 0 else self.start_pose()
+                if math.hypot(start[0] - planned[0], start[1] - planned[1]) < REPLAN_FALLBACK_M:
+                    self.get_logger().warn(f"REPLAN    leg {idx + 1}: the car is inside the safety margin - "
+                                           f"planning from {self.fmt(planned)} instead")
+                    start = planned
+            path = plan_leg(self.costmap, start, self.checkpoints[idx],
+                            progress_callback=self.publish_search_progress)
+            if gen != self._plan_gen:
+                return
+            self.leg_paths[idx] = path
+            self.path_pub.publish(markers.route_path(self.leg_paths, self.stamp()))
+        except Exception:
+            self.get_logger().error(f"Leg replanning thread crashed:\n{traceback.format_exc()}")
+            self.leg_paths[idx] = []
+
     def finish_scan(self):
         """Report the most frequent detection, then go on to the next obstacle."""
         target_id = self.detected_target_id or "UNKNOWN"
         obs = self.tablet_id(self.visiting_order[self.current_target_idx])
         self.send_bt(f"TARGET,{obs},{target_id}")
         seen = ' '.join(f"{k}x{n}" for k, n in Counter(self.scan_detections).most_common()) or 'nothing'
-        self.get_logger().info(f"TARGET    #{obs} = {target_id}   (YOLO saw {seen})")
+        self.get_logger().info(f"TARGET    #{obs} = {target_id}   (YOLO saw {seen}, "
+                               f"{self.now() - self.state_start:.1f} s)")
 
         self.current_target_idx += 1
         if self.current_target_idx >= len(self.visiting_order):

@@ -1,7 +1,7 @@
 # Everything that DRIVES the car - the one place to change it:
 #
 #   SPEEDS AT A GLANCE (m/s)
-#     task 1 path following    task1_runner  follower.desired_linear_vel   0.2
+#     task 1 path following    task1_runner  follower.desired_linear_vel   0.4
 #     task 2                   task2_runner  straight_speed / path_speed   0.45 / 0.25
 #     tablet arrow buttons     all nodes     manual_speed_mps              0.15
 #
@@ -107,10 +107,52 @@ task1_runner:
       lookahead_dist: 0.10            # m at 0.2 m/s (live)
       use_velocity_scaled_lookahead_dist: true   # above 0.2 m/s the lookahead
                                                  # grows with the speed
-      desired_linear_vel: 0.2         # m/s (live), clamped to 0.05 - 0.5
+      desired_linear_vel: 0.4         # m/s (live), clamped to 0.05 - 0.5. Sim
+                                      # 2026-09-30 (6 blocks, lqr + pose_latency):
+                                      # 0.4 closest body gap 0.9-1.7 cm; 0.5 touched
+                                      # (pure pursuit touched at 0.4 too)
       xy_goal_tolerance: 0.05         # m, arrived at a checkpoint (Nav2 goal checker)
+      pose_latency: 0.06              # s - the EKF pose is this late (Gazebo
+                                      # 2026-09-30: ~2 cm behind the car at 0.3 m/s);
+                                      # the follower moves it on by the last command
+      # How it steers (live): pure_pursuit = at the point lookahead_dist ahead
+      # (cuts inside curves: ~5 cm off the path at 0.3-0.5 m/s, sim 2026-09-30);
+      # feedback = the planned path's own curvature at the nearest point, looked
+      # up feedforward_preview_time ahead (the steering lag), plus corrections
+      # for the sideways error (feedback_k_e) and heading error (feedback_k_theta).
+      path_tracking: lqr              # pure_pursuit | feedback | lqr (see below).
+                                      # Sim 2026-09-30 at 0.4 m/s: lqr worst 5.7-7.1 cm
+                                      # off the path, pure_pursuit 10.6-10.8 cm
+      feedback_k_e: 20.0              # 1/m^2 - bigger pulls back to the line harder
+      feedback_k_theta: 16.0          # 1/m - bigger lines the heading up harder
+      feedforward_preview_time: 0.15  # s
+      # lqr: sideways error, heading error and the wheel angle (lagging its
+      # command by steering_time_constant) in one small model; bigger weight =
+      # that error matters more; lqr_r = how much big steering moves cost.
+      lqr_q_lateral: 100.0            # per m^2 - 1 cm off -> ~9 deg of steering
+      lqr_q_heading: 30.0             # per rad^2
+      lqr_q_steer: 0.1                # per rad^2 (wheel angle off the path's)
+      lqr_r: 0.2                      # per rad^2 of steering command
+      steering_time_constant: 0.22    # s - Gazebo 2026-09-30: 90% of a steering
+                                      # step in ~0.5 s. TODO: measure the real car
       cusp_tolerance: 0.01            # m, drive this close to a direction change
                                       # before switching gear (RPP style)
+      # Slow down where it is tight (Nav2 Regulated Pure Pursuit names; all
+      # live). desired_linear_vel is the straight-line speed; curves are capped
+      # at sqrt(max_lateral_accel x radius), reversing at max_reverse_linear_vel,
+      # and it slows over the last approach_velocity_scaling_dist before every
+      # direction change and checkpoint. Why: at 0.4 m/s flat out the car ran
+      # 5.6 cm off its path reversing into a checkpoint and touched the block
+      # (sim 2026-09-30).
+      # OFF: tried in sim 2026-09-30 - the paths are nearly all curves (median
+      # radius 0.33 m), so it held ~0.41 m/s everywhere and did not reduce the
+      # worst drift (~5 cm at 0.3-0.5 m/s either way).
+      use_regulated_linear_velocity_scaling: false
+      max_lateral_accel: 0.5          # m/s^2 - full lock (~0.18 m) -> 0.30 m/s
+      regulated_linear_scaling_min_speed: 0.15   # m/s, never slower in a curve
+      max_reverse_linear_vel: 0.25    # m/s
+      approach_velocity_scaling_dist: 0.20   # m
+      min_approach_linear_velocity: 0.10     # m/s
 
 task2_runner:
   ros__parameters:
