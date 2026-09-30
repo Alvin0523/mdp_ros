@@ -93,6 +93,10 @@ class Task2Runner(RunnerBase):
         self.create_subscription(Range, '/ultrasonic', self.ultrasonic_callback, 10)
 
         self.follower = PurePursuitController()
+        # Task 2 sets the speed and lookahead itself (speed_ahead(), follower_step()).
+        self.follower.regulate = self.follower.velocity_scaled_lookahead = False
+        self.follower.tracking = 'pure_pursuit'   # task 2's speeds were tuned with it
+        self.follower.pose_latency = 0.0          # (and without the latency prediction)
         self.us_offset = None            # base_link -> ultrasonic_link, m ahead (TF, from the URDF)
         self.reset_run()
         self.publish_map()

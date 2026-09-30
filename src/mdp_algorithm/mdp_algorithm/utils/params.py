@@ -35,7 +35,13 @@ SECTIONS = {
                 'max_iterations', 'max_planning_time', 'goal_xy_tolerance', 'goal_yaw_tolerance',
                 'checkpoint_standoff'),
     'follower': ('lookahead_dist', 'use_velocity_scaled_lookahead_dist', 'desired_linear_vel',
-                 'xy_goal_tolerance', 'cusp_tolerance'),
+                 'xy_goal_tolerance', 'cusp_tolerance',
+                 'use_regulated_linear_velocity_scaling', 'max_lateral_accel',
+                 'regulated_linear_scaling_min_speed', 'max_reverse_linear_vel',
+                 'approach_velocity_scaling_dist', 'min_approach_linear_velocity',
+                 'path_tracking', 'feedback_k_e', 'feedback_k_theta', 'feedforward_preview_time',
+                 'lqr_q_lateral', 'lqr_q_heading', 'lqr_q_steer', 'lqr_r', 'steering_time_constant',
+                 'pose_latency'),
 }
 
 
@@ -78,6 +84,22 @@ class PlannerParams:
     desired_linear_vel: float
     xy_goal_tolerance: float
     cusp_tolerance: float
+    use_regulated_linear_velocity_scaling: bool
+    max_lateral_accel: float
+    regulated_linear_scaling_min_speed: float
+    max_reverse_linear_vel: float
+    approach_velocity_scaling_dist: float
+    min_approach_linear_velocity: float
+    path_tracking: str
+    feedback_k_e: float
+    feedback_k_theta: float
+    feedforward_preview_time: float
+    lqr_q_lateral: float
+    lqr_q_heading: float
+    lqr_q_steer: float
+    lqr_r: float
+    steering_time_constant: float
+    pose_latency: float
 
     # --- derived, centimetres (the planner's internal unit) -----------------
     @property
