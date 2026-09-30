@@ -10,8 +10,11 @@ Arguments
   sim        true  -> Gazebo robot + arena, everything on Gazebo's /clock
              false -> STM32 over `serial_port`, Pi camera            (default)
   task       0 bare car (manual drive, no runner), 1 explore + recognise,
-             2 slalom                                                 (default 0)
+             2 fastest car                                             (default 0)
   vision     true/false - camera + YOLO                               (default true) 
+  fake_arrows  task 2 in sim: a stand-in YOLO that always reads the sim layout's
+             arrows (Gazebo's camera is too coarse to read them from home); the
+             real YOLO is not started for them        (default: true in sim task 2)
   obstacles  tablet -> only the tablet (over Bluetooth on `bluetooth_device`)
              yaml   -> also publish `layout` once at startup, like `pixi run setup`
              (default: yaml in sim, tablet on the robot). The tablet link is up
@@ -23,7 +26,7 @@ Arguments
   start_cell tablet cell COL,ROW (0..19) under base_link - the centre of the
              REAR AXLE - at start                         (default 1,1)
   start_dir  N / E / S / W, the way the car faces at start   (default N)
-             Task 2 without start_cell keeps its arena origin, facing E.
+             Task 2 without start_cell: in the carpark, facing out (+x).
   gui        sim only - Gazebo window                                 (default true)
   model      YOLO model dir under mdp_vision/models/                  (default mdp_v2_ncnn_model)
   serial_port, bluetooth_device  device paths    (default: config/bridges.yaml)
@@ -68,7 +71,7 @@ from launch_ros.actions import Node as RosNode
 import xacro
 import yaml
 
-from mdp_algorithm.utils.params import car_from_urdf
+from mdp_algorithm.utils.params import car_from_urdf, load as load_planner_params
 from mdp_bringup.utils import obstacle_layout
 
 TASKS = ('0', '1', '2')
@@ -76,7 +79,6 @@ CELL_M = 0.10                  # tablet grid: 20 x 20 cells of 10 cm, (0,0) bott
 DIR_YAW = {'N': math.pi / 2.0, 'E': 0.0, 'S': -math.pi / 2.0, 'W': math.pi}
 DEFAULT_START_CELL = '1,1'     # base_link (rear axle centre) over cell (1,1): inside the 4x4-cell start box
 DEFAULT_START_DIR = 'N'
-TASK2_ORIGIN_POSE = (0.0, 0.0, 0.0)   # task2_runner's arena conversion assumes this
 
 
 def start_pose(cell: str, direction: str):
@@ -108,7 +110,7 @@ def _launch_arg(name, default, argv=None):
 # Nodes whose normal (INFO) output is the story of the run; with log:=quiet
 # every other node shows only its warnings and errors in the terminal.
 _STORY_NODES = {'task1_runner', 'task2_runner', 'bluetooth_bridge_node',
-                'serial_bridge_node', 'manual_drive', 'sim_obstacles'}
+                'serial_bridge_node', 'manual_drive', 'sim_helpers', 'bag_recorder'}
 
 
 # Nodes whose INFO lines go to /rosout only (not the terminal), at any log:=.
@@ -153,6 +155,7 @@ def generate_launch_description(argv=None):
     if task not in TASKS:
         raise ValueError(f"task:={task} - expected 0, 1 or 2")
     vision = _true(arg('vision', 'true'))
+    fake_arrows = sim and task == '2' and _true(arg('fake_arrows', 'true'))
     obstacles = arg('obstacles', 'yaml' if sim else 'tablet')
     if obstacles not in ('yaml', 'tablet'):
         raise ValueError(f"obstacles:={obstacles} - expected yaml or tablet")
@@ -164,14 +167,19 @@ def generate_launch_description(argv=None):
     bluetooth_device = arg('bluetooth_device', '')
     cell, direction = arg('start_cell', ''), arg('start_dir', DEFAULT_START_DIR)
     if task == '2' and not cell:
-        start_x, start_y, start_yaw = TASK2_ORIGIN_POSE
+        # Task 2: the car's middle on the carpark's centre, facing out (+x).
+        p = load_planner_params()
+        start_x, start_y, start_yaw = obstacle_layout.load_task2(layout).car_pose_centred(
+            (p.footprint_front - p.footprint_rear) / 2.0, 0.0)
     else:
         start_x, start_y, start_yaw = start_pose(cell or DEFAULT_START_CELL, direction)
 
     declared = [
         DeclareLaunchArgument('sim', default_value='false', description='true: Gazebo, false: real robot'),
-        DeclareLaunchArgument('task', default_value='0', description='0 bare car (manual drive), 1 explore+recognise, 2 slalom'),
+        DeclareLaunchArgument('task', default_value='0', description='0 bare car (manual drive), 1 explore+recognise, 2 fastest car'),
         DeclareLaunchArgument('vision', default_value='true', description='camera + YOLO (false: without)'),
+        DeclareLaunchArgument('fake_arrows', default_value='true in sim task 2',
+                              description='sim task 2: stand-in YOLO reading the sim layout arrows (sim_helpers)'),
         DeclareLaunchArgument('obstacles', default_value='yaml in sim, tablet on real',
                               description='tablet: only the tablet; yaml: also publish `layout` once at startup (task 1)'),
         DeclareLaunchArgument('layout', default_value='config/tasks.yaml',
@@ -221,9 +229,13 @@ def generate_launch_description(argv=None):
         # Obstacles baked in from the layout - the same file the runner plans
         # with (see obstacle_layout.py).
         world_name = 'task2_arena' if task == '2' else 'task1_arena'
+        if task == '2':
+            blocks, walls, _ = obstacle_layout.task2_sim(layout)   # the sim-only layout
+            models = blocks + walls
+        else:
+            models = obstacle_layout.load(layout)
         with open(os.path.join(pkg_description, 'worlds', f'{world_name}.sdf')) as f:
-            world = obstacle_layout.world_sdf(
-                f.read(), obstacle_layout.load(layout, 'task2' if task == '2' else 'task1'))
+            world = obstacle_layout.world_sdf(f.read(), models)
         world_file = _temp_file(f'{world_name}.sdf', world)
 
         pixi_lib_dir = os.path.abspath(os.path.join(pkg_ros_gz_sim, '../..', 'lib'))
@@ -268,6 +280,7 @@ def generate_launch_description(argv=None):
                      '/camera/image_raw@sensor_msgs/msg/Image[gz.msgs.Image',
                      '/camera/camera_info@sensor_msgs/msg/CameraInfo[gz.msgs.CameraInfo',
                      '/imu/data@sensor_msgs/msg/Imu[gz.msgs.IMU',
+                     '/ultrasonic_scan@sensor_msgs/msg/LaserScan[gz.msgs.LaserScan',
                      f'/world/{world_name}/dynamic_pose/info@tf2_msgs/msg/TFMessage[gz.msgs.Pose_V',
                  ]),
             # gz-sim stamps sensor messages with its own scoped frame names and
@@ -283,6 +296,11 @@ def generate_launch_description(argv=None):
                  arguments=['--roll', str(-math.pi / 2.0), '--pitch', '0.0', '--yaw', str(-math.pi / 2.0),
                             '--frame-id', 'camera_link',
                             '--child-frame-id', 'mini_akm_robot/base_footprint/camera']),
+            # The ultrasonic's lidar stand-in looks along ultrasonic_link's +x: identity.
+            Node(package='tf2_ros', executable='static_transform_publisher', name='ultrasonic_sensor_frame_tf',
+                 output='screen', parameters=[sim_time],
+                 arguments=['--frame-id', 'ultrasonic_link',
+                            '--child-frame-id', 'mini_akm_robot/base_footprint/ultrasonic']),
             Node(package='tf2_ros', executable='static_transform_publisher', name='imu_sensor_frame_tf',
                  output='screen', parameters=[sim_time],
                  arguments=['--frame-id', 'imu_link',   # the IMU sensor sits on imu_link (URDF)
@@ -330,7 +348,7 @@ def generate_launch_description(argv=None):
                    '--yaw', str(start_yaw), '--pitch', '0.0', '--roll', '0.0',
                    '--frame-id', 'map', '--child-frame-id', 'odom']))
 
-    if vision:
+    if vision and not fake_arrows:    # fake arrows: sim_helpers stands in for YOLO
         # Camera (real only - Gazebo has its own) + YOLO: launch/vision.launch.py.
         actions.append(IncludeLaunchDescription(
             PythonLaunchDescriptionSource(os.path.join(pkg_bringup, 'launch', 'vision.launch.py')),
@@ -342,10 +360,12 @@ def generate_launch_description(argv=None):
     actions.append(Node(
         package='mdp_bridge', executable='bluetooth_bridge_node', output='screen',
         parameters=[bridges] + ([{'device': bluetooth_device}] if bluetooth_device else []) + [sim_time]))
-    if sim and task == '1':
-        # A tablet layout that differs from the file replaces Gazebo's blocks.
-        actions.append(Node(package='mdp_bringup', executable='sim_obstacles', output='screen',
-                            parameters=[{'layout': layout, 'world': 'task1_arena'}, sim_time]))
+    if sim:
+        # Stand-ins for what Gazebo lacks: /ultrasonic always; task 1 Gazebo's
+        # blocks follow the tablet's layout; task 2 the fake arrows (sim/sim_helpers.py).
+        actions.append(Node(package='mdp_bringup', executable='sim_helpers', output='screen',
+                            parameters=[{'task': task, 'layout': layout, 'world': world_name,
+                                         'fake_arrows': fake_arrows}, sim_time]))
     if obstacles == 'yaml' and task == '1':
         # The layout, published once to /obstacle_setup after task1_runner
         # subscribes - exactly what `pixi run setup` does.
@@ -358,12 +378,15 @@ def generate_launch_description(argv=None):
     # lines on /rosout (`pixi run btlog`), kept off this terminal.
     actions += [
         Node(package='mdp_bringup', executable='robot_pose_feedback', output='screen',
-             parameters=[sim_time]),
+             parameters=[{'gz_world': world_name if sim else '', 'start_x': start_x, 'start_y': start_y,
+                          'start_yaw': start_yaw}, sim_time]),
         # One-glance health on /diagnostics (STM32/tablet links, sensor rates,
         # camera/YOLO, runner) - Foxglove "Diagnostics" panels.
         Node(package='mdp_bringup', executable='health_monitor', output='screen',
              parameters=[{'sim': sim, 'vision': vision, 'task': task, 'camera_topic': camera_topic},
                          sim_time]),
+        # /bag/start, /bag/stop - record a bag from a Foxglove button (pixi run bag / bag-stop).
+        Node(package='mdp_bringup', executable='bag_recorder', output='screen', parameters=[sim_time]),
         Node(package='mdp_bringup', executable='bt_monitor', output='screen',
              ros_arguments=['--disable-stdout-logs'], parameters=[sim_time]),
     ]

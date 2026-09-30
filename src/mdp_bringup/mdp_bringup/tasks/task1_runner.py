@@ -35,23 +35,18 @@ import traceback
 from collections import Counter
 from enum import Enum, auto
 
-import tf2_geometry_msgs  # noqa: F401  registers the geometry_msgs conversions tf2 uses
 import rclpy.time
 import tf2_ros
-from geometry_msgs.msg import PoseWithCovarianceStamped, TwistStamped
+from geometry_msgs.msg import PoseWithCovarianceStamped
 from mdp_interfaces.msg import RunStatus
-from nav_msgs.msg import OccupancyGrid, Odometry, Path
-from rclpy.node import Node
-from rclpy.qos import QoSDurabilityPolicy, QoSProfile
 from std_msgs.msg import String
-from std_srvs.srv import Trigger
-from visualization_msgs.msg import MarkerArray
 
 from mdp_algorithm.control.pure_pursuit_follower import PurePursuitController, yaw_from_quaternion
 from mdp_algorithm.planning.costmap import Costmap, Obstacle
 from mdp_algorithm.planning.planner import plan_leg, plan_visiting_order
 from mdp_algorithm.utils import params as planner_params
-from mdp_bringup.utils.run import run, wall_timer
+from mdp_bringup.tasks.runner_base import RunnerBase
+from mdp_bringup.utils.run import run
 from mdp_bringup.utils import manual, markers
 
 # RESET turns DONE once odometry reports the start pose within these.
@@ -70,11 +65,9 @@ class State(Enum):
     STOPPED = auto()              # /stop_run: zeros until a pose reset
 
 
-class Task1Runner(Node):
+class Task1Runner(RunnerBase):
     def __init__(self):
         super().__init__('task1_runner')
-        if not self.has_parameter('use_sim_time'):
-            self.declare_parameter('use_sim_time', False)
 
         # Start pose in the map frame - the same numbers the launch file spawns
         # the car at and builds the map -> odom transform from.
@@ -94,36 +87,14 @@ class Task1Runner(Node):
         planner_params.configure(planner_params.from_flat(
             {name: self.get_parameter(name).value for name in settings}))
 
-        self.cmd_pub = self.create_publisher(TwistStamped, '/cmd_vel', 10)
-        self.bt_pub = self.create_publisher(String, '/bluetooth_tx', 10)
-        self.run_status_pub = self.create_publisher(RunStatus, '/run_status', 10)
-        # Published once per plan: TRANSIENT_LOCAL so Foxglove connecting later still gets them.
-        latched = QoSProfile(depth=1, durability=QoSDurabilityPolicy.TRANSIENT_LOCAL)
-        self.grid_pub = self.create_publisher(OccupancyGrid, '/occupancy_grid', latched)
-        self.arena_pub = self.create_publisher(MarkerArray, '/grid_markers', latched)
-        self.obstacle_pub = self.create_publisher(MarkerArray, '/obstacle_markers', latched)
-        self.checkpoint_pub = self.create_publisher(MarkerArray, '/checkpoint_markers', latched)
-        self.path_pub = self.create_publisher(Path, '/planned_path', 10)
-        self.leg_pub = self.create_publisher(MarkerArray, '/path_markers', 10)
-        self.search_pub = self.create_publisher(MarkerArray, '/search_progress', 10)
-
+        # (/cmd_vel, /run_status, the Foxglove drawings, /start_run ...: RunnerBase)
         self.create_subscription(String, '/obstacle_setup', self.setup_callback, 10)
-        self.create_subscription(String, '/yolo_result', self.yolo_callback, 10)
-        self.create_subscription(Odometry, '/odometry/filtered', self.odom_callback, 10)
         # Manual drive lives here, not in the bridge: this node already owns /cmd_vel.
         self.create_subscription(String, '/manual_drive', self.manual_drive_callback, 10)
-        self.create_subscription(PoseWithCovarianceStamped, '/set_pose', self.set_pose_callback, 10)
-        self.create_service(Trigger, '/start_run', self.start_run_callback)
-        self.create_service(Trigger, '/stop_run', self.stop_run_callback)
-
-        self.tf_buffer = tf2_ros.Buffer()
-        self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
-        wall_timer(self, 0.05, self.control_loop)   # 20 Hz
 
         self.follower = PurePursuitController()
-        self.current_pose = (0.0, 0.0, math.pi / 2)   # map frame, from odom_callback
-        self.state = State.WAITING_FOR_SETUP
-        self.state_start_time = self.now()
+        self.current_pose = (0.0, 0.0, math.pi / 2)
+        self.set_state(State.WAITING_FOR_SETUP)
 
         self.obstacles = []          # (x_m, y_m, facing) from /obstacle_setup
         self.tablet_ids = []         # the tablet's number for each obstacle
@@ -151,17 +122,9 @@ class Task1Runner(Node):
         self._manual_active = False
         self.scan_detections = []
         self.detected_target_id = None
-        self._last_status = 0.0
-        self._last_cmd = (0.0, 0.0)
         self.get_logger().info("READY     waiting for obstacles")
 
     # ------------------------------------------------------------ helpers ----
-
-    def now(self) -> float:
-        return self.get_clock().now().nanoseconds / 1e9
-
-    def stamp(self):
-        return self.get_clock().now().to_msg()
 
     def start_pose(self):
         return tuple(float(self.get_parameter(n).value) for n in ('start_x', 'start_y', 'start_yaw'))
@@ -179,10 +142,6 @@ class Task1Runner(Node):
             return None
         return yaw_from_quaternion(tf.transform.rotation)
 
-    def set_state(self, state: State):
-        self.state = state
-        self.state_start_time = self.now()
-
     def in_run(self) -> bool:
         return self.state in (State.NAVIGATING_TO_TARGET, State.PAUSE_FOR_SCAN)
 
@@ -194,38 +153,11 @@ class Task1Runner(Node):
             return self.tablet_id(self.visiting_order[self.current_target_idx])
         return '?'
 
-    def send_cmd(self, linear_x: float, angular_z: float):
-        msg = TwistStamped()
-        msg.header.stamp = self.stamp()
-        msg.header.frame_id = 'base_link'
-        msg.twist.linear.x, msg.twist.angular.z = float(linear_x), float(angular_z)
-        self.cmd_pub.publish(msg)
-        self._last_cmd = (float(linear_x), float(angular_z))
-
-    def send_bt(self, text: str):
-        self.bt_pub.publish(String(data=text))
-
-    @staticmethod
-    def fmt_pose(pose) -> str:
-        """Tablet cell + the nearest of N/E/S/W: '(5,8)E'."""
-        return f"({markers.cell(pose[0])},{markers.cell(pose[1])}){markers.direction(pose[2])}"
-
     # ---------------------------------------------------------- callbacks ----
 
-    def odom_callback(self, msg: Odometry) -> None:
-        """EKF pose (odom frame) -> map frame via TF. On a lookup failure keep the
-        previous pose: the raw odom pose would be off by the whole start pose."""
-        try:
-            tf = self.tf_buffer.lookup_transform('map', msg.header.frame_id, msg.header.stamp)
-        except tf2_ros.TransformException as exc:
-            self.get_logger().warn(f"No map <- {msg.header.frame_id} transform yet ({exc}); "
-                                   f"keeping previous pose {self.current_pose}", throttle_duration_sec=2.0)
-            return
-        pose = tf2_geometry_msgs.do_transform_pose(msg.pose.pose, tf)
-        x, y, yaw = pose.position.x, pose.position.y, yaw_from_quaternion(pose.orientation)
-        self.current_pose = (x, y, yaw)
-        self.follower.update_pose(x, y, yaw)
-
+    def on_pose(self):
+        """A pose reset turns DONE once the EKF reports the start pose."""
+        x, y, yaw = self.current_pose
         if self._reset_pending:
             sx, sy, syaw = self.start_pose()
             if (math.hypot(x - sx, y - sy) < RESET_POS_TOL_M
@@ -236,8 +168,8 @@ class Task1Runner(Node):
             elif self.now() - self._reset_requested_at > RESET_CONFIRM_TIMEOUT_S:
                 self._reset_pending = False
                 self.get_logger().warn(
-                    f"Reset not confirmed after {RESET_CONFIRM_TIMEOUT_S:.0f}s - pose {self.fmt_pose(self.current_pose)} "
-                    f"is not at the start {self.fmt_pose(self.start_pose())}. Is the EKF running / did it take /set_pose?")
+                    f"Reset not confirmed after {RESET_CONFIRM_TIMEOUT_S:.0f}s - pose {self.fmt(self.current_pose)} "
+                    f"is not at the start {self.fmt(self.start_pose())}. Is the EKF running / did it take /set_pose?")
 
     def setup_callback(self, msg: String):
         """`id:x,y,facing|...` (metres). Replaces the previous set and plan, but
@@ -309,6 +241,7 @@ class Task1Runner(Node):
             self.current_target_idx = 0
             self._manual_until = 0.0
             self.reset_done = False     # the car is leaving the start
+            self.run_start, self.run_end = self.now(), None
             response.message = "Run started - navigating to targets."
             self.get_logger().info(f"GO        {' -> '.join(self.tablet_id(i) for i in self.visiting_order)}")
             self.publish_checkpoints()
@@ -332,7 +265,9 @@ class Task1Runner(Node):
             self.plan_state = 'WAITING'   # a pose reset replans from the kept obstacles
         self.set_state(State.STOPPED)
         self.send_cmd(0.0, 0.0)
-        self.get_logger().warn(f"STOP      at {self.fmt_pose(self.current_pose)} - reset before the next run")
+        self.end_run()
+        self.get_logger().warn(f"STOP      at {self.fmt(self.current_pose)} after {self.run_time():.1f} s"
+                               f" - reset before the next run")
         self.publish_checkpoints()
         self.sync_indicators()
 
@@ -416,9 +351,6 @@ class Task1Runner(Node):
             self._last_heartbeat = now
             self._last_sent.clear()
         self.sync_indicators()
-        if now - self._last_status >= 0.5:
-            self._last_status = now
-            self.publish_run_status(now - self.state_start_time)
 
         if self._manual_until > now:
             self.send_cmd(*self._manual_cmd)
@@ -433,7 +365,7 @@ class Task1Runner(Node):
             self.navigate()
         elif self.state == State.PAUSE_FOR_SCAN:
             self.send_cmd(0.0, 0.0)
-            if now - self.state_start_time >= float(self.get_parameter('scan_pause_s').value):
+            if now - self.state_start >= float(self.get_parameter('scan_pause_s').value):
                 self.finish_scan()
         elif self.state == State.STOPPED:
             self.send_cmd(0.0, 0.0)
@@ -514,8 +446,8 @@ class Task1Runner(Node):
             cx, cy, ct = self.checkpoints[self.current_target_idx]
             yaw = self.current_pose[2]
             dyaw = math.degrees(math.atan2(math.sin(yaw - ct), math.cos(yaw - ct)))
-            self.get_logger().info(f"ARRIVED   #{self.current_label()} at {self.fmt_pose(self.current_pose)} "
-                                   f"(target {self.fmt_pose((cx, cy, ct))}, heading {dyaw:+.0f}deg) - scanning")
+            self.get_logger().info(f"ARRIVED   #{self.current_label()} at {self.fmt(self.current_pose)} "
+                                   f"(target {self.fmt((cx, cy, ct))}, heading {dyaw:+.0f}deg) - scanning")
         else:
             self.send_cmd(*cmd)
 
@@ -537,7 +469,7 @@ class Task1Runner(Node):
         cuts = [i for i in range(1, len(gears)) if gears[i] != gears[i - 1]]
         moves = ' '.join('fwd' if gears[a] >= 0 else 'REV' for a in [0] + cuts)
         self.get_logger().info(f"LEG {idx + 1}/{len(self.visiting_order)}   -> #{self.current_label()} "
-                               f"{self.fmt_pose(self.checkpoints[idx])}  {moves}")
+                               f"{self.fmt(self.checkpoints[idx])}  {moves}")
         return True
 
     def finish_scan(self):
@@ -551,7 +483,8 @@ class Task1Runner(Node):
         self.current_target_idx += 1
         if self.current_target_idx >= len(self.visiting_order):
             self.set_state(State.FINISHED)
-            self.get_logger().info("FINISHED  all obstacles visited")
+            self.end_run()
+            self.get_logger().info(f"FINISHED  all obstacles visited in {self.run_time():.1f} s")
         else:
             self.set_state(State.NAVIGATING_TO_TARGET)   # the next tick loads the leg
         self.publish_checkpoints()
@@ -580,7 +513,7 @@ class Task1Runner(Node):
     def publish_search_progress(self, points_m):
         self.search_pub.publish(markers.search_progress(points_m, self.stamp()))
 
-    def publish_run_status(self, elapsed: float):
+    def publish_run_status(self):
         """/run_status - fields in mdp_interfaces/msg/RunStatus.msg."""
         msg = RunStatus()
         msg.header.stamp, msg.header.frame_id = self.stamp(), 'map'
@@ -599,9 +532,10 @@ class Task1Runner(Node):
             msg.wp_index, msg.wp_count = self.follower._search_idx + 1, len(self.follower.path)
             msg.target_x, msg.target_y, msg.reverse = float(tx), float(ty), gear < 0
         msg.cmd_v, msg.cmd_w = self._last_cmd
+        msg.run_time = self.run_time()
         msg.scan_duration = float(self.get_parameter('scan_pause_s').value)
         if self.state == State.PAUSE_FOR_SCAN:
-            msg.scan_elapsed = float(elapsed)
+            msg.scan_elapsed = float(self.now() - self.state_start)
             counts = Counter(self.scan_detections).most_common()
             msg.yolo_ids, msg.yolo_counts = [k for k, _ in counts], [n for _, n in counts]
             msg.detected_id = self.detected_target_id or ''

@@ -109,10 +109,15 @@ class PurePursuitController:
         direction = 1.0 if gear >= 0 else -1.0
         past = direction * (dx * math.cos(ptheta) + dy * math.sin(ptheta)) > 0.0
         ahead = -direction * (dx * math.cos(yaw) + dy * math.sin(yaw))   # point ahead of the car (+)
+        # "Passed" / "no longer ahead" only mean something when the car is roughly
+        # lined up with that point's heading. Halfway round a U-turn the end of
+        # the path (facing the other way) is briefly behind the car too, and
+        # counting that ended task 2's loop round obstacle 2 early (2026-09-30).
+        aligned = math.cos(yaw - ptheta) > 0.5          # within 60 deg
         if not final:
             reached = direction * (dx * math.cos(ptheta) + dy * math.sin(ptheta)) >= -self.cusp_tolerance
-            return reached or ahead <= 0.0
-        return math.hypot(dx, dy) <= self.goal_tolerance or past or ahead <= 0.0
+            return reached or (aligned and ahead <= 0.0)
+        return math.hypot(dx, dy) <= self.goal_tolerance or (aligned and (past or ahead <= 0.0))
 
     def calculate_pure_pursuit(self, target_point: Tuple[float, float], gear: int = 1) -> float:
         """Steering angle (rad, + left) onto the arc through target_point. The

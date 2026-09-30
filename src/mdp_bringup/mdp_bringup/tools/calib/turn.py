@@ -14,6 +14,12 @@ m/s by default - the circle grows with speed, so measure at the speed the car
 will drive. Stops on the EKF heading. Prints the same radius from the EKF track
 (a circle fit, first 30 deg left out while the steering swings over) and, in
 sim, from Gazebo's true pose - compare with the tape.
+
+STEERING DELAY: the time from the full-lock command until the car turns at
+90 % of its steady rate - the servo swinging over plus the motor speeding up.
+
+THE LOG: at the end it asks for the tape distance (in sim it takes Gazebo's
+true circle) and adds a row to calibration_log.csv (tools/calib/log.py).
 """
 import argparse
 import math
@@ -26,6 +32,7 @@ from tf2_msgs.msg import TFMessage
 
 from mdp_algorithm.control.pure_pursuit_follower import yaw_from_quaternion
 from mdp_algorithm.utils import params as planner_params
+from mdp_bringup.tools.calib import log
 from mdp_bringup.utils.run import run, wall_timer
 
 SETTLE_DEG = 30.0      # left out of the circle fit: the steering is still swinging over
@@ -57,6 +64,12 @@ class Track:
         if abs(turned_deg) >= SETTLE_DEG:
             self.points.append((x, y))
 
+    def radius(self, angle) -> float:
+        """metres: half the start->stop distance after 180 deg, else the circle fit."""
+        if self.start is None:
+            return float('nan')
+        return math.dist(self.start, self.last) / 2.0 if abs(angle - 180.0) < 1.0 else fit_radius(self.points)
+
     def report(self, name, angle):
         if self.start is None:
             return None
@@ -79,6 +92,8 @@ class Turn(Node):
         self.turned = 0.0            # deg, unwrapped, since the start
         self.ekf, self.truth = Track(), Track()
         self.done = False
+        self.t0 = None               # first full-lock command, s
+        self.rates = []              # (s since t0, |yaw rate| rad/s) from the EKF
         self.cmd_pub = self.create_publisher(TwistStamped, '/cmd_vel', 10)
         self.create_subscription(Odometry, '/odometry/filtered', self.on_odom, 10)
         self.create_subscription(TFMessage, '/sim/ground_truth', self.on_truth, 10)   # sim only
@@ -92,12 +107,24 @@ class Turn(Node):
         if self.prev_yaw is not None:
             self.turned += math.degrees(math.atan2(math.sin(yaw - self.prev_yaw), math.cos(yaw - self.prev_yaw)))
         self.prev_yaw = yaw
+        if self.t0 is not None and not self.done:
+            self.rates.append((self.now() - self.t0, abs(msg.twist.twist.angular.z)))
         self.ekf.add(p.position.x, p.position.y, self.turned)
 
     def on_truth(self, msg: TFMessage):
         if msg.transforms and self.prev_yaw is not None and not self.done:
             t = msg.transforms[0].transform.translation    # the car (base_footprint)
             self.truth.add(t.x, t.y, self.turned)
+
+    def now(self) -> float:
+        return self.get_clock().now().nanoseconds / 1e9
+
+    def steering_delay(self):
+        """s from the command to 90 % of the steady turn rate (the rate after SETTLE_DEG)."""
+        if len(self.rates) < 10:
+            return None
+        steady = float(np.median([r for _, r in self.rates[len(self.rates) // 2:]]))
+        return next((t for t, r in self.rates if r >= 0.9 * steady), None)
 
     def send(self, v, w):
         msg = TwistStamped()
@@ -110,17 +137,41 @@ class Turn(Node):
         if self.prev_yaw is None or self.done:
             return
         if abs(self.turned) < self.angle:
+            if self.t0 is None:
+                self.t0 = self.now()
             self.send(self.speed, self.w)
             return
         self.send(0.0, 0.0)
         self.done = True
         lines = [f"STOPPED   after {abs(self.turned):.0f} deg - mark the floor again",
                  self.ekf.report('EKF estimate', self.angle), self.truth.report('Gazebo (true)', self.angle)]
-        key = f"minimum_turning_radius_{self.side}"
-        lines.append(f"  -> config/navigation.yaml robot.{key}: <tape diameter / 2, in m>")
+        delay = self.steering_delay()
+        if delay is not None:
+            lines.append(f"  steering delay {delay:.2f} s (command -> 90 % of the full turn rate)")
         for line in filter(None, lines):
             self.get_logger().info(line)
+        self.send(0.0, 0.0)
+        self.write_log()     # the car is stopped; the tape question can wait for an answer
         raise SystemExit
+
+    def write_log(self):
+        """The run's row in calibration_log.csv (tape asked for on the real car)."""
+        where = log.where(self)
+        car = self.ekf.radius(self.angle) * 100.0
+        if where == 'sim' and self.truth.start is not None:
+            true = self.truth.radius(self.angle) * 100.0
+        elif abs(self.angle - 180.0) < 1.0:
+            tape = log.ask('TAPE      start mark -> stop mark (cm)')
+            true = None if tape is None else tape / 2.0
+        else:
+            true = log.ask('TAPE      radius of the circle the rear axle drew (cm)')
+        delay = self.steering_delay()
+        notes = f'{self.side}, full lock {self.lock_deg:+.1f} deg, {self.angle:.0f} deg turned'
+        if delay is not None:
+            notes += f'; steering delay {delay:.2f} s'
+        log.write(where, f'turn {self.side}', f'{self.angle:.0f} deg', self.speed, car, true, 'cm radius', notes)
+        print(f'          set by hand: config/navigation.yaml robot.minimum_turning_radius_{self.side} '
+              f'(metres, the TRUE radius)')
 
     def destroy_node(self):
         try:

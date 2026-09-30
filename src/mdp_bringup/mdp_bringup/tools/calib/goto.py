@@ -13,6 +13,10 @@ otherwise. Settings (speed, lookahead, tolerances): config/navigation.yaml.
 
 For the BARE car (task:=0): `calib` refuses to start next to a task runner,
 and this stops if one appears while driving. Ctrl+C stops the car.
+
+THE LOG: on arrival it asks how far the middle of the rear axle is from the
+cell centre (in sim it takes Gazebo's true pose) and adds a row to
+calibration_log.csv (tools/calib/log.py): the car's own miss vs the true one.
 """
 import argparse
 import math
@@ -27,6 +31,7 @@ from rclpy.node import Node
 from mdp_algorithm.control.pure_pursuit_follower import PurePursuitController, yaw_from_quaternion
 from mdp_algorithm.planning.costmap import Costmap, Obstacle
 from mdp_algorithm.planning.planner import plan_leg
+from mdp_bringup.tools.calib import log
 from mdp_bringup.utils import markers, obstacle_layout
 from mdp_bringup.utils.run import run, wall_timer
 
@@ -45,6 +50,8 @@ class GoTo(Node):
         self.blocks = blocks                       # obstacle_layout.LayoutObstacle
         self.pose = None
         self.follower = None
+        self.truth = log.Truth(self)
+        self.start_time = None
         self.state = 'WAIT_POSE'
         self.cmd_pub = self.create_publisher(TwistStamped, '/cmd_vel', 10)
         self.path_pub = self.create_publisher(Path, '/planned_path', 10)
@@ -97,6 +104,7 @@ class GoTo(Node):
                                                   math.cos(self.pose[2] - self.target[2])))
                 self.get_logger().info(f"ARRIVED   at {self.fmt(self.pose)} (target {self.fmt(self.target)}, "
                                        f"heading {yaw_err:+.0f}deg)")
+                self.write_log(yaw_err)
                 self.finish()
             else:
                 self.send(*cmd)
@@ -131,6 +139,26 @@ class GoTo(Node):
         self.follower.update_pose(*self.pose)
         self.follower.set_path(path)
         self.state = 'DRIVE'
+        self.start_time = self.get_clock().now().nanoseconds / 1e9
+
+    def write_log(self, yaw_err):
+        """The run's row in calibration_log.csv: how far off the cell centre, car vs true."""
+        where = log.where(self)
+        tx, ty, tyaw = self.target
+        car = math.hypot(self.pose[0] - tx, self.pose[1] - ty) * 100.0
+        true_yaw = None
+        if where == 'sim' and self.truth.pose is not None:
+            x, y, yaw = self.truth.pose
+            true = math.hypot(x - tx, y - ty) * 100.0
+            true_yaw = math.degrees(math.atan2(math.sin(yaw - tyaw), math.cos(yaw - tyaw)))
+        else:
+            true = log.ask('TAPE      middle of the rear axle -> cell centre (cm)')
+        secs = self.get_clock().now().nanoseconds / 1e9 - self.start_time
+        notes = f'heading off {yaw_err:+.0f} deg (car)'
+        if true_yaw is not None:
+            notes += f' / {true_yaw:+.0f} deg (true)'
+        notes += f'; {secs:.1f} s'
+        log.write(where, 'goto', self.fmt(self.target), self.follower.target_speed, car, true, 'cm off', notes)
 
     def finish(self):
         self.state = 'DONE'

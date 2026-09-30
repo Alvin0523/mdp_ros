@@ -3,8 +3,11 @@
 The arena, its obstacles, the car's footprint and the Nav2-style costmap - the
 one map the planner, the checkpoint check and Foxglove's /occupancy_grid use.
 
-ARENA: the 2 x 2 m table, 20 x 20 cells of 10 cm (the tablet's grid). An
-obstacle is a 10 x 10 cm block filling one cell; its image faces N/E/S/W.
+ARENA: by default the task 1 table, 2 x 2 m = 20 x 20 cells of 10 cm (the
+tablet's grid), origin at its bottom-left corner. Task 2 passes its own size
+(arena_cm) and walls (rectangles). An obstacle is by default a 10 x 10 cm block
+filling one cell (task 2's second obstacle is a longer bar: size_*_cm); its
+image faces N/E/S/W.
 
 FOOTPRINT: a rectangle around base_link (the rear-axle centre) - robot.footprint_*
 in mdp_bringup/config/navigation.yaml - grown on every side by
@@ -63,6 +66,8 @@ class Obstacle:
     y_cm: float
     facing: str
     id: int = -1
+    size_x_cm: float = OBSTACLE_SIZE_CM
+    size_y_cm: float = OBSTACLE_SIZE_CM
 
 
 def snap_to_cell_centre(v_cm: float) -> float:
@@ -107,10 +112,12 @@ class Footprint:
 
 
 class Costmap:
-    """The arena costmap for a set of obstacles. `obstacles` is kept as given."""
+    """The arena costmap for a set of obstacles. `obstacles` is kept as given.
+    arena_cm: (width, height) of the area, origin at its bottom-left corner;
+    walls: extra lethal rectangles (x0, y0, x1, y1), cm."""
 
     def __init__(self, obstacles: List[Obstacle], params: planner_params.PlannerParams = None,
-                 resolution_cm: float = None):
+                 resolution_cm: float = None, arena_cm=(ARENA_SIZE_CM, ARENA_SIZE_CM), walls=()):
         p = params or planner_params.ACTIVE
         self.obstacles = list(obstacles)
         assert len(self.obstacles) <= 8   # the arena has at most 8 obstacles
@@ -118,16 +125,20 @@ class Costmap:
         self.inflation_radius = p.inflation_radius * 100.0      # cm
         self.cost_scaling = p.cost_scaling_factor / 100.0        # per cm (Nav2's is per metre)
         self.resolution = resolution_cm if resolution_cm is not None else p.resolution * 100.0
-        self.size = int(round(ARENA_SIZE_CM / self.resolution))
-        c = (np.arange(self.size) + 0.5) * self.resolution
-        X, Y = np.meshgrid(c, c, indexing='ij')                  # [i = x][j = y]
+        self.width_cm, self.height_cm = float(arena_cm[0]), float(arena_cm[1])
+        self.walls = [tuple(map(float, w)) for w in walls]
+        self.nx = int(round(self.width_cm / self.resolution))
+        self.ny = int(round(self.height_cm / self.resolution))
+        X, Y = np.meshgrid((np.arange(self.nx) + 0.5) * self.resolution,
+                           (np.arange(self.ny) + 0.5) * self.resolution, indexing='ij')   # [i = x][j = y]
         # Distance from each cell centre to the nearest lethal thing: the arena
-        # edge (lethal beyond it) or a block's 10 x 10 cm square (0 inside it).
-        half = OBSTACLE_SIZE_CM / 2.0
-        d = np.minimum(np.minimum(X, ARENA_SIZE_CM - X), np.minimum(Y, ARENA_SIZE_CM - Y))
-        for o in self.obstacles:
-            d = np.minimum(d, np.hypot(np.maximum(np.abs(X - o.x_cm) - half, 0.0),
-                                       np.maximum(np.abs(Y - o.y_cm) - half, 0.0)))
+        # edge (lethal beyond it), a block (0 inside it) or a wall rectangle.
+        d = np.minimum(np.minimum(X, self.width_cm - X), np.minimum(Y, self.height_cm - Y))
+        boxes = [(o.x_cm - o.size_x_cm / 2.0, o.y_cm - o.size_y_cm / 2.0,
+                  o.x_cm + o.size_x_cm / 2.0, o.y_cm + o.size_y_cm / 2.0) for o in self.obstacles]
+        for x0, y0, x1, y1 in boxes + self.walls:
+            d = np.minimum(d, np.hypot(np.maximum(np.maximum(x0 - X, X - x1), 0.0),
+                                       np.maximum(np.maximum(y0 - Y, Y - y1), 0.0)))
         self.distance = d
         self.cost = self.inflation_cost(d)
         self._px, self._py = self.footprint.check_points(self.resolution)
@@ -150,7 +161,7 @@ class Costmap:
 
     def cost_at(self, x: float, y: float) -> int:
         i, j = int(x // self.resolution), int(y // self.resolution)
-        if not (0 <= i < self.size and 0 <= j < self.size):
+        if not (0 <= i < self.nx and 0 <= j < self.ny):
             return LETHAL
         return int(self.cost[i, j])
 
@@ -164,7 +175,7 @@ class Costmap:
         c, s = math.cos(theta), math.sin(theta)
         i = np.floor((x + c * self._px - s * self._py) / self.resolution).astype(int)
         j = np.floor((y + s * self._px + c * self._py) / self.resolution).astype(int)
-        if i.min() < 0 or j.min() < 0 or i.max() >= self.size or j.max() >= self.size:
+        if i.min() < 0 or j.min() < 0 or i.max() >= self.nx or j.max() >= self.ny:
             return LETHAL
         return max(centre, int(self.cost[i, j].max()))
 

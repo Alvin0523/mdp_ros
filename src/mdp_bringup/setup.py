@@ -4,12 +4,17 @@ from setuptools import find_packages, setup
 
 package_name = 'mdp_bringup'
 
-# Nodes the launch starts, then the one-shot command-line tools (pixi run go /
-# setup / calib ...). `ros2 run mdp_bringup <name>`.
-NODES = ['task1_runner', 'task2_runner', 'robot_pose_feedback', 'manual_drive',
-         'bt_monitor', 'health_monitor', 'sim_obstacles']
-TOOLS = {'trigger': 'trigger', 'publish_obstacles': 'publish_obstacles',
-         'around_obstacle': 'around_obstacle', 'calib': 'calib.cli'}   # command -> module
+# Nodes the launch starts (command -> module), then the one-shot command-line
+# tools (pixi run go / setup / calib ...). `ros2 run mdp_bringup <command>`.
+NODES = {
+    'task1_runner': 'tasks.task1_runner', 'task2_runner': 'tasks.task2_runner',
+    'robot_pose_feedback': 'robot.robot_pose_feedback', 'manual_drive': 'robot.manual_drive',
+    'health_monitor': 'robot.health_monitor', 'bag_recorder': 'robot.bag_recorder',
+    'bt_monitor': 'robot.bt_monitor',
+    'sim_helpers': 'sim.sim_helpers',
+}
+TOOLS = {'trigger': 'tools.trigger', 'publish_obstacles': 'tools.publish_obstacles',
+         'around_obstacle': 'tools.around_obstacle', 'calib': 'tools.calib.cli'}
 
 setup(
     name=package_name,
@@ -29,7 +34,6 @@ setup(
     license='TODO',
     entry_points={
         'console_scripts':
-            [f'{n} = mdp_bringup.{n}:main' for n in NODES] +
-            [f'{n} = mdp_bringup.tools.{m}:main' for n, m in TOOLS.items()],
+            [f'{n} = mdp_bringup.{m}:main' for n, m in {**NODES, **TOOLS}.items()],
     },
 )

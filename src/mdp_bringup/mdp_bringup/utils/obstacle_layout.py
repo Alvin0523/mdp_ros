@@ -3,14 +3,15 @@
   task1  obstacles by tablet CELL (cell_x, cell_y: 0..19, 10 cm each, (0, 0)
          the bottom-left cell) plus the image side. Metres (`x:`/`y:`) are
          still accepted and snapped to the cell they fall in.
-  task2  obstacles in metres with their size.
+  task2  the course rules (carpark, obstacle sizes) - `load_task2()` - and a
+         sim-only layout (distances, arrows) - `task2_sim()`.
 
 From one list:
   * `setup_string()`  - the /obstacle_setup message bluetooth_bridge_node
                         produces for the same set (task 1: `pixi run setup`,
                         obstacles:=yaml at launch),
   * `world_sdf()`     - the Gazebo arena with the obstacles baked in,
-  * `model_sdf()`     - one obstacle, for spawning at runtime (sim_obstacles),
+  * `model_sdf()`     - one obstacle, for spawning at runtime (sim_helpers),
   * `from_setup_string()` - the other way: a tablet set back to obstacles.
 
 A task 1 block fills its cell, so its centre is the cell corner + 5 cm - the
@@ -49,26 +50,23 @@ def _cell_centre(c: int) -> float:
 
 
 def load(path: str, task: str = 'task1') -> List[LayoutObstacle]:
+    """Task 1's obstacles (task 2 has load_task2 / task2_sim)."""
+    assert task == 'task1', task
     with open(path) as f:
-        entries = ((yaml.safe_load(f) or {}).get(task) or {}).get('obstacles') or []
+        entries = ((yaml.safe_load(f) or {}).get('task1') or {}).get('obstacles') or []
     out = []
     for e in entries:
         facing = str(e['facing']).strip().upper()
         if facing not in FACINGS:
-            raise ValueError(f"{path}: {task} obstacle {e['id']} facing {facing!r} is not N/E/S/W")
-        if task == 'task1':
-            if 'cell_x' in e:
-                col, row = int(e['cell_x']), int(e['cell_y'])
-            else:
-                col, row = (int(math.floor(float(e[k]) / CELL_M + 1e-6)) for k in ('x', 'y'))
-            if not (0 <= col < GRID_CELLS and 0 <= row < GRID_CELLS):
-                raise ValueError(f"{path}: task1 obstacle {e['id']} cell ({col}, {row}) is off the 20x20 grid")
-            ob = LayoutObstacle(int(e['id']), _cell_centre(col), _cell_centre(row), facing,
-                                symbol=e.get('symbol'))
+            raise ValueError(f"{path}: task1 obstacle {e['id']} facing {facing!r} is not N/E/S/W")
+        if 'cell_x' in e:
+            col, row = int(e['cell_x']), int(e['cell_y'])
         else:
-            ob = LayoutObstacle(int(e['id']), float(e['x']), float(e['y']), facing,
-                                tuple(float(v) for v in e['size']), e.get('symbol'))
-        out.append(ob)
+            col, row = (int(math.floor(float(e[k]) / CELL_M + 1e-6)) for k in ('x', 'y'))
+        if not (0 <= col < GRID_CELLS and 0 <= row < GRID_CELLS):
+            raise ValueError(f"{path}: task1 obstacle {e['id']} cell ({col}, {row}) is off the 20x20 grid")
+        out.append(LayoutObstacle(int(e['id']), _cell_centre(col), _cell_centre(row), facing,
+                                  symbol=e.get('symbol')))
     return out
 
 
@@ -96,6 +94,94 @@ def from_setup_string(data: str) -> List[LayoutObstacle]:
         if ob.facing in FACINGS:
             out.append(ob)
     return out
+
+
+# ------------------------------------------------------------------ task 2 ----
+#
+# Frame: x along the course (carpark -> obstacles), y across, centre line (the
+# carpark's centre, both obstacles) at y = TASK2_CENTRE_Y. Chosen so the whole
+# course has positive coordinates, like task 1's table - the planner's costmap
+# starts at (0, 0).
+
+TASK2_AREA_M = (5.00, 2.40)      # carpark to past obstacle 2 at the longest (d1 = d2 = 1.5 m), side walls included
+TASK2_CENTRE_Y = 1.20
+TASK2_BACK_WALL_X = 0.10         # inside face of the carpark's back wall
+TASK2_SIDE_WALL_LENGTH = 1.20    # sim side walls, centred on obstacle 2
+TASK2_SIDE_WALL_HEIGHT = 0.30
+ARROW_SYMBOL = {'LEFT': '39_ArrowLeft', 'RIGHT': '38_ArrowRight'}
+
+
+@dataclass(frozen=True)
+class Task2Arena:
+    """The task 2 course rules (config/tasks.yaml task2), metres."""
+    carpark_width: float
+    carpark_depth: float
+    wall: float
+    wall_height: float
+    obstacle_1_size: Tuple[float, float, float]
+    obstacle_2_size: Tuple[float, float, float]
+    side_wall_clearance: float
+
+    @property
+    def opening_x(self) -> float:
+        return TASK2_BACK_WALL_X + self.carpark_depth
+
+    @property
+    def carpark_centre(self) -> Tuple[float, float]:
+        return TASK2_BACK_WALL_X + self.carpark_depth / 2.0, TASK2_CENTRE_Y
+
+    def car_pose_centred(self, car_centre_ahead: float, heading: float):
+        """base_link (rear axle) pose that puts the car's middle on the
+        carpark's centre, facing `heading` (0 = out, pi = in).
+        car_centre_ahead: how far the car's middle is ahead of base_link."""
+        cx, cy = self.carpark_centre
+        return cx - math.cos(heading) * car_centre_ahead, cy, heading
+
+    def carpark_walls(self) -> List[Tuple[float, float, float, float]]:
+        """The U of walls, (x0, y0, x1, y1): back wall + two sides, open toward +x."""
+        b, w, t, cy = TASK2_BACK_WALL_X, self.carpark_width / 2.0, self.wall, TASK2_CENTRE_Y
+        return [(b - t, cy - w - t, b, cy + w + t),                       # back
+                (b, cy + w, self.opening_x, cy + w + t),                  # left side
+                (b, cy - w - t, self.opening_x, cy - w)]                  # right side
+
+    def side_walls(self, obstacle_2_x: float) -> List[Tuple[float, float, float, float]]:
+        """The walls that MAY stand side_wall_clearance out from obstacle 2's ends."""
+        y = self.obstacle_2_size[1] / 2.0 + self.side_wall_clearance
+        x0, x1 = obstacle_2_x - TASK2_SIDE_WALL_LENGTH / 2.0, obstacle_2_x + TASK2_SIDE_WALL_LENGTH / 2.0
+        cy, t = TASK2_CENTRE_Y, self.wall
+        return [(x0, cy + y, x1, cy + y + t), (x0, cy - y - t, x1, cy - y)]
+
+
+def load_task2(path: str) -> Task2Arena:
+    with open(path) as f:
+        t = (yaml.safe_load(f) or {})['task2']
+    c = t['carpark']
+    return Task2Arena(float(c['width']), float(c['depth']), float(c['wall']), float(c['height']),
+                      tuple(float(v) for v in t['obstacle_1']['size']),
+                      tuple(float(v) for v in t['obstacle_2']['size']),
+                      float(t['side_wall_clearance']))
+
+
+def task2_sim(path: str):
+    """The sim-only layout: (obstacles with their arrows, walls) as LayoutObstacles
+    for world_sdf(), and (obstacle_1_x, obstacle_2_x) centres."""
+    arena = load_task2(path)
+    with open(path) as f:
+        sim = (yaml.safe_load(f) or {})['task2']['sim']
+    s1, s2 = arena.obstacle_1_size, arena.obstacle_2_size
+    x1 = arena.opening_x + float(sim['d1']) + s1[0] / 2.0
+    x2 = x1 + s1[0] / 2.0 + float(sim['d2']) + s2[0] / 2.0
+    cy = TASK2_CENTRE_Y
+    obstacles = [
+        LayoutObstacle(1, x1, cy, 'W', s1, ARROW_SYMBOL[str(sim['arrow_1']).upper()]),
+        LayoutObstacle(2, x2, cy, 'W', s2, ARROW_SYMBOL[str(sim['arrow_2']).upper()]),
+    ]
+    rects = [(r, arena.wall_height) for r in arena.carpark_walls()]
+    if sim.get('side_walls'):
+        rects += [(r, TASK2_SIDE_WALL_HEIGHT) for r in arena.side_walls(x2)]
+    walls = [LayoutObstacle(100 + i, (x0 + x1_) / 2.0, (y0 + y1) / 2.0, 'W', (x1_ - x0, y1 - y0, h))
+             for i, ((x0, y0, x1_, y1), h) in enumerate(rects)]
+    return obstacles, walls, (x1, x2)
 
 
 # ---------------------------------------------------------------- Gazebo ----

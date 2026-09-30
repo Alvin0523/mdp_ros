@@ -18,8 +18,8 @@ calibration, every measured number) and `../docs/rpi/`.
 
 | Package | What |
 | --- | --- |
-| `mdp_bringup` (Python) | `launch/mdp.launch.py` (everything, sim and real), `launch/vision.launch.py`, `config/` (all settings), task nodes in `mdp_bringup/`, CLI tools in `mdp_bringup/tools/` (`calib/` = straight, rotate, turn, goto) |
-| `mdp_algorithm` (Python library, no nodes) | costmap, Hybrid A*, visit order, pure pursuit, task 2 spline; `utils/params.py` loads settings |
+| `mdp_bringup` (Python) | `launch/mdp.launch.py` (everything, sim and real), `launch/vision.launch.py`, `config/` (all settings). Nodes: `tasks/` (the two runners, sharing `runner_base.py`), `robot/` (pose feedback, manual drive, health, bag recorder, bt monitor), `sim/sim_helpers.py` (sim-only stand-ins, one node). CLI tools in `tools/` (`calib/` = straight, rotate, turn, goto, ultrasonic; rows go to `calibration_log.csv`) |
+| `mdp_algorithm` (Python library, no nodes) | costmap (any area size), Hybrid A*, visit order, pure pursuit; `utils/params.py` loads settings |
 | `mdp_vision` (Python) | `rpi_cam_publisher`, `yolo_detector`, models in `models/` |
 | `mdp_bridge` (C++) | `serial_bridge_node` (STM32), `bluetooth_bridge_node` (tablet) |
 | `mdp_description` (CMake) | `urdf/mdp_robot.urdf.xacro` (one URDF, `sim:=true/false`), arenas, symbol meshes |
@@ -56,7 +56,7 @@ these fits. Steering limits must also match `../mdp_stm32/include/servo.h`.
 | --- | --- |
 | Sim, task 1 (obstacles from `tasks.yaml`) | `pixi run sim task:=1` then `pixi run reset`, `pixi run go` |
 | Sim, task 2 | `pixi run sim task:=2` then `pixi run go` |
-| Bare car (manual / calibration) | `pixi run sim` then `pixi run calib straight 1.0` / `rotate 90` / `turn left` / `goto 5 8 E` |
+| Bare car (manual / calibration) | `pixi run sim` then `pixi run calib straight 1.0` / `rotate 90` / `turn left` / `goto 5 8 E` / `ultrasonic 60` |
 | Real car | `pixi run real [task:=1\|2]` on the Pi |
 | Headless | add `gui:=false`; no camera: `vision:=false` |
 
@@ -81,7 +81,7 @@ the user's sim.
 
 1. Tests pass.
 2. A sim run finishes: task 1 logs `FINISHED  all obstacles visited`, task 2
-   `Task 2 Slalom Path Completed!`, with no `Traceback` in the launch output.
+   `FINISHED  in the carpark`, with no `Traceback` in the launch output.
 3. For driving changes, compare with Gazebo's truth: record a bag (exclude images) and read
    `/sim/ground_truth` (`transforms[0]` = the car) against `/run_status.x/y` or `/odometry/filtered`.
    Reference results (task 1): stops 1–6 cm off the checkpoint, closest body gap to a block ≥ ~1 cm,

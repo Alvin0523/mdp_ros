@@ -58,6 +58,8 @@
   <material name="tyre_white"><color rgba="1 1 1 1"/></material>
   <material name="picam_green"><color rgba="0.0 0.45 0.15 1"/></material>
   <material name="lens_black"><color rgba="0.05 0.05 0.05 1"/></material>
+  <material name="sonar_blue"><color rgba="0.1 0.3 0.8 1"/></material>
+  <material name="sonar_silver"><color rgba="0.75 0.75 0.78 1"/></material>
 
   <!-- =========================================================== body === -->
   <link name="base_footprint"/>
@@ -124,6 +126,34 @@
     <origin xyz="0.012 -0.026 ${0.0955 - wheel_radius}" rpy="0 0 0"/>
     <parent link="base_link"/>
     <child link="imu_link"/>
+  </joint>
+
+  <!-- HC-SR04 ultrasonic, front centre, looking forward (+x). Its range is
+       measured from here: task2_runner adds this offset to find the obstacle.
+       TODO measure on the car (measuring sheet row J): placed at the front of
+       the body, 50 mm above the table. -->
+  <link name="ultrasonic_link">
+    <!-- HC-SR04 look-alike: 45 x 20 mm board, two 16 mm transducers facing +x. -->
+    <visual>
+      <origin xyz="-0.0075 0 0" rpy="0 0 0"/>
+      <geometry><box size="0.0015 0.045 0.020"/></geometry>
+      <material name="sonar_blue"/>
+    </visual>
+    <visual>
+      <origin xyz="-0.001 0.013 0" rpy="0 ${pi / 2} 0"/>
+      <geometry><cylinder radius="0.008" length="0.012"/></geometry>
+      <material name="sonar_silver"/>
+    </visual>
+    <visual>
+      <origin xyz="-0.001 -0.013 0" rpy="0 ${pi / 2} 0"/>
+      <geometry><cylinder radius="0.008" length="0.012"/></geometry>
+      <material name="sonar_silver"/>
+    </visual>
+  </link>
+  <joint name="ultrasonic_joint" type="fixed">
+    <origin xyz="0.19 0 ${0.05 - wheel_radius}" rpy="0 0 0"/>
+    <parent link="base_link"/>
+    <child link="ultrasonic_link"/>
   </joint>
 
   <!-- Raspberry Pi Camera v2 (25 x 24 mm board, 9 mm deep). Looks along this
@@ -314,6 +344,22 @@
             <z><noise type="gaussian"><mean>0.0</mean><stddev>0.05</stddev></noise></z>
           </linear_acceleration>
         </imu>
+      </sensor>
+    </gazebo>
+    <!-- The ultrasonic: a narrow lidar fan (7 beams over its ~15 deg cone).
+         sim_ultrasonic turns the nearest hit into /ultrasonic (sensor_msgs/Range),
+         the same message the real car's serial bridge publishes. -->
+    <gazebo reference="ultrasonic_link">
+      <sensor name="ultrasonic" type="gpu_lidar">
+        <topic>ultrasonic_scan</topic>
+        <update_rate>20</update_rate>
+        <lidar>
+          <scan><horizontal><samples>7</samples><resolution>1</resolution>
+            <min_angle>-0.13</min_angle><max_angle>0.13</max_angle></horizontal></scan>
+          <range><min>0.02</min><max>4.0</max><resolution>0.01</resolution></range>
+        </lidar>
+        <always_on>true</always_on>
+        <visualize>false</visualize>
       </sensor>
     </gazebo>
     <gazebo reference="camera_link">

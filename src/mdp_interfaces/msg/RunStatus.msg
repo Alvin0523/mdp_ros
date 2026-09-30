@@ -1,4 +1,4 @@
-# task1_runner's live state on /run_status, 2 Hz, every state.
+# task1_runner's / task2_runner's live state on /run_status, 2 Hz, every state.
 # Plot any number in Foxglove (e.g. /run_status.dist_to_checkpoint).
 # Positions are in the arena frame (map), metres / radians.
 
@@ -6,6 +6,7 @@ std_msgs/Header header
 
 string state          # WAITING_FOR_SETUP PLANNING_PATH WAITING_FOR_GO NAVIGATING_TO_TARGET PAUSE_FOR_SCAN FINISHED STOPPED
 string plan_state     # WAITING PLANNING DONE (same as the tablet's PLAN line)
+float64 run_time      # s since GO (0 before it); stops counting at FINISHED / STOPPED
 bool reset_done       # pose verified at the start (the tablet's RESET line)
 
 # Where it is going

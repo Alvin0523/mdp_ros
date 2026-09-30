@@ -2,12 +2,12 @@
 #
 #   SPEEDS AT A GLANCE (m/s)
 #     task 1 path following    task1_runner  follower.desired_linear_vel   0.2
-#     task 2 slalom            task2_runner  fast_speed / slow_speed       0.45 / 0.22
+#     task 2                   task2_runner  straight_speed / path_speed   0.45 / 0.25
 #     tablet arrow buttons     all nodes     manual_speed_mps              0.15
 #
 #   task1_runner  the car's outline and turning circles (like Nav2's footprint /
 #                 minimum_turning_radius), costmap, Hybrid A* planner, path follower
-#   task2_runner  slalom speeds and lookahead
+#   task2_runner  task 2 speeds, swerve trigger, lane and waypoint distances
 #   /**           the tablet's arrow buttons (manual_drive in task 0,
 #                 task1_runner in task 1)
 #
@@ -24,7 +24,7 @@
 # When a change takes effect: restart the launch - except the speeds, the
 # lookaheads and the button settings, which are also read live:
 #   ros2 param set /task1_runner follower.desired_linear_vel 0.3
-#   ros2 param set /task2_runner fast_speed 0.35
+#   ros2 param set /task2_runner straight_speed 0.35
 #   ros2 param set /manual_drive manual_speed_mps 0.25
 # Faster than the 0.2 m/s the turning circles were measured at means wider
 # turns than planned - test in sim first.
@@ -114,9 +114,28 @@ task1_runner:
 
 task2_runner:
   ros__parameters:
-    fast_speed: 0.45           # m/s on the straights (live)
-    slow_speed: 0.22           # m/s when the curve needs over half the steering (live)
-    lookahead_dist: 0.30       # m, pure pursuit on the slalom spline (live)
+    # Speeds (live). The turning circles were measured at 0.2 m/s: faster turns
+    # are wider - test in sim first.
+    straight_speed: 0.90       # m/s, out of the carpark to obstacle 1, and straight parts of the planned path
+    path_speed: 0.35           # m/s, the slowest: gear changes, arriving, the fallback swerve
+    # The swerve round obstacle 1 (front ultrasonic reading to obstacle 1): as early
+    # as possible - from swerve_early_dist once YOLO has read arrow 1, at the latest
+    # at swerve_trigger_dist (waiting there if the arrow is still unread). It ends
+    # parallel to the centre line, lane_offset to the side.
+    swerve_early_dist: 0.90    # m
+    swerve_trigger_dist: 0.45  # m
+    lane_offset: 0.25          # m, checkpoint 1 (beside obstacle 1) out from the centre line
+    side_clearance: 0.25       # m, checkpoints 2 and 3 out from obstacle 2's ends
+    home_stop_dist: 0.12       # m, ultrasonic reading of the carpark's back wall = stop
+    home_straight_dist: 0.45   # m, on the centre line before home: the car lines up this far out
+    home_margin: 0.08          # m of extra room either side on the way home (it passes obstacle 1;
+                               # the other legs keep 0.04)
+    line_up_dist: 0.30         # m, straight into checkpoints 1 and 2: the diagonal ends this far before
+                               # (0.3 + side_clearance 0.25 gave the most clean diagonals, 24 of 36
+                               # layouts, in an offline search 2026-09-30; the rest use Hybrid A*)
+    slow_down_dist: 0.40       # m looked ahead (plus the lookahead) for the curve speed below
+    max_lateral_accel: 1.00    # m/s^2: curve speed = sqrt(this x radius), path_speed..straight_speed
+                               # (1.0 -> 0.58 m/s at the tightest turns, 0.74 m/s round the bar)
 
 # The tablet's arrow buttons (f b fl fr bl br): a short burst, then stop.
 # Every node loading this file gets them - manual_drive (task 0) and

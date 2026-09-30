@@ -59,10 +59,16 @@ def write_obj(stem: str):
     tex_rel = f'{stem}.png'
 
     # Quad in the X-Z plane, normal +Y. Vertices CCW seen from +Y.
-    #   v1 (-H, 0, -H)  uv (0,0)
-    #   v2 ( H, 0, -H)  uv (1,0)
-    #   v3 ( H, 0,  H)  uv (1,1)
-    #   v4 (-H, 0,  H)  uv (0,1)
+    #   v1 (-H, 0, -H)  uv (1,0)
+    #   v2 ( H, 0, -H)  uv (0,0)
+    #   v3 ( H, 0,  H)  uv (0,1)
+    #   v4 (-H, 0,  H)  uv (1,1)
+    #
+    # u runs along -X: seen from the front (+Y, looking toward -Y) the viewer's
+    # right is -X, so this is what shows the image the right way round. With u
+    # along +X (before 2026-09-29) every symbol was mirrored from the front -
+    # invisible on A / 1 / arrow-up, but it turned the task 2 LEFT arrow into a
+    # RIGHT one (confirmed with a sim camera capture).
     #
     # Face winding below is v1,v3,v2 / v1,v4,v3 (NOT the more obvious
     # v1,v2,v3 / v1,v3,v4) - confirmed by direct computation (2026-09-17):
@@ -83,10 +89,10 @@ v {-H:.5f} 0.0 {-H:.5f}
 v {H:.5f} 0.0 {-H:.5f}
 v {H:.5f} 0.0 {H:.5f}
 v {-H:.5f} 0.0 {H:.5f}
-vt 0.0 0.0
 vt 1.0 0.0
-vt 1.0 1.0
+vt 0.0 0.0
 vt 0.0 1.0
+vt 1.0 1.0
 vn 0.0 1.0 0.0
 usemtl {mtl_name}
 f 1/1/1 3/3/1 2/2/1

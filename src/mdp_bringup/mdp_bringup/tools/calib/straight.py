@@ -21,9 +21,17 @@ robot actually travelled:
 Anything other than ~1.0 means the constants are wrong by that factor. Note
 odometry only depends on the PRODUCT 2*pi*r/ticks_per_rev, so this one test
 gives the working correction even without knowing which of the two is off.
-Wheel radius lives in mdp_bringup/config/controller.yaml
-(traction_wheels_radius) and ticks-per-rev in mdp_stm32/src/motor.c
-(MOTOR_TICKS_PER_REV).
+Wheel radius lives in the URDF (wheel_radius) and ticks-per-rev in
+mdp_stm32/src/motor.c (MOTOR_TICKS_PER_REV).
+
+AT SPEED: --speed 0.9 checks the distance still holds at task 2's speed (wheel
+slip) and prints the ROLL-PAST: how far the car kept going after the stop
+command. A short run may not reach the speed asked (soft start, --accel); the
+log records the peak speed actually reached.
+
+THE LOG: at the end it asks for the tape distance and the sideways drift (in
+sim it takes both from Gazebo's true pose) and adds a row to
+calibration_log.csv (tools/calib/log.py).
 
 Deliberately subscribes to the CONTROLLER's raw odometry rather than
 /odometry/filtered: the EKF fuses IMU yaw rate on top, and for calibrating a
@@ -45,6 +53,7 @@ carrying a trim flag forever.
 Usage:
     pixi run calib straight 2.0
     pixi run calib straight 2.0 --speed 0.1
+    pixi run calib straight 2.0 --speed 0.9 --accel 0.5   # task 2 speed
     pixi run calib straight -1.0          # reverse
     pixi run calib straight 2.0 --steer-deg -1.5   # trim test
 
@@ -62,12 +71,16 @@ from nav_msgs.msg import Odometry
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy
 from mdp_algorithm.utils import params as planner_params
+from mdp_bringup.tools.calib import log
 
 CMD_TOPIC = '/cmd_vel'
 ODOM_TOPIC = '/ackermann_steering_controller/odometry'
 PUBLISH_HZ = 20.0
 
 WHEELBASE_M = planner_params.car_from_urdf()['wheelbase']   # the URDF
+
+# After the stop command, keep watching this long for the roll-past.
+SETTLE_S = 1.5
 
 # Stop ramping down this far out so the car coasts onto the target rather than
 # overshooting it - the drivetrain cannot stop instantly.
@@ -95,6 +108,10 @@ class DriveDistance(Node):
         self.start_xy = None
         self.travelled_m = 0.0
         self.finished = False
+        self.stop_travelled_m = None     # odometry distance when the stop was sent
+        self.peak_speed = 0.0
+        self.truth = log.Truth(self)
+        self.truth_start = None
         self.start_time = self.get_clock().now()
 
         self.cmd_pub = self.create_publisher(TwistStamped, CMD_TOPIC, 10)
@@ -117,8 +134,10 @@ class DriveDistance(Node):
         x = msg.pose.pose.position.x
         y = msg.pose.pose.position.y
 
+        self.peak_speed = max(self.peak_speed, abs(msg.twist.twist.linear.x))
         if self.start_xy is None:
             self.start_xy = (x, y)
+            self.truth_start = self.truth.pose
             return
 
         # Straight-line displacement from the start pose. Using displacement
@@ -177,15 +196,45 @@ class DriveDistance(Node):
 
     def _stop(self, reason: str) -> None:
         self.finished = True
+        self.stop_travelled_m = self.travelled_m
         # Several zeros, since a single dropped message would leave the robot
         # driving. The firmware's 500ms stale-command fail-safe is the backstop,
         # not the primary stop.
         for _ in range(5):
             self._publish(0.0)
         self.get_logger().info(reason)
-        self.get_logger().info(
-            f'>>> NOW TAPE-MEASURE the actual distance. '
-            f'correction = measured / {self.target_m:.3f}')
+
+    def true_move(self):
+        """Sim: Gazebo's (along, sideways-left) movement since the start, metres."""
+        if self.truth_start is None or self.truth.pose is None:
+            return None
+        x0, y0, yaw0 = self.truth_start
+        dx, dy = self.truth.pose[0] - x0, self.truth.pose[1] - y0
+        return (dx * math.cos(yaw0) + dy * math.sin(yaw0),
+                -dx * math.sin(yaw0) + dy * math.cos(yaw0))
+
+    def write_log(self):
+        """The run's row in calibration_log.csv (tape asked for on the real car)."""
+        where = log.where(self)
+        car_cm = self.travelled_m * 100.0
+        roll_cm = (self.travelled_m - self.stop_travelled_m) * 100.0
+        print(f'CAR       odometry {car_cm:.1f} cm (roll-past after the stop {roll_cm:.1f} cm), '
+              f'peak {self.peak_speed:.2f} m/s')
+        move = self.true_move() if where == 'sim' else None
+        if move is not None:
+            true_cm, side_cm = abs(move[0]) * 100.0, move[1] * 100.0
+        else:
+            true_cm = log.ask('TAPE      distance driven (cm)')
+            side_cm = log.ask('TAPE      sideways drift at the end (cm, + = left)')
+        notes = f'roll-past {roll_cm:.1f} cm'
+        if side_cm is not None:
+            notes += f'; sideways {side_cm:+.1f} cm'
+        if self.steer_rad:
+            notes += f'; steer trim {math.degrees(self.steer_rad):+.1f} deg'
+        if true_cm:
+            notes += f'; correction {true_cm / car_cm:.3f}'
+        log.write(where, 'straight', f'{self.direction * self.target_m:.2f} m', self.peak_speed,
+                  car_cm, true_cm, 'cm', notes)
 
 
 def main() -> int:
@@ -212,9 +261,12 @@ def main() -> int:
     try:
         while rclpy.ok() and not node.finished:
             rclpy.spin_once(node, timeout_sec=0.1)
-        # Let the trailing zero-velocity messages actually go out.
-        for _ in range(5):
+        # Let the zeros go out, and watch the roll-past until the car is still.
+        end = node.get_clock().now().nanoseconds / 1e9 + SETTLE_S
+        while rclpy.ok() and node.get_clock().now().nanoseconds / 1e9 < end:
             rclpy.spin_once(node, timeout_sec=0.05)
+        if node.start_xy is not None:
+            node.write_log()
     except KeyboardInterrupt:
         node._stop('interrupted')
     finally:
