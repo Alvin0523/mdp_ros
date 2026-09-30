@@ -36,13 +36,14 @@ btlog = { cmd = "ros2 run mdp_bringup bt_monitor --ros-args -r __node:=bt_monito
 
 
 # --- Calibration and tests (bare car: pixi run real / pixi run sim) ----------
-calib = { cmd = "ros2 run mdp_bringup calib", description = "Calibrate: calib straight 1.0 | calib rotate 90 | calib turn left|right | calib goto COL ROW N|E|S|W  (-h for options)" }
+calib = { cmd = "ros2 run mdp_bringup calib", description = "Calibrate (rows go to calibration_log.csv): calib straight 2.0 [--speed 0.9] | rotate 90 | turn left|right [--speed 0.35] | goto COL ROW N|E|S|W | ultrasonic CM  (-h for options)" }
 around-obstacle = { cmd = "ros2 run mdp_bringup around_obstacle", description = "Checklist: approach a block on the ultrasonic and drive a square round it [--direction right]" }
 teleop = { cmd = "ros2 run teleop_twist_keyboard teleop_twist_keyboard --ros-args -p stamped:=true", description = "Keyboard driving" }
 
 # --- Viewing and recording ---------------------------------------------------
 foxglove = { cmd = "ros2 launch foxglove_bridge foxglove_bridge_launch.xml", description = "Foxglove bridge (ws://<pi>:8765, display frame: map)" }
-bag = { cmd = "ros2 bag record --exclude-regex '/image_raw.*|/yolo_result/image_annotated' -o bags/rosbag2_$(date +%Y%m%d_%H%M%S) -a", description = "Record all topics except camera images" }
+bag = { cmd = "ros2 run mdp_bringup trigger /bag/start", description = "Start recording a bag (every topic except camera images) into bags/ - same as the Foxglove REC button" }
+bag-stop = { cmd = "ros2 run mdp_bringup trigger /bag/stop", description = "Stop recording and close the bag" }
 bag-all = { cmd = "ros2 bag record -a -o bags/rosbag2_$(date +%Y%m%d_%H%M%S)", description = "Record everything, including camera images (large)" }
 
 # --- Sim assets ---------------------------------------------------------------

@@ -9,6 +9,12 @@ approaches, and halts with zero steering offset when the target heading is reach
 Assessment requirement: CCDS MDP Module A.4 (Accurate Rotation 90 - 360 deg taking Ackermann
 turning radius into account).
 
+GYRO DRIFT: first the car stands still for 3 s and the mean IMU turn rate is
+taken - the gyro's bias, which the EKF adds up into heading error over a run.
+
+THE LOG: at the end it asks what a protractor says it turned (in sim it takes
+Gazebo's true heading) and adds a row to calibration_log.csv (tools/calib/log.py).
+
 Usage:
     pixi run calib rotate 90
     pixi run calib rotate 180 --direction right
@@ -22,9 +28,11 @@ import sys
 import rclpy
 from geometry_msgs.msg import TwistStamped
 from nav_msgs.msg import Odometry
+from sensor_msgs.msg import Imu
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy
 from mdp_algorithm.utils import params as planner_params
+from mdp_bringup.tools.calib import log
 
 CMD_TOPIC = '/cmd_vel'
 ODOM_TOPIC = '/odometry/filtered'
@@ -35,6 +43,7 @@ DEFAULT_STEER_DEG = 28.0  # Safely inside chassis lock (left +43 deg, right -32.
 SLOWDOWN_MARGIN_DEG = 15.0
 MIN_SPEED_MPS = 0.05
 PROGRESS_LOG_HZ = 2.0
+STILL_S = 3.0           # standing still first, for the gyro drift
 # Progress falling this far past zero, and staying there, means the tracked
 # angle is growing the wrong way (e.g. the EKF fell back to raw wheel
 # odometry with a sign convention opposite this node's) - the arc will only
@@ -69,6 +78,12 @@ class RotateAngle(Node):
         self.start_time = self.get_clock().now()
         self.last_log_time = self.start_time
         self.inversion_ticks = 0
+        self.gyro = []                   # IMU yaw rates while standing still
+        self.moving = False
+        self.truth = log.Truth(self)
+        self.truth_prev = None
+        self.truth_turned = 0.0          # rad, unwrapped, Gazebo (sim)
+        self.create_subscription(Imu, '/imu/data', self._on_imu, 50)
 
         self.cmd_pub = self.create_publisher(TwistStamped, CMD_TOPIC, 10)
 
@@ -97,6 +112,21 @@ class RotateAngle(Node):
         self.accumulated_rad += diff
         self.prev_yaw = yaw
 
+    def _on_imu(self, msg: Imu) -> None:
+        if not self.moving:
+            self.gyro.append(msg.angular_velocity.z)
+
+    def gyro_drift_deg_s(self):
+        return math.degrees(sum(self.gyro) / len(self.gyro)) if self.gyro else None
+
+    def _track_truth(self) -> None:
+        if self.truth.pose is None:
+            return
+        yaw = self.truth.pose[2]
+        if self.truth_prev is not None and self.moving:
+            self.truth_turned += math.atan2(math.sin(yaw - self.truth_prev), math.cos(yaw - self.truth_prev))
+        self.truth_prev = yaw
+
     def _publish(self, vx: float, wz: float) -> None:
         msg = TwistStamped()
         msg.header.stamp = self.get_clock().now().to_msg()
@@ -121,6 +151,19 @@ class RotateAngle(Node):
             if elapsed > 5.0:
                 self._stop(f'No odometry on {self.odom_topic} after 5s - is bringup running?')
             return
+
+        self._track_truth()
+        if not self.moving:
+            # Stand still first: the gyro's drift, then start counting from here.
+            self._publish(0.0, 0.0)
+            if elapsed < STILL_S:
+                return
+            self.moving = True
+            self.accumulated_rad = 0.0
+            drift = self.gyro_drift_deg_s()
+            self.get_logger().info('GYRO      no IMU on /imu/data' if drift is None else
+                                   f'GYRO      drift standing still {drift:+.3f} deg/s '
+                                   f'({drift * 60:+.1f} deg per minute)')
 
         progress = self.progress_rad()
         remaining_rad = self.target_rad - progress
@@ -167,6 +210,20 @@ class RotateAngle(Node):
         omega_z = speed * math.tan(applied_steer) / WHEELBASE_M
 
         self._publish(speed, omega_z)
+
+    def write_log(self) -> None:
+        """The run's row in calibration_log.csv (protractor asked for on the real car)."""
+        where = log.where(self)
+        car = math.degrees(self.progress_rad())
+        if where == 'sim' and self.truth_prev is not None:
+            true = math.degrees(self.truth_turned if self.is_left else -self.truth_turned)
+        else:
+            true = log.ask('PROTRACTOR how many degrees did it really turn')
+        drift = self.gyro_drift_deg_s()
+        notes = f'{"left" if self.is_left else "right"}, steer {math.degrees(self.steer_rad):.0f} deg'
+        if drift is not None:
+            notes += f'; gyro drift {drift:+.3f} deg/s'
+        log.write(where, 'rotate', f'{self.target_deg:.0f} deg', self.speed_mps, car, true, 'deg', notes)
 
     def progress_rad(self) -> float:
         """Absolute rotation in the intended direction (radians)."""
@@ -215,8 +272,12 @@ def main() -> int:
     try:
         while rclpy.ok() and not node.finished:
             rclpy.spin_once(node, timeout_sec=0.05)
-        for _ in range(5):
-            rclpy.spin_once(node, timeout_sec=0.02)
+        # Let the zeros go out and the car settle, then log.
+        for _ in range(20):
+            rclpy.spin_once(node, timeout_sec=0.05)
+            node._track_truth()
+        if node.moving:
+            node.write_log()
     except KeyboardInterrupt:
         node._stop('Interrupted by user')
     finally:

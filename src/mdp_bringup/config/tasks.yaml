@@ -6,8 +6,8 @@
 #          on /obstacle_setup exactly as the tablet's bridge would. In a real
 #          run the tablet sends the layout; in sim, a tablet layout that differs
 #          from this one replaces the Gazebo blocks too (sim_obstacles).
-#   task2  mdp.launch.py builds the task 2 arena with these blocks, and
-#          task2_runner plans its slalom around them.
+#   task2  the course rules (sizes, carpark) for task2_runner, and a sim-only
+#          layout (distances, arrows) that builds the Gazebo arena.
 #
 # Another file: `pixi run sim task:=1 layout:=/path/my_tasks.yaml`.
 
@@ -26,11 +26,24 @@ task1:
     - {id: 4, cell_x: 15, cell_y: 9,  facing: S, symbol: 12_Two}
 
 task2:
-  # Metres. The car starts in the carpark at (0, 0) facing +x (east) and drives
-  # out toward the blocks; it passes block 1 on the side its arrow shows and
-  # block 2 on the other, round the back of block 2 and home.
-  # size: x y z of the block; facing: the side with the arrow (W = toward the
-  # carpark).
-  obstacles:
-    - {id: 1, x: 1.0, y: 0.0, size: [0.10, 0.10, 0.20], facing: W, symbol: 39_ArrowLeft}
-    - {id: 2, x: 1.8, y: 0.0, size: [0.10, 0.30, 0.20], facing: W, symbol: 38_ArrowRight}
+  # KNOWN IN ADVANCE (the course rules) - task2_runner uses these.
+  # Frame: x along the course (carpark -> obstacles), y across; the centre line
+  # (carpark centre, both obstacles) is y = 1.20 m. The carpark's back wall
+  # (inside face) is at x = 0.10 m, so everything has positive coordinates.
+  carpark:
+    width: 0.60         # inside, across (y)
+    depth: 0.50         # inside, along (x) - the opening is at x = 0.10 + depth
+    wall: 0.10          # thickness of every wall (carpark and the side walls by obstacle 2)
+    height: 0.10
+  obstacle_1: {size: [0.10, 0.10, 0.20]}   # x (along), y (across), z - every obstacle 10 cm thick
+  obstacle_2: {size: [0.10, 0.60, 0.20]}   # the bar, centred on the centre line
+  side_wall_clearance: 0.50                # walls may stand this far out from obstacle 2's ends
+
+  # SIM ONLY - this test's layout. Builds the Gazebo arena; task2_runner never
+  # reads it (on the real run d1, d2 and the arrows are unknown until measured).
+  sim:
+    d1: 1.00            # carpark opening -> obstacle 1's near face, 0.60-1.50 m
+    d2: 1.00            # obstacle 1's far face -> obstacle 2's near face, 0.60-1.50 m
+    arrow_1: LEFT       # LEFT / RIGHT - which way round each obstacle
+    arrow_2: RIGHT
+    side_walls: true    # walls side_wall_clearance out from obstacle 2's ends

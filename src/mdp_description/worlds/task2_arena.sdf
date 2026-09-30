@@ -16,21 +16,23 @@
     <!-- Sun Light Source -->
     <light type="directional" name="sun">
       <cast_shadows>true</cast_shadows>
-      <pose>0 0 10 0 0 0</pose>
+      <pose>2.5 1.2 10 0 0 0</pose>
       <diffuse>0.8 0.8 0.8 1</diffuse>
       <specular>0.2 0.2 0.2 1</specular>
       <direction>-0.5 0.1 -0.9</direction>
     </light>
 
-    <!-- Ground Plane Arena (2.0m x 2.0m) -->
+    <!-- Floor, 8 x 6 m, around the task 2 course (x 0..5, y 0..2.4 m, centre
+         line y = 1.2 - see mdp_bringup/utils/obstacle_layout.py). -->
     <model name="ground_plane">
       <static>true</static>
+      <pose>2.5 1.2 0 0 0 0</pose>
       <link name="link">
         <collision name="collision">
-          <geometry><plane><normal>0 0 1</normal><size>4 4</size></plane></geometry>
+          <geometry><plane><normal>0 0 1</normal><size>8 6</size></plane></geometry>
         </collision>
         <visual name="visual">
-          <geometry><plane><normal>0 0 1</normal><size>4 4</size></plane></geometry>
+          <geometry><plane><normal>0 0 1</normal><size>8 6</size></plane></geometry>
           <material>
             <ambient>0.8 0.8 0.8 1</ambient>
             <diffuse>0.8 0.8 0.8 1</diffuse>
@@ -39,23 +41,9 @@
       </link>
     </model>
 
-    <!-- Carpark Zone Visual Boundary (60cm x 50cm at 0, 0) -->
-    <model name="carpark_zone">
-      <static>true</static>
-      <pose>0 0 0.001 0 0 0</pose>
-      <link name="link">
-        <visual name="visual">
-          <geometry><box><size>0.6 0.5 0.002</size></box></geometry>
-          <material>
-            <ambient>0.2 0.8 0.2 0.5</ambient>
-            <diffuse>0.2 0.8 0.2 0.5</diffuse>
-          </material>
-        </visual>
-      </link>
-    </model>
-
-    <!-- Obstacles: inserted here by mdp.launch.py from mdp_bringup/config/tasks.yaml
-         (task2), the same file task2_runner plans around. -->
+    <!-- The carpark walls, both obstacles (with their arrows) and the optional
+         side walls: inserted here by mdp.launch.py from mdp_bringup/config/tasks.yaml
+         (task2, its `sim` layout). -->
     <!-- OBSTACLES -->
 
   </world>

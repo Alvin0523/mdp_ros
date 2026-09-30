@@ -9,6 +9,7 @@ up later still learns the pose. Part of the base bringup, independent of task
 runners.
 """
 import math
+import subprocess
 
 import tf2_geometry_msgs
 import tf2_ros
@@ -35,6 +36,10 @@ class RobotPoseFeedback(Node):
     def __init__(self):
         super().__init__('robot_pose_feedback')
         self.arena_frame = self.declare_parameter('arena_frame', 'map').value
+        # Sim only: the Gazebo world, to put the car itself back at the start on
+        # /reset_pose (on the real car someone carries it back). '' = real car.
+        self.gz_world = self.declare_parameter('gz_world', '').value
+        self.start = tuple(self.declare_parameter(n, 0.0).value for n in ('start_x', 'start_y', 'start_yaw'))
         self.tf_buffer = tf2_ros.Buffer()
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
         self.pub = self.create_publisher(String, '/bluetooth_tx', 10)
@@ -68,7 +73,21 @@ class RobotPoseFeedback(Node):
             self.last_line = line
             self.send(line)
 
+    def teleport_to_start(self) -> bool:
+        """Sim: move the Gazebo car back to the start pose (gz set_pose)."""
+        x, y, yaw = self.start
+        req = (f'name: "mini_akm_robot", position: {{x: {x}, y: {y}, z: 0.02}}, '
+               f'orientation: {{z: {math.sin(yaw / 2.0)}, w: {math.cos(yaw / 2.0)}}}')
+        out = subprocess.run(['gz', 'service', '-s', f'/world/{self.gz_world}/set_pose',
+                              '--reqtype', 'gz.msgs.Pose', '--reptype', 'gz.msgs.Boolean',
+                              '--timeout', '2000', '--req', req], capture_output=True, text=True)
+        ok = 'data: true' in out.stdout
+        if not ok:
+            self.get_logger().warn(f'Gazebo set_pose failed: {out.stdout.strip()} {out.stderr.strip()}')
+        return ok
+
     def reset_pose(self, request, response):
+        moved = self.teleport_to_start() if self.gz_world else False
         msg = PoseWithCovarianceStamped()
         msg.header.stamp = self.get_clock().now().to_msg()
         msg.header.frame_id = 'odom'
@@ -78,7 +97,8 @@ class RobotPoseFeedback(Node):
         self.set_pose_pub.publish(msg)
         self.get_logger().info('Pose reset to the start pose.')
         response.success = True
-        response.message = 'EKF pose reset to the start pose.'
+        response.message = ('Car moved back to the start in Gazebo, EKF pose reset.' if moved
+                            else 'EKF pose reset to the start pose.')
         return response
 
     def heartbeat(self) -> None:

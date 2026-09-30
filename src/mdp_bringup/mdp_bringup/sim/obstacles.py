@@ -1,4 +1,4 @@
-"""Sim only (task 1): keep Gazebo's blocks the same as the planner's.
+"""Task 1: keep Gazebo's blocks the same as the planner's (part of sim_helpers).
 
 The arena starts with the tasks.yaml layout baked in (with the symbol images).
 When a DIFFERENT set arrives on /obstacle_setup - the tablet, in sim - this
@@ -18,12 +18,9 @@ import subprocess
 import tempfile
 import threading
 
-from ament_index_python.packages import get_package_share_directory
-from rclpy.node import Node
 from std_msgs.msg import String
 
 from mdp_bringup.utils import obstacle_layout
-from mdp_bringup.utils.run import run
 
 
 def _key(obstacles):
@@ -31,20 +28,15 @@ def _key(obstacles):
     return sorted((round(o.x, 2), round(o.y, 2), o.facing) for o in obstacles)
 
 
-class SimObstacles(Node):
-    def __init__(self):
-        super().__init__('sim_obstacles')
-        if not self.has_parameter('use_sim_time'):
-            self.declare_parameter('use_sim_time', False)
-        self.world = self.declare_parameter('world', 'task1_arena').value
-        layout = self.declare_parameter(
-            'layout', f"{get_package_share_directory('mdp_bringup')}/config/tasks.yaml").value
+class Obstacles:
+    def __init__(self, node, world, layout):
+        self.node, self.world = node, world
         self.current = obstacle_layout.load(layout, 'task1')
         self.names = [f'obstacle_{o.id}' for o in self.current]   # what Gazebo has now
         self.generation = 0
         self.lock = threading.Lock()
         self.tmp = tempfile.mkdtemp(prefix='mdp_sim_obstacles_')
-        self.create_subscription(String, '/obstacle_setup', self.on_setup, 10)
+        node.create_subscription(String, '/obstacle_setup', self.on_setup, 10)
 
     def on_setup(self, msg: String):
         new = obstacle_layout.from_setup_string(msg.data)
@@ -60,7 +52,7 @@ class SimObstacles(Node):
         out = subprocess.run(cmd, capture_output=True, text=True)
         ok = out.returncode == 0 and 'data: true' in out.stdout
         if not ok:
-            self.get_logger().warn(f'gz {service} failed: {out.stdout.strip()} {out.stderr.strip()}')
+            self.node.get_logger().warn(f'gz {service} failed: {out.stdout.strip()} {out.stderr.strip()}')
         return ok
 
     def replace(self, obstacles):
@@ -79,12 +71,5 @@ class SimObstacles(Node):
                     f.write(sdf)
                 if self.gz('create', 'gz.msgs.EntityFactory', f'sdf_filename: "{path}"'):
                     self.names.append(name)
-            self.get_logger().info(f'Gazebo blocks replaced: {obstacle_layout.describe(obstacles)}')
+            self.node.get_logger().info(f'Gazebo blocks replaced: {obstacle_layout.describe(obstacles)}')
 
-
-def main(args=None):
-    run(SimObstacles, args=args)
-
-
-if __name__ == '__main__':
-    main()

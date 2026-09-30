@@ -2,8 +2,8 @@
 
 Pure message builders - task1_runner publishes what these return:
   /occupancy_grid       costmap_grid()        the planner's costmap
-  /grid_markers         arena_markers()       10 cm cell lines, arena and start-box outlines
-  /obstacle_markers     obstacle_markers()    blocks, image face, number, cell label
+  /grid_markers         arena_markers()       10 cm cell lines, area and start-box outlines
+  /obstacle_markers     obstacle_markers()    blocks, image face, number, cell label, walls
   /checkpoint_markers   checkpoint_markers()  where the car stops (arrow), visit order, cell
   /path_markers         leg_markers()         the leg being driven + the point being chased
   /search_progress      search_progress()     poses Hybrid A* has explored so far
@@ -65,50 +65,60 @@ def costmap_grid(costmap, stamp) -> OccupancyGrid:
     99 inscribed, 1..98 inflation, 0 free) - Foxglove colour mode 'costmap'."""
     msg = OccupancyGrid(header=header(stamp))
     msg.info.resolution = costmap.resolution / 100.0
-    msg.info.width = msg.info.height = costmap.size
+    msg.info.width, msg.info.height = costmap.nx, costmap.ny
     msg.info.origin.orientation.w = 1.0
     msg.data = costmap.occupancy_grid_data()
     return msg
 
 
-def _outline(size_m, z):
-    return [(0.0, 0.0, z), (size_m, 0.0, z), (size_m, size_m, z), (0.0, size_m, z), (0.0, 0.0, z)]
+def _outline(x0, y0, x1, y1, z):
+    return [(x0, y0, z), (x1, y0, z), (x1, y1, z), (x0, y1, z), (x0, y0, z)]
 
 
-def arena_markers(stamp) -> MarkerArray:
+def arena_markers(stamp, size=(ARENA_M, ARENA_M), start_box=(0.0, 0.0, START_BOX_M, START_BOX_M)) -> MarkerArray:
+    """10 cm grid over the area (task 1: the 2 x 2 m table) and the outlines of
+    the area and the start box (x0, y0, x1, y1)."""
+    w, h = size
     lines = []
-    for i in range(int(round(ARENA_M / CELL_M)) + 1):
-        v = i * CELL_M
-        lines += [(v, 0.0, 0.01), (v, ARENA_M, 0.01), (0.0, v, 0.01), (ARENA_M, v, 0.01)]
+    for i in range(int(round(w / CELL_M)) + 1):
+        lines += [(i * CELL_M, 0.0, 0.01), (i * CELL_M, h, 0.01)]
+    for j in range(int(round(h / CELL_M)) + 1):
+        lines += [(0.0, j * CELL_M, 0.01), (w, j * CELL_M, 0.01)]
     return MarkerArray(markers=[
         marker(stamp, 'grid_lines', 0, Marker.LINE_LIST, GRID_LINE[1],
                scale=(GRID_LINE[0], 1, 1), points=lines),
         marker(stamp, 'placement_zone_outline', 0, Marker.LINE_STRIP, OUTLINE[1],
-               scale=(OUTLINE[0], 1, 1), points=_outline(ARENA_M, 0.015)),
+               scale=(OUTLINE[0], 1, 1), points=_outline(0.0, 0.0, w, h, 0.015)),
         marker(stamp, 'start_box_outline', 0, Marker.LINE_STRIP, OUTLINE[1],
-               scale=(OUTLINE[0], 1, 1), points=_outline(START_BOX_M, 0.015)),
+               scale=(OUTLINE[0], 1, 1), points=_outline(*start_box, 0.015)),
     ])
 
 
-def obstacle_markers(obstacles, labels, stamp) -> MarkerArray:
-    """obstacles: (x_m, y_m, facing) block centres; labels: tablet number of each.
-    Starts with DELETEALL so a smaller new set leaves no stale blocks behind."""
+def obstacle_markers(obstacles, labels, stamp, sizes=None, walls=()) -> MarkerArray:
+    """obstacles: (x_m, y_m, facing) block centres; labels: tablet number of each;
+    sizes: (x, y) of each block (default 10 x 10 cm); walls: grey rectangles
+    (x0, y0, x1, y1). Starts with DELETEALL so a smaller new set leaves no stale
+    blocks behind."""
     markers = [Marker(header=header(stamp), action=Marker.DELETEALL)]
-    half, thick = OBSTACLE_M / 2.0, 0.008
+    thick = 0.008
     for i, (x, y, facing) in enumerate(obstacles):
+        sx, sy = sizes[i] if sizes else (OBSTACLE_M, OBSTACLE_M)
         fx, fy = FACING[facing]
         markers += [
             marker(stamp, 'obstacles', i, Marker.CUBE, OBSTACLE_RGBA, x, y, 0.05,
-                   scale=(OBSTACLE_M, OBSTACLE_M, 0.10)),
+                   scale=(sx, sy, 0.10)),
             # The image face: a thin red slab on that side of the block.
             marker(stamp, 'obstacle_facing', 300 + i, Marker.CUBE, (1.0, 0.0, 0.0, 1.0),
-                   x + fx * (half + thick / 2.0), y + fy * (half + thick / 2.0), 0.05,
-                   scale=(thick if fx else OBSTACLE_M, thick if fy else OBSTACLE_M, 0.10)),
+                   x + fx * (sx / 2.0 + thick / 2.0), y + fy * (sy / 2.0 + thick / 2.0), 0.05,
+                   scale=(thick if fx else sx, thick if fy else sy, 0.10)),
             marker(stamp, 'obstacle_ids', 200 + i, Marker.TEXT_VIEW_FACING, (0.0, 0.0, 0.0, 1.0),
                    x, y, 0.102, scale=(1, 1, 0.07), text=labels[i]),
             marker(stamp, 'obstacle_labels', 100 + i, Marker.TEXT_VIEW_FACING, LABEL_RGBA,
                    x, y, LABEL_Z, scale=(1, 1, 0.07), text=f'({cell(x)},{cell(y)})'),
         ]
+    for i, (x0, y0, x1, y1) in enumerate(walls):
+        markers.append(marker(stamp, 'walls', i, Marker.CUBE, (0.35, 0.35, 0.35, 0.9),
+                              (x0 + x1) / 2.0, (y0 + y1) / 2.0, 0.05, scale=(x1 - x0, y1 - y0, 0.10)))
     return MarkerArray(markers=markers)
 
 
@@ -128,6 +138,21 @@ def checkpoint_markers(checkpoints, current, stamp) -> MarkerArray:
                    x, y, LABEL_Z, scale=(1, 1, 0.07), text=f'({cell(x)},{cell(y)})'),
         ]
     return MarkerArray(markers=markers)
+
+
+# Foxglove draws a text marker's dark box at the text's own opacity (no way to
+# drop the box), so the timer is half see-through and small to not hide the car.
+TIMER_RGBA = {'idle': (0.7, 0.7, 0.7, 0.5), 'running': (1.0, 1.0, 1.0, 0.6), 'done': (0.2, 1.0, 0.4, 0.7)}
+TIMER_TEXT_M = 0.12
+
+
+def run_timer(stamp, seconds, phase) -> Marker:
+    """The run time as big text riding above the car, for the 3D panel (/run_timer).
+    phase: 'idle' (grey), 'running' (white), 'done' (green, the final time)."""
+    m = marker(stamp, 'run_timer', 0, Marker.TEXT_VIEW_FACING, TIMER_RGBA[phase], 0.08, 0.0, 0.45,
+               scale=(1, 1, TIMER_TEXT_M), text=f'{seconds:.1f} s')
+    m.header.frame_id = 'base_link'
+    return m
 
 
 def leg_markers(path, target, car_xy, stamp) -> MarkerArray:

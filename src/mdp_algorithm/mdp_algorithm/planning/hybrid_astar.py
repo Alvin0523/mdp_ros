@@ -41,7 +41,7 @@ from ..utils import geometry as utils
 from ..utils import params as planner_params
 from ..utils.motion_primitives import Gear, Steering
 from . import reeds_shepp as rs
-from .costmap import ARENA_SIZE_CM, INSCRIBED, LETHAL, MAX_NON_OBSTACLE, Costmap
+from .costmap import INSCRIBED, LETHAL, MAX_NON_OBSTACLE, Costmap
 
 _INF = float('inf')
 
@@ -146,18 +146,18 @@ class HybridAStar:
         obstacle), and each step is weighted by (1 + cost_penalty * cost / 252)
         like the search itself. The goal cell and its neighbours are never
         blocked."""
-        n = int(ARENA_SIZE_CM // self.xy_res)
         res = self.xy_res
-        cell_cost = [[self.costmap.cost_at((i + 0.5) * res, (j + 0.5) * res) for j in range(n)]
-                     for i in range(n)]
-        blocked = [[cell_cost[i][j] >= INSCRIBED for j in range(n)] for i in range(n)]
-        gi = min(n - 1, max(0, int(self.xf // res)))
-        gj = min(n - 1, max(0, int(self.yf // res)))
+        ni_, nj_ = int(self.costmap.width_cm // res), int(self.costmap.height_cm // res)
+        cell_cost = [[self.costmap.cost_at((i + 0.5) * res, (j + 0.5) * res) for j in range(nj_)]
+                     for i in range(ni_)]
+        blocked = [[cell_cost[i][j] >= INSCRIBED for j in range(nj_)] for i in range(ni_)]
+        gi = min(ni_ - 1, max(0, int(self.xf // res)))
+        gj = min(nj_ - 1, max(0, int(self.yf // res)))
         for di in (-1, 0, 1):
             for dj in (-1, 0, 1):
-                if 0 <= gi + di < n and 0 <= gj + dj < n:
+                if 0 <= gi + di < ni_ and 0 <= gj + dj < nj_:
                     blocked[gi + di][gj + dj] = False
-        dist = [[_INF] * n for _ in range(n)]
+        dist = [[_INF] * nj_ for _ in range(ni_)]
         dist[gi][gj] = 0.0
         heap = [(0.0, gi, gj)]
         diag = res * math.sqrt(2.0)
@@ -168,18 +168,18 @@ class HybridAStar:
             for di, dj, w in ((1, 0, res), (-1, 0, res), (0, 1, res), (0, -1, res),
                               (1, 1, diag), (1, -1, diag), (-1, 1, diag), (-1, -1, diag)):
                 ni, nj = i + di, j + dj
-                if 0 <= ni < n and 0 <= nj < n and not blocked[ni][nj]:
+                if 0 <= ni < ni_ and 0 <= nj < nj_ and not blocked[ni][nj]:
                     nd = d + w * (1.0 + self.cost_penalty * cell_cost[ni][nj] / MAX_NON_OBSTACLE)
                     if nd < dist[ni][nj]:
                         dist[ni][nj] = nd
                         heapq.heappush(heap, (nd, ni, nj))
-        self._n2d = n
+        self._n2d = (ni_, nj_)
         return dist
 
     def _h(self, x, y, th):
         h_rs = rs.get_optimal_path_length((x, y, th), (self.xf, self.yf, self.thf), self.r_min)
-        i = min(self._n2d - 1, max(0, int(x // self.xy_res)))
-        j = min(self._n2d - 1, max(0, int(y // self.xy_res)))
+        i = min(self._n2d[0] - 1, max(0, int(x // self.xy_res)))
+        j = min(self._n2d[1] - 1, max(0, int(y // self.xy_res)))
         return max(h_rs, self._dist2d[i][j])
 
     # -- analytic shot -----------------------------------------------------
@@ -233,8 +233,8 @@ class HybridAStar:
         self._dist2d = self._build_2d_table()
         start = SNode(self.x0, self.y0, self.th0, (Gear.FORWARD, Steering.STRAIGHT))
         start.f = self._h(start.x, start.y, start.theta)
-        if self._dist2d[min(self._n2d - 1, int(self.x0 // self.xy_res))][
-                min(self._n2d - 1, int(self.y0 // self.xy_res))] == _INF:
+        if self._dist2d[min(self._n2d[0] - 1, int(self.x0 // self.xy_res))][
+                min(self._n2d[1] - 1, int(self.y0 // self.xy_res))] == _INF:
             return None, None     # the start cell cannot reach the goal cell at all
 
         choices = [(g, s) for g in (Gear.FORWARD, Gear.REVERSE)
@@ -277,8 +277,8 @@ class HybridAStar:
                 step = self._step_cost(self.L, gear, x, y, th)
                 if step is None:
                     continue
-                i = min(self._n2d - 1, max(0, int(x // self.xy_res)))
-                j = min(self._n2d - 1, max(0, int(y // self.xy_res)))
+                i = min(self._n2d[0] - 1, max(0, int(x // self.xy_res)))
+                j = min(self._n2d[1] - 1, max(0, int(y // self.xy_res)))
                 if self._dist2d[i][j] == _INF:
                     continue
                 g = (node.g + step

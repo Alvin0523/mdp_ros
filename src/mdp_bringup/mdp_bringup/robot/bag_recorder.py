@@ -1,0 +1,79 @@
+"""Start / stop recording a bag with a service call - a Foxglove button, the tablet-free
+way to record a run.
+
+    /bag/start   (std_srvs/Trigger, `pixi run bag`)       a new bag:
+                 <bag_dir>/rosbag2_<date>_<time>, every topic except camera images
+    /bag/stop    (std_srvs/Trigger, `pixi run bag-stop`)  stop and close it
+
+Runs `ros2 bag record` as a child process; stop sends it Ctrl+C so it finishes
+the file properly. A recording still going when this node stops is closed too.
+`pixi run bag-all` still records everything, images included, from a terminal.
+"""
+import os
+import signal
+import subprocess
+import time
+
+from rclpy.node import Node
+from std_srvs.srv import Trigger
+
+from mdp_bringup.utils.run import run
+
+EXCLUDE = '/image_raw.*|/camera/image_raw|/yolo_result/image_annotated'   # large; not needed to replay a run
+
+
+class BagRecorder(Node):
+    def __init__(self):
+        super().__init__('bag_recorder')
+        default_dir = os.path.join(os.environ.get('PIXI_PROJECT_ROOT', os.getcwd()), 'bags')
+        self.bag_dir = self.declare_parameter('bag_dir', default_dir).value
+        self.proc = None
+        self.path = None
+        self.started = 0.0
+        self.create_service(Trigger, '/bag/start', self.start)
+        self.create_service(Trigger, '/bag/stop', self.stop)
+
+    def recording(self) -> bool:
+        return self.proc is not None and self.proc.poll() is None
+
+    def start(self, request, response):
+        if self.recording():
+            response.success, response.message = False, f'already recording {self.path}'
+            return response
+        os.makedirs(self.bag_dir, exist_ok=True)
+        self.path = os.path.join(self.bag_dir, time.strftime('rosbag2_%Y%m%d_%H%M%S'))
+        # Own process group: Ctrl+C in the launch terminal must not cut the bag short.
+        self.proc = subprocess.Popen(['ros2', 'bag', 'record', '-a', '--exclude-regex', EXCLUDE, '-o', self.path],
+                                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+        self.started = time.monotonic()
+        self.get_logger().info(f'REC       started -> {self.path}')
+        response.success, response.message = True, f'recording {self.path}'
+        return response
+
+    def stop(self, request=None, response=None):
+        if not self.recording():
+            if response is not None:
+                response.success, response.message = False, 'not recording'
+            return response
+        os.killpg(self.proc.pid, signal.SIGINT)        # ros2 bag record closes the file on Ctrl+C
+        try:
+            self.proc.wait(timeout=10.0)
+        except subprocess.TimeoutExpired:
+            os.killpg(self.proc.pid, signal.SIGKILL)
+        seconds = time.monotonic() - self.started
+        self.get_logger().info(f'REC       stopped after {seconds:.0f} s -> {self.path}')
+        if response is not None:
+            response.success, response.message = True, f'saved {self.path} ({seconds:.0f} s)'
+        return response
+
+    def destroy_node(self):
+        self.stop()
+        super().destroy_node()
+
+
+def main(args=None):
+    run(BagRecorder, args=args)
+
+
+if __name__ == '__main__':
+    main()
