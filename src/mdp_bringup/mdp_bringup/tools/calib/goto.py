@@ -5,6 +5,7 @@ facing the right way?
     pixi run calib goto 5 8 E                  rear axle (base_link) to cell (5,8), facing E
     pixi run calib goto 5 8 E --no-obstacles   plan in the empty arena (walls only)
     pixi run calib goto 5 8 E --layout my.yaml blocks from another layout file
+    pixi run calib goto 5 8 E --speed 0.2      slower than the task 1 speed
 
 Cells as on the tablet: col, row 0..19, (0,0) bottom-left; the car stops with
 the centre of its rear axle over the centre of that cell. The blocks it plans
@@ -44,8 +45,9 @@ def cell_centre(c: int) -> float:
 
 
 class GoTo(Node):
-    def __init__(self, target, blocks):
+    def __init__(self, target, blocks, speed=None):
         super().__init__('goto')
+        self.speed = speed                         # m/s, None = navigation.yaml's desired_linear_vel
         self.target = target                       # (x, y, yaw) metres, map
         self.blocks = blocks                       # obstacle_layout.LayoutObstacle
         self.pose = None
@@ -88,6 +90,14 @@ class GoTo(Node):
                                     f"start the bare car (task:=0) to use goto")
         return bool(busy)
 
+    def off_path(self) -> bool:
+        """Off the planned path (task1_runner.left_path's rule): armed once on it,
+        and past twice the limit regardless."""
+        err, limit = self.follower.path_error(), self.follower.max_path_error
+        if err <= limit / 2.0:
+            self._on_path = True
+        return err > (limit if getattr(self, '_on_path', False) else 2.0 * limit)
+
     def tick(self):
         if self.state == 'WAIT_POSE':
             if self.pose is not None:
@@ -105,6 +115,13 @@ class GoTo(Node):
                 self.get_logger().info(f"ARRIVED   at {self.fmt(self.pose)} (target {self.fmt(self.target)}, "
                                        f"heading {yaw_err:+.0f}deg)")
                 self.write_log(yaw_err)
+                self.finish()
+            elif self.off_path():
+                # Off the planned path = where the planner never checked for blocks.
+                self.send(0.0, 0.0)
+                self.get_logger().error(f"OFF PATH  {self.follower.path_error() * 100:.0f} cm off at "
+                                        f"{self.fmt(self.pose)} - stopped (limit "
+                                        f"{self.follower.max_path_error * 100:.0f} cm)")
                 self.finish()
             else:
                 self.send(*cmd)
@@ -135,7 +152,7 @@ class GoTo(Node):
         moves = ' '.join('fwd' if gears[i] >= 0 else 'REV'
                          for i in range(len(gears)) if i == 0 or gears[i] != gears[i - 1])
         self.get_logger().info(f"GO        {moves}")
-        self.follower = PurePursuitController()
+        self.follower = PurePursuitController(target_speed=self.speed)
         self.follower.update_pose(*self.pose)
         self.follower.set_path(path)
         self.state = 'DRIVE'
@@ -178,15 +195,18 @@ def main(args=None):
     ap.add_argument('row', type=int)
     ap.add_argument('dir', type=str.upper, choices=list(HEADING))
     ap.add_argument('--no-obstacles', action='store_true', help='plan in the empty arena')
+    ap.add_argument('--speed', type=float, default=None,
+                    help='m/s, clamped 0.05 - 0.5 (default: navigation.yaml follower.desired_linear_vel, the task 1 speed)')
     ap.add_argument('--layout', default=f"{get_package_share_directory('mdp_bringup')}/config/tasks.yaml",
                     help='layout file whose task1 blocks to avoid (default: config/tasks.yaml)')
     a, ros_args = ap.parse_known_args()
     if not (0 <= a.col <= 19 and 0 <= a.row <= 19):
         ap.error('cells are 0..19')
     target = (cell_centre(a.col), cell_centre(a.row), HEADING[a.dir])
+    speed = None if a.speed is None else min(0.5, max(0.05, a.speed))
     blocks = [] if a.no_obstacles else obstacle_layout.load(a.layout, 'task1')
     try:
-        run(lambda: GoTo(target, blocks), args=ros_args)
+        run(lambda: GoTo(target, blocks, speed), args=ros_args)
     except SystemExit:
         pass
 

@@ -35,7 +35,7 @@ SECTIONS = {
                 'max_iterations', 'max_planning_time', 'goal_xy_tolerance', 'goal_yaw_tolerance',
                 'checkpoint_standoff'),
     'follower': ('lookahead_dist', 'use_velocity_scaled_lookahead_dist', 'desired_linear_vel',
-                 'xy_goal_tolerance', 'cusp_tolerance',
+                 'xy_goal_tolerance', 'cusp_tolerance', 'max_path_error',
                  'use_regulated_linear_velocity_scaling', 'max_lateral_accel',
                  'regulated_linear_scaling_min_speed', 'max_reverse_linear_vel',
                  'approach_velocity_scaling_dist', 'min_approach_linear_velocity',
@@ -84,6 +84,7 @@ class PlannerParams:
     desired_linear_vel: float
     xy_goal_tolerance: float
     cusp_tolerance: float
+    max_path_error: float
     use_regulated_linear_velocity_scaling: bool
     max_lateral_accel: float
     regulated_linear_scaling_min_speed: float

@@ -11,14 +11,16 @@ How it drives:
     segments, driven one at a time.
   * It steers at the first path point at least lookahead_dist away, searching
     forward only (never re-targets a point already passed). Near the end of a
-    segment the target is the segment's last point.
+    segment the target is beyond its last point, along the end heading.
   * A cusp is finished when the car reaches it (within cusp_tolerance), is past
     it, or it is no longer ahead of the car - then the next segment starts (as
     Nav2's Regulated Pure Pursuit: reach the cusp, THEN change gear; switching
     early started the reverse arc in the wrong place).
-  * The final point is reached within xy_goal_tolerance (Nav2 goal checker);
-    once the car is past it anyway, it stops there (no replanning yet - driving
-    on only dithers beside the goal).
+  * The final point is reached like a cusp - driven up to (cusp_tolerance) and
+    within xy_goal_tolerance of it; once the car is past it anyway, it stops
+    there (driving on only dithers beside the goal). Near the end of a segment
+    it steers at a point beyond the end along the end heading, so it arrives
+    lined up (task1_runner replans once if it still arrives too far off).
   * Steering is clamped PER SIDE to the measured wheel limits (43 deg left,
     32.5 deg right) and converted to yaw rate with the bicycle model.
   * The pose comes in pose_latency late (EKF + transport: ~60 ms in Gazebo,
@@ -62,6 +64,7 @@ from ..utils import params as planner_params
 
 CONTROL_DT = 0.05             # s, compute_cmd() is called at 20 Hz (task1_runner, goto)
 LOOKAHEAD_REF_SPEED = 0.2    # m/s at which lookahead_dist applies (it was tuned there)
+GEAR_FLIP_M = 0.03           # m the target must be behind (ahead) before driving the other gear
 
 Pose = Tuple[float, float, float]
 DensePose = Tuple[float, float, float, int]   # (x, y, theta, gear): gear +1 forward, -1 reverse
@@ -90,6 +93,7 @@ class PurePursuitController:
         self.target_speed = pick(target_speed, p.desired_linear_vel)                 # m/s
         self.goal_tolerance = pick(goal_tolerance, p.xy_goal_tolerance)              # m
         self.cusp_tolerance = pick(cusp_tolerance, p.cusp_tolerance)                 # m
+        self.max_path_error = p.max_path_error                                       # m, see path_error()
         self.velocity_scaled_lookahead = p.use_velocity_scaled_lookahead_dist
         self.regulate = p.use_regulated_linear_velocity_scaling
         self.max_lateral_accel = p.max_lateral_accel                                 # m/s^2
@@ -129,6 +133,7 @@ class PurePursuitController:
                           if self.path[i][3] != self.path[i - 1][3]] + [len(self.path) - 1]
         self._seg = 0
         self._near_idx = 0
+        self._path_start = self.current_pose[:2]   # where the car was: the path's first point is a step ahead
         self.speed = 0.0
         self.steer_est = 0.0
         self._last_cmd = (0.0, 0.0)
@@ -138,9 +143,19 @@ class PurePursuitController:
         self.current_pose = self.predicted_pose()
 
     def predicted_pose(self) -> Pose:
-        """The measured pose moved on by the last command over pose_latency."""
+        """The measured pose moved on by the last command over pose_latency.
+
+        lqr: with the turn rate of the model's wheel angle (steer_est), not the
+        commanded one. The wheels lag the command (~0.2 s), so predicting with the
+        command made a flipped command flip the predicted heading too, which the
+        LQR answered by flipping back - lock-to-lock about 10 times a second
+        (real car 2026-10-01: 35-60% of steering commands reversed; a simulation
+        with the measured lag and delay gave 78%, and 4% predicting this way with
+        lqr_r 2.0)."""
         x, y, yaw = self.measured_pose
         v, w = self._last_cmd
+        if self.tracking == 'lqr':
+            w = v * math.tan(self.steer_est) / self.wheelbase
         dt = self.pose_latency
         if dt <= 0.0 or (v == 0.0 and w == 0.0):
             return x, y, yaw
@@ -149,6 +164,34 @@ class PurePursuitController:
 
     def is_done(self) -> bool:
         return not self.active
+
+    def path_error(self) -> float:
+        """m from the car (rear axle) to the LINE of the segment being driven
+        (near the nearest point). Callers stop and replan past max_path_error:
+        off the path the car is somewhere the planner never checked for blocks
+        (real car 2026-10-01: 14 cm off on a long S-curve, it drove into two).
+
+        The line, not the points: they are 2.5-5 cm apart and the first one is a
+        planner step ahead of the start, so the distance to the nearest point
+        read 5-6 cm for a car sitting on the path and stopped good runs."""
+        if not self.active or not self.path:
+            return 0.0
+        seg_end = self._seg_ends[self._seg]
+        start = self._seg_start()
+        i = self._update_near(seg_end)
+        x, y, _ = self.current_pose
+        pts = [p[:2] for p in self.path[max(start, i - 4):min(seg_end, i + 4) + 1]]
+        if max(start, i - 4) == start:      # the line into the segment's first point
+            pts.insert(0, self.path[start - 1][:2] if start > 0 else self._path_start)
+        best = min(math.hypot(px - x, py - y) for px, py in pts)
+        for (ax, ay), (bx, by) in zip(pts, pts[1:]):
+            dx, dy = bx - ax, by - ay
+            seg2 = dx * dx + dy * dy
+            if seg2 < 1e-12:
+                continue
+            t = max(0.0, min(1.0, ((x - ax) * dx + (y - ay) * dy) / seg2))
+            best = min(best, math.hypot(ax + t * dx - x, ay + t * dy - y))
+        return best
 
     def lookahead(self) -> float:
         """lookahead_dist at LOOKAHEAD_REF_SPEED, growing with the speed driven."""
@@ -201,7 +244,13 @@ class PurePursuitController:
 
     def find_lookahead_point(self) -> Optional[Tuple[float, float, int]]:
         """(x, y, gear) of the first point in this segment at least
-        lookahead_dist away, else the segment's last point."""
+        lookahead_dist away. Within lookahead_dist of the segment's last point,
+        a point that far ahead on the line through it along its heading.
+
+        That extension (2026-10-01): aiming at the end point itself makes pure
+        pursuit arrive at the right place pointing anywhere - with the lookahead
+        longer than a short final piece after a gear change, task 1 arrived 61 deg
+        off. Aiming past it along the end heading lines the car up on the way in."""
         if not self.path:
             return None
         seg_end = self._seg_ends[self._seg]
@@ -213,8 +262,10 @@ class PurePursuitController:
                 self._search_idx = i
                 return px, py, gear
         self._search_idx = seg_end
-        px, py, _, gear = self.path[seg_end]
-        return px, py, gear
+        px, py, ptheta, gear = self.path[seg_end]
+        extra = look - math.hypot(px - x, py - y)
+        direction = 1.0 if gear >= 0 else -1.0
+        return px + direction * extra * math.cos(ptheta), py + direction * extra * math.sin(ptheta), gear
 
     def _segment_end_reached(self, idx: int, final: bool) -> bool:
         """Is the segment ending at path[idx] finished? (see module docstring)"""
@@ -229,10 +280,14 @@ class PurePursuitController:
         # the path (facing the other way) is briefly behind the car too, and
         # counting that ended task 2's loop round obstacle 2 early (2026-09-30).
         aligned = math.cos(yaw - ptheta) > 0.5          # within 60 deg
+        reached = direction * (dx * math.cos(ptheta) + dy * math.sin(ptheta)) >= -self.cusp_tolerance
         if not final:
-            reached = direction * (dx * math.cos(ptheta) + dy * math.sin(ptheta)) >= -self.cusp_tolerance
             return reached or (aligned and ahead <= 0.0)
-        return math.hypot(dx, dy) <= self.goal_tolerance or (aligned and (past or ahead <= 0.0))
+        # The goal like a cusp: drive up to it (cusp_tolerance), within
+        # goal_tolerance of it sideways. Any point within goal_tolerance used to
+        # count, so the car stopped ~5 cm short, still turning onto the final
+        # heading (real car 2026-10-01: arrived 7-14 deg off, then rolled on).
+        return (reached and math.hypot(dx, dy) <= self.goal_tolerance) or (aligned and (past or ahead <= 0.0))
 
     def calculate_pure_pursuit(self, target_point: Tuple[float, float], gear: int = 1) -> float:
         """Steering angle (rad, + left) onto the arc through target_point. The
@@ -338,12 +393,15 @@ class PurePursuitController:
         # Drive toward where the target actually is, not blindly in the planned
         # gear: just after a cusp the next segment's first point can be on the
         # other side of the car (else it drives off - 2026-09-24, 13 m).
+        # Only when it is CLEARLY on the other side (GEAR_FLIP_M): a target
+        # almost beside the car flipped the gear every tick - forward, reverse,
+        # forward at full lock, going nowhere (real car 2026-10-01).
         tx, ty, gear = target
         x, y, yaw = self.current_pose
         local_x = (tx - x) * math.cos(yaw) + (ty - y) * math.sin(yaw)
-        if gear >= 0 and local_x < 0.0:
+        if gear >= 0 and local_x < -GEAR_FLIP_M:
             gear = -1
-        elif gear < 0 and local_x > 0.0:
+        elif gear < 0 and local_x > GEAR_FLIP_M:
             gear = 1
         self.last_target = (tx, ty, gear)
 
