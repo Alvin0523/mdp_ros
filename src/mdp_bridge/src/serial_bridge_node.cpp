@@ -14,10 +14,12 @@
  * of true Ackermann geometry, not exact per-wheel steering.
  */
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstring>
+#include <cstdlib>
 #include <limits>
 #include <thread>
 
@@ -31,7 +33,9 @@
 #include "sensor_msgs/msg/joint_state.hpp"
 #include "sensor_msgs/msg/range.hpp"
 #include "std_msgs/msg/bool.hpp"
+#include "std_msgs/msg/float64.hpp"
 #include "std_msgs/msg/u_int16.hpp"
+#include "std_srvs/srv/trigger.hpp"
 
 #include "mdp_bridge/protocol.hpp"
 
@@ -46,6 +50,8 @@ public:
   {
     declare_parameter<std::string>("serial_port", "/dev/ttyUSB0");
     declare_parameter<int>("baud_rate", 115200);
+    declare_parameter<double>("gyro_zero_s", 2.0);
+    gyro_zero_ms_ = static_cast<uint32_t>(get_parameter("gyro_zero_s").as_double() * 1000.0);
 
     const std::string port = get_parameter("serial_port").as_string();
     fd_ = open_serial(port);
@@ -65,6 +71,27 @@ public:
     ir2_pub_ = create_publisher<sensor_msgs::msg::Range>("/ir2", 10);
     steering_pwm_pub_ = create_publisher<std_msgs::msg::UInt16>(
       "/hardware_bridge/steering_pwm_us", 10);
+
+    /* Gyro bias re-measure (2026-10-01). The STM32 measures the gyro bias once
+     * at boot; on the car a residual of ~0.1 deg/s was left (0.106-0.110
+     * measured standing still), which turned 20-30 s between `pixi run reset`
+     * and GO into 3-5 deg of heading and ~10 cm at the end of a 1.4 m goto.
+     * /reset_pose (robot_pose_feedback) calls this: the next gyro_zero_s of
+     * telemetry is averaged, and if the car stood still that mean is subtracted
+     * from /imu/data's yaw rate from then on. The new bias is published on
+     * /hardware_bridge/gyro_bias (rad/s) so the reset can zero the pose again.
+     * Only angular_velocity is corrected - the EKF fuses yaw RATE only
+     * (ekf.yaml), not the firmware's integrated yaw in imu.orientation. */
+    gyro_bias_pub_ = create_publisher<std_msgs::msg::Float64>("/hardware_bridge/gyro_bias", 10);
+    zero_gyro_srv_ = create_service<std_srvs::srv::Trigger>(
+      "/hardware_bridge/zero_gyro",
+      [this](const std::shared_ptr<std_srvs::srv::Trigger::Request>,
+             std::shared_ptr<std_srvs::srv::Trigger::Response> res) {
+        zero_requested_.store(true);
+        res->success = true;
+        res->message = "measuring the gyro bias for " +
+          std::to_string(gyro_zero_ms_ / 1000.0).substr(0, 3) + " s - keep the car still";
+      });
 
     joint_command_sub_ = create_subscription<sensor_msgs::msg::JointState>(
       "/joint_commands", 10,
@@ -321,6 +348,14 @@ private:
      * wheel angular velocity (rad/s). Uses the MCU's own uptime_ms so
      * jitter in host-side scheduling/serial latency doesn't skew dt. */
     double lb_vel = 0.0, rb_vel = 0.0;
+    if (have_prev_telemetry_ && pkt.uptime_ms < prev_uptime_ms_ && gyro_bias_z_ != 0.0) {
+      /* The STM32 rebooted (reset button, reflash) and measured a fresh boot
+       * bias of its own, so the residual measured on top of the old one is void. */
+      RCLCPP_WARN(get_logger(), "GYRO      STM32 restarted - re-measured bias cleared (was %+.3f deg/s)",
+        gyro_bias_z_ * 180.0 / M_PI);
+      gyro_bias_z_ = 0.0;
+      zero_active_ = false;
+    }
     if (have_prev_telemetry_) {
       double dt_s = static_cast<double>(pkt.uptime_ms - prev_uptime_ms_) / 1000.0;
       if (dt_s > 0.0) {
@@ -356,7 +391,8 @@ private:
     imu.header.frame_id = "imu_link";
     imu.angular_velocity.x = pkt.gyro_x * M_PI / 180.0;
     imu.angular_velocity.y = pkt.gyro_y * M_PI / 180.0;
-    imu.angular_velocity.z = pkt.gyro_z * M_PI / 180.0;
+    updateGyroBias(pkt);
+    imu.angular_velocity.z = pkt.gyro_z * M_PI / 180.0 - gyro_bias_z_;
     imu.linear_acceleration.x = pkt.accel_x;
     imu.linear_acceleration.y = pkt.accel_y;
     imu.linear_acceleration.z = pkt.accel_z;
@@ -455,6 +491,51 @@ private:
     steering_pwm_pub_->publish(pwm_msg);
   }
 
+  /* Runs on the read thread, once per telemetry frame - see the constructor's
+   * gyro bias comment. Still = encoders moved at most kStillTicks and the yaw
+   * rate's spread stayed under kStillStdDegS (nobody holding/carrying it). */
+  void updateGyroBias(const TelemetryPacket & pkt)
+  {
+    constexpr int64_t kStillTicks = 2;
+    constexpr double kStillStdDegS = 1.0;
+    const double gz = pkt.gyro_z * M_PI / 180.0;
+    if (zero_requested_.exchange(false)) {
+      zero_active_ = true;
+      zero_n_ = 0;
+      zero_sum_ = zero_sumsq_ = 0.0;
+      zero_start_ms_ = pkt.uptime_ms;
+      zero_enc_left_ = pkt.enc_left;
+      zero_enc_right_ = pkt.enc_right;
+    }
+    if (!zero_active_) {
+      return;
+    }
+    zero_n_++;
+    zero_sum_ += gz;
+    zero_sumsq_ += gz * gz;
+    if (pkt.uptime_ms - zero_start_ms_ < gyro_zero_ms_) {
+      return;
+    }
+    zero_active_ = false;
+    const double mean = zero_sum_ / zero_n_;
+    const double std_deg = std::sqrt(std::max(0.0, zero_sumsq_ / zero_n_ - mean * mean)) * 180.0 / M_PI;
+    const int64_t moved = std::max(
+      std::llabs(static_cast<int64_t>(pkt.enc_left) - zero_enc_left_),
+      std::llabs(static_cast<int64_t>(pkt.enc_right) - zero_enc_right_));
+    if (zero_n_ < 20 || moved > kStillTicks || std_deg > kStillStdDegS) {
+      RCLCPP_WARN(get_logger(),
+        "GYRO      bias NOT changed - the car moved (%ld ticks, yaw-rate spread %.2f deg/s, %d samples)",
+        static_cast<long>(moved), std_deg, zero_n_);
+      return;
+    }
+    RCLCPP_INFO(get_logger(), "GYRO      bias %+.3f deg/s (was %+.3f), %d samples, spread %.2f deg/s",
+      mean * 180.0 / M_PI, gyro_bias_z_ * 180.0 / M_PI, zero_n_, std_deg);
+    gyro_bias_z_ = mean;
+    std_msgs::msg::Float64 msg;
+    msg.data = mean;
+    gyro_bias_pub_->publish(msg);
+  }
+
   int fd_ = -1;
   std::atomic<bool> running_{false};
   std::thread read_thread_;
@@ -480,6 +561,18 @@ private:
   int32_t prev_enc_left_ = 0;
   int32_t prev_enc_right_ = 0;
   uint32_t prev_uptime_ms_ = 0;
+
+  // Gyro bias re-measure (updateGyroBias); everything but zero_requested_ is read-thread only.
+  rclcpp::Publisher<std_msgs::msg::Float64>::SharedPtr gyro_bias_pub_;
+  rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr zero_gyro_srv_;
+  std::atomic<bool> zero_requested_{false};
+  uint32_t gyro_zero_ms_ = 2000;
+  double gyro_bias_z_ = 0.0;   // rad/s, subtracted from /imu/data angular_velocity.z
+  bool zero_active_ = false;
+  int zero_n_ = 0;
+  double zero_sum_ = 0.0, zero_sumsq_ = 0.0;
+  uint32_t zero_start_ms_ = 0;
+  int64_t zero_enc_left_ = 0, zero_enc_right_ = 0;
 };
 
 }  // namespace mdp_bridge

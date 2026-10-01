@@ -1,6 +1,9 @@
 """Always-on base node: position feedback to the tablet and pose reset.
 
 `/reset_pose` (Trigger, `pixi run reset`) puts the EKF pose back at the start pose.
+On the real car it also has the serial bridge re-measure the gyro bias over the
+next 2 s (/hardware_bridge/zero_gyro) - keep the car still - and zeroes the pose
+once more when the new bias arrives, so the heading starts clean.
 
 Turns the EKF pose into `ROBOT,<x>,<y>,<N/E/S/W>` (cell x = column, y = row from
 the arena's bottom-left, 10 cm cells, 0..19) and publishes it on /bluetooth_tx.
@@ -10,13 +13,14 @@ runners.
 """
 import math
 import subprocess
+import time
 
 import tf2_geometry_msgs
 import tf2_ros
 from geometry_msgs.msg import PoseStamped, PoseWithCovarianceStamped
 from nav_msgs.msg import Odometry
 from rclpy.node import Node
-from std_msgs.msg import String
+from std_msgs.msg import Float64, String
 from std_srvs.srv import Trigger
 from mdp_bringup.utils.run import run, wall_timer
 
@@ -48,6 +52,10 @@ class RobotPoseFeedback(Node):
         # transform), so "back at the start" means EKF pose = identity in odom.
         self.set_pose_pub = self.create_publisher(PoseWithCovarianceStamped, '/set_pose', 10)
         self.create_service(Trigger, '/reset_pose', self.reset_pose)
+        # Real car only (no serial bridge in sim): gyro bias re-measure on reset.
+        self.zero_gyro = self.create_client(Trigger, '/hardware_bridge/zero_gyro')
+        self.create_subscription(Float64, '/hardware_bridge/gyro_bias', self.on_gyro_bias, 10)
+        self.rezero_until = 0.0      # s (wall): a new gyro bias before this re-zeroes the pose
         self.last_line = None
         wall_timer(self, 2.0, self.heartbeat)
 
@@ -86,8 +94,7 @@ class RobotPoseFeedback(Node):
             self.get_logger().warn(f'Gazebo set_pose failed: {out.stdout.strip()} {out.stderr.strip()}')
         return ok
 
-    def reset_pose(self, request, response):
-        moved = self.teleport_to_start() if self.gz_world else False
+    def publish_start_pose(self) -> None:
         msg = PoseWithCovarianceStamped()
         msg.header.stamp = self.get_clock().now().to_msg()
         msg.header.frame_id = 'odom'
@@ -95,11 +102,28 @@ class RobotPoseFeedback(Node):
         for i in range(0, 36, 7):
             msg.pose.covariance[i] = 1e-6
         self.set_pose_pub.publish(msg)
+
+    def reset_pose(self, request, response):
+        moved = self.teleport_to_start() if self.gz_world else False
+        self.publish_start_pose()
         self.get_logger().info('Pose reset to the start pose.')
         response.success = True
         response.message = ('Car moved back to the start in Gazebo, EKF pose reset.' if moved
                             else 'EKF pose reset to the start pose.')
+        if not self.gz_world and self.zero_gyro.service_is_ready():
+            self.zero_gyro.call_async(Trigger.Request())
+            self.rezero_until = time.monotonic() + 5.0
+            response.message += ' Re-measuring the gyro bias for 2 s - keep the car still.'
         return response
+
+    def on_gyro_bias(self, msg: Float64) -> None:
+        """The bridge applied a new bias: zero the pose again, so the ~0.2 deg the
+        old bias added during the measurement does not carry into the run."""
+        if time.monotonic() > self.rezero_until:
+            return
+        self.rezero_until = 0.0
+        self.publish_start_pose()
+        self.get_logger().info(f'GYRO      bias {math.degrees(msg.data):+.3f} deg/s - pose reset again, ready')
 
     def heartbeat(self) -> None:
         if self.last_line is not None:
