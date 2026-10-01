@@ -29,9 +29,10 @@ def _key(obstacles):
 
 
 class Obstacles:
-    def __init__(self, node, world, layout):
+    def __init__(self, node, world, layout, empty_start=False):
         self.node, self.world = node, world
-        self.current = obstacle_layout.load(layout, 'task1')
+        # obstacles:=tablet: the launch built an empty arena - nothing to remove.
+        self.current = [] if empty_start else obstacle_layout.load(layout, 'task1')
         self.names = [f'obstacle_{o.id}' for o in self.current]   # what Gazebo has now
         self.generation = 0
         self.lock = threading.Lock()
