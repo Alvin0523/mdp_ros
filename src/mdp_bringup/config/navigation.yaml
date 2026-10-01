@@ -177,6 +177,8 @@ task2_runner:
                                # layouts, in an offline search 2026-09-30; the rest use Hybrid A*)
     slow_down_dist: 0.40       # m looked ahead (plus the lookahead) for the curve speed below
     max_lateral_accel: 1.00    # m/s^2: curve speed = sqrt(this x radius), path_speed..straight_speed
+    path_tracking: pure_pursuit   # pure_pursuit | lqr (task1_runner follower.* has the lqr weights)
+    pose_latency: 0.0          # s, the EKF pose's delay the follower allows for (task 1: 0.06)
                                # (1.0 -> 0.58 m/s at the tightest turns, 0.74 m/s round the bar)
 
 # The tablet's arrow buttons (f b fl fr bl br): a short burst, then stop.

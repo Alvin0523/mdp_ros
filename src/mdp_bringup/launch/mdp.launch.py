@@ -15,7 +15,9 @@ Arguments
   fake_arrows  task 2 in sim: a stand-in YOLO that always reads the sim layout's
              arrows (Gazebo's camera is too coarse to read them from home); the
              real YOLO is not started for them        (default: true in sim task 2)
-  obstacles  tablet -> only the tablet (over Bluetooth on `bluetooth_device`)
+  obstacles  tablet -> only the tablet (over Bluetooth on `bluetooth_device`); in
+                       sim task 1 Gazebo starts with an empty arena and the
+                       blocks appear when the tablet sends its layout
              yaml   -> also publish `layout` once at startup, like `pixi run setup`
              (default: yaml in sim, tablet on the robot). The tablet link is up
              either way, so the tablet can always send a new set.
@@ -181,7 +183,7 @@ def generate_launch_description(argv=None):
         DeclareLaunchArgument('fake_arrows', default_value='true in sim task 2',
                               description='sim task 2: stand-in YOLO reading the sim layout arrows (sim_helpers)'),
         DeclareLaunchArgument('obstacles', default_value='yaml in sim, tablet on real',
-                              description='tablet: only the tablet; yaml: also publish `layout` once at startup (task 1)'),
+                              description='tablet: only the tablet (sim: empty arena until it sends); yaml: also publish `layout` once at startup (task 1)'),
         DeclareLaunchArgument('layout', default_value='config/tasks.yaml',
                               description='obstacle layouts (task1 cells, task2 metres) - planner AND sim arena'),
         DeclareLaunchArgument('start_cell', default_value=DEFAULT_START_CELL,
@@ -232,6 +234,8 @@ def generate_launch_description(argv=None):
         if task == '2':
             blocks, walls, _ = obstacle_layout.task2_sim(layout)   # the sim-only layout
             models = blocks + walls
+        elif obstacles == 'tablet':
+            models = []   # an empty arena: the blocks appear when the tablet sends its layout
         else:
             models = obstacle_layout.load(layout)
         with open(os.path.join(pkg_description, 'worlds', f'{world_name}.sdf')) as f:
@@ -365,7 +369,8 @@ def generate_launch_description(argv=None):
         # blocks follow the tablet's layout; task 2 the fake arrows (sim/sim_helpers.py).
         actions.append(Node(package='mdp_bringup', executable='sim_helpers', output='screen',
                             parameters=[{'task': task, 'layout': layout, 'world': world_name,
-                                         'fake_arrows': fake_arrows}, sim_time]))
+                                         'fake_arrows': fake_arrows,
+                                         'empty_start': obstacles == 'tablet'}, sim_time]))
     if obstacles == 'yaml' and task == '1':
         # The layout, published once to /obstacle_setup after task1_runner
         # subscribes - exactly what `pixi run setup` does.

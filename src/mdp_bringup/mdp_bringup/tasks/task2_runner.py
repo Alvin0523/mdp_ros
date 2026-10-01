@@ -95,8 +95,6 @@ class Task2Runner(RunnerBase):
         self.follower = PurePursuitController()
         # Task 2 sets the speed and lookahead itself (speed_ahead(), follower_step()).
         self.follower.regulate = self.follower.velocity_scaled_lookahead = False
-        self.follower.tracking = 'pure_pursuit'   # task 2's speeds were tuned with it
-        self.follower.pose_latency = 0.0          # (and without the latency prediction)
         self.us_offset = None            # base_link -> ultrasonic_link, m ahead (TF, from the URDF)
         self.reset_run()
         self.publish_map()
@@ -642,6 +640,8 @@ class Task2Runner(RunnerBase):
         if self.car.use_velocity_scaled_lookahead_dist:
             look = max(look, look * speed / 0.2)
         self.follower.target_speed, self.follower.lookahead_dist = speed, look
+        self.follower.tracking = str(self.p('path_tracking'))
+        self.follower.pose_latency = float(self.p('pose_latency'))
         cmd = self.follower.compute_cmd()
         if cmd is None or self.follower.is_done():
             if stop_at_end:

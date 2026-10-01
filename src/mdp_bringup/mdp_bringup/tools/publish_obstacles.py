@@ -45,7 +45,11 @@ class ObstaclePublisher(Node):
         self.timer = self.create_timer(0.5, self.publish_when_subscribed)
 
     def publish_when_subscribed(self):
-        if self.pub.get_subscription_count() > 0:
+        # Wait for task1_runner itself: sim_helpers subscribes too (sim), and
+        # publishing as soon as IT was seen sometimes lost the set for the
+        # runner (sim, 2026-10-01).
+        if any(i.node_name == 'task1_runner'
+               for i in self.get_subscriptions_info_by_topic(self.pub.topic_name)):
             # Discovery can report the subscriber a moment before its
             # connection is ready to receive; give it one tick of grace.
             if not self.seen_subscriber:

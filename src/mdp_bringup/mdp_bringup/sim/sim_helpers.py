@@ -2,7 +2,8 @@
 node, started by mdp.launch.py with sim:=true.
 
   ultrasonic  always        Gazebo's lidar fan -> /ultrasonic, as the real bridge (ultrasonic.py)
-  obstacles   task 1        tablet layout -> Gazebo's blocks replaced (obstacles.py)
+  obstacles   task 1        tablet layout -> Gazebo's blocks replaced (obstacles.py);
+                            obstacles:=tablet starts with an empty arena
   arrows      task 2 +      the sim layout's arrows on /yolo_result, a YOLO
               fake_arrows   that always reads them (arrows.py)
 """
@@ -23,11 +24,12 @@ class SimHelpers(Node):
         task = str(self.declare_parameter('task', '0').value)
         world = self.declare_parameter('world', 'task1_arena').value
         fake_arrows = self.declare_parameter('fake_arrows', False).value
+        empty_start = self.declare_parameter('empty_start', False).value   # obstacles:=tablet
         layout = self.declare_parameter(
             'layout', f"{get_package_share_directory('mdp_bringup')}/config/tasks.yaml").value
         self.parts = [Ultrasonic(self)]
         if task == '1':
-            self.parts.append(Obstacles(self, world, layout))
+            self.parts.append(Obstacles(self, world, layout, empty_start))
         if task == '2' and fake_arrows:
             self.parts.append(Arrows(self, layout))
 
