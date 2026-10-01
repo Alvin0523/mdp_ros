@@ -453,7 +453,9 @@
     },
     "RosOut!sibm87": {
       "minLogLevel": 1,
-      "searchTerms": [],
+      "searchTerms": [
+        "bt_monitor"
+      ],
       "nameFilter": {
         "foxglove_bridge": {
           "visible": false
@@ -1303,7 +1305,9 @@
     },
     "RosOut!t2_sibm87": {
       "minLogLevel": 1,
-      "searchTerms": [],
+      "searchTerms": [
+        "bt_monitor"
+      ],
       "nameFilter": {
         "foxglove_bridge": {
           "visible": false

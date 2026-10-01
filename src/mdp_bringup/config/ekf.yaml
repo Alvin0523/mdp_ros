@@ -11,7 +11,10 @@ ekf_filter_node:
     # discarded between predict steps. WHEELTEC's own reference config
     # (turn_on_wheeltec_robot/config/ekf.yaml) uses 10Hz - kept ours higher
     # since it's matched to our own telemetry rate, not a mistake to fix.
-    frequency: 100.0
+    # 50, was 100 (2026-10-01): on the Pi an update took 10-12 ms, so 100 Hz was
+    # never met ("Failed to meet update rate" every few seconds). Nothing reads
+    # the pose faster: controller 50 Hz, path follower 20 Hz.
+    frequency: 50.0
     two_d_mode: true      # ground vehicle - locks z/roll/pitch/vz/vroll/vpitch/az to 0
     publish_tf: true
     print_diagnostics: true
