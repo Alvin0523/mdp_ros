@@ -19,7 +19,10 @@ PATH = os.path.join(os.environ.get('PIXI_PROJECT_ROOT', os.getcwd()), 'calibrati
 
 def where(node) -> str:
     """'sim' when Gazebo's true pose is on the graph, else 'real'."""
-    return 'sim' if any(n == '/sim/ground_truth' for n, _ in node.get_topic_names_and_types()) else 'real'
+    # Count PUBLISHERS, not topic names: every calib tool builds a log.Truth,
+    # which subscribes to /sim/ground_truth itself, so the name is always on the
+    # graph and the old name check logged every real-car run as 'sim' (2026-10-01).
+    return 'sim' if node.count_publishers('/sim/ground_truth') > 0 else 'real'
 
 
 def ask(question: str):

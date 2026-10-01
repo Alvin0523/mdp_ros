@@ -117,5 +117,5 @@ scripts = ["install/setup.bash"]
 scripts = ["install/setup.bash", "scripts/activate_gpu.sh"]
 
 [activation.env]
-ROS_DOMAIN_ID = "0"
+ROS_DOMAIN_ID = "14"
 GZ_SIM_SYSTEM_PLUGIN_PATH = "$CONDA_PREFIX/lib"

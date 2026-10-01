@@ -58,7 +58,9 @@ RESET_CONFIRM_TIMEOUT_S = 3.0
 # ended off its checkpoint). Legs are planned checkpoint to checkpoint ahead of
 # time; in sim 2026-09-30 a NO PATH leg left the car following the next leg from
 # a checkpoint it never reached, and it drove off the table.
-REPLAN_POS_M = 0.08
+REPLAN_POS_M = 0.05     # was 0.08 - kept under follower.max_path_error, or a leg would start
+                        # already "off its path" and stop at once (2026-10-01)
+OFF_PATH_RETRIES = 2    # plans per leg after leaving the path; then scan from where it stopped
 REPLAN_YAW_RAD = math.radians(30.0)
 REPLAN_FALLBACK_M = 0.15   # car inside the safety margin this close to the leg's start: plan from there
 
@@ -118,6 +120,9 @@ class Task1Runner(RunnerBase):
         self.checkpoints = []        # (x, y, theta) per visit, same order
         self.leg_paths = []          # per visit: path, [] = no path, None = still planning
         self._replanned = set()      # legs already planned again this run (start_leg)
+        self._heading_retried = set()  # legs re-driven once for arriving off heading (navigate)
+        self._off_path = {}            # leg -> times it left its path (left_path)
+        self._on_path = False          # car has reached its leg's path (left_path)
         self.unreachable = []
         self.current_target_idx = 0
         self.costmap = None
@@ -262,6 +267,8 @@ class Task1Runner(RunnerBase):
             self.reset_done = False     # the car is leaving the start
             self.run_start, self.run_end = self.now(), None
             self._replanned = set()
+            self._heading_retried = set()
+            self._off_path = {}
             response.message = "Run started - navigating to targets."
             self.get_logger().info(f"GO        {' -> '.join(self.tablet_id(i) for i in self.visiting_order)}")
             self.publish_checkpoints()
@@ -423,7 +430,10 @@ class Task1Runner(RunnerBase):
         self.get_logger().info(f"PLAN      order {' -> '.join(self.tablet_id(i) for i in self.visiting_order)}")
 
         self.leg_paths = [None] * len(self.visiting_order)
+        self.leg_starts = [None] * len(self.visiting_order)   # pose each leg was planned from
         self._replanned = set()
+        self._heading_retried = set()
+        self._off_path = {}
         self.current_target_idx = 0
         self.set_state(State.WAITING_FOR_GO)
         threading.Thread(target=self.plan_legs, daemon=True,
@@ -440,6 +450,7 @@ class Task1Runner(RunnerBase):
                 path = plan_leg(costmap, pose, target, progress_callback=self.publish_search_progress)
                 if gen != self._plan_gen:
                     return
+                self.leg_starts[idx] = pose
                 leg_paths[idx] = path
                 if not path:
                     self.get_logger().warn(f"PLAN      leg {idx + 1}/{len(checkpoints)}: NO PATH")
@@ -485,15 +496,68 @@ class Task1Runner(RunnerBase):
         cmd = self.follower.compute_cmd()
         if cmd is None or self.follower.is_done():
             self.send_cmd(0.0, 0.0)
-            self.detected_target_id, self.scan_detections = None, []
-            self.set_state(State.PAUSE_FOR_SCAN)
-            cx, cy, ct = self.checkpoints[self.current_target_idx]
+            idx = self.current_target_idx
+            cx, cy, ct = self.checkpoints[idx]
             yaw = self.current_pose[2]
             dyaw = math.degrees(math.atan2(math.sin(yaw - ct), math.cos(yaw - ct)))
+            # Arrived pointing too far off to scan (the camera looks sideways at the
+            # image): plan this leg once more from here - the planner finds the
+            # manoeuvre to the checkpoint heading. Same limit as the planner's own
+            # goal check, so any path it accepts also passes here (2026-10-01: the
+            # real car arrived at #6 61 deg off and scanned the wrong way).
+            limit = math.degrees(float(self.get_parameter('planner.goal_yaw_tolerance').value))
+            if abs(dyaw) > limit and idx not in self._heading_retried:
+                self._heading_retried.add(idx)
+                self._replanned.add(idx)          # one try: if this fails too, scan from there
+                self.leg_paths[idx] = None
+                self.get_logger().warn(f"HEADING   #{self.current_label()} arrived {dyaw:+.0f}deg off "
+                                       f"(limit {limit:.0f}) - planning the leg again from "
+                                       f"{self.fmt(self.current_pose)}")
+                threading.Thread(target=self.replan_leg, daemon=True,
+                                 args=(idx, tuple(self.current_pose), self._plan_gen)).start()
+                return
+            self.detected_target_id, self.scan_detections = None, []
+            self.set_state(State.PAUSE_FOR_SCAN)
             self.get_logger().info(f"ARRIVED   #{self.current_label()} at {self.fmt(self.current_pose)} "
                                    f"(target {self.fmt((cx, cy, ct))}, heading {dyaw:+.0f}deg) - scanning")
+        elif self.left_path():
+            return
         else:
             self.send_cmd(*cmd)
+
+    def left_path(self) -> bool:
+        """Further than follower.max_path_error off the leg's path: stop, and plan
+        the leg again from here (up to OFF_PATH_RETRIES times, then scan from
+        where it stopped). The planner only checked the path for blocks - off it,
+        nothing did (2026-10-01: 14 cm off, it drove into two blocks)."""
+        err = self.follower.path_error()
+        limit = float(self.get_parameter('follower.max_path_error').value)
+        # Armed once the car is on the path: a leg may start up to REPLAN_POS_M
+        # off it, or from where it was meant to start (replan_leg's fallback,
+        # up to REPLAN_FALLBACK_M) - the follower drives onto it first. Past
+        # twice the limit it stops anyway.
+        if err <= limit / 2.0:
+            self._on_path = True
+        if err <= (limit if self._on_path else 2.0 * limit):
+            return False
+        self.send_cmd(0.0, 0.0)
+        idx = self.current_target_idx
+        tries = self._off_path.get(idx, 0) + 1
+        self._off_path[idx] = tries
+        self._replanned.add(idx)
+        self.follower.set_path([])
+        if tries > OFF_PATH_RETRIES:
+            self.leg_paths[idx] = []              # start_leg: NO PATH - scanning from here
+            self.get_logger().warn(f"OFF PATH  #{self.current_label()} {err * 100:.0f} cm off again - "
+                                   f"giving up on this leg")
+            return True
+        self.leg_paths[idx] = None
+        self.get_logger().warn(f"OFF PATH  #{self.current_label()} {err * 100:.0f} cm off the path "
+                               f"(limit {limit * 100:.0f}) - stopped, planning again from "
+                               f"{self.fmt(self.current_pose)}")
+        threading.Thread(target=self.replan_leg, daemon=True,
+                         args=(idx, tuple(self.current_pose), self._plan_gen)).start()
+        return True
 
     def start_leg(self) -> bool:
         """Load the current leg into the follower if it is planned. False while it
@@ -502,7 +566,7 @@ class Task1Runner(RunnerBase):
         path = self.leg_paths[idx]
         if path is None:
             return False
-        if idx not in self._replanned and (not path or self.off_leg_start(path)):
+        if idx not in self._replanned and (not path or self.off_leg_start(idx)):
             self._replanned.add(idx)
             self.leg_paths[idx] = None
             why = 'no path' if not path else f'leg starts at {self.fmt(path[0][:3])}'
@@ -512,6 +576,7 @@ class Task1Runner(RunnerBase):
                              args=(idx, tuple(self.current_pose), self._plan_gen)).start()
             return False
         self.follower.set_path(path)
+        self._on_path = False          # left_path() arms once the car is on it
         if not path:
             self.get_logger().warn(f"LEG {idx + 1}/{len(self.visiting_order)}   #{self.current_label()}: NO PATH - "
                                    f"scanning from here")
@@ -525,9 +590,13 @@ class Task1Runner(RunnerBase):
                                f"{self.fmt(self.checkpoints[idx])}  {moves}")
         return True
 
-    def off_leg_start(self, path) -> bool:
+    def off_leg_start(self, idx) -> bool:
+        """Is the car further than REPLAN_POS_M / REPLAN_YAW_RAD from where leg idx
+        was planned from? That pose, not the path's first point: the planner's
+        path starts one step (5 cm) ahead of it, so every leg looked 5 cm off and
+        was replanned for nothing (2026-10-01, up to 19 s per leg)."""
         x, y, yaw = self.current_pose
-        px, py, ptheta = path[0][:3]
+        px, py, ptheta = self.leg_starts[idx][:3]
         dyaw = abs(math.atan2(math.sin(yaw - ptheta), math.cos(yaw - ptheta)))
         return math.hypot(x - px, y - py) > REPLAN_POS_M or dyaw > REPLAN_YAW_RAD
 
@@ -548,6 +617,7 @@ class Task1Runner(RunnerBase):
                             progress_callback=self.publish_search_progress)
             if gen != self._plan_gen:
                 return
+            self.leg_starts[idx] = start
             self.leg_paths[idx] = path
             self.path_pub.publish(markers.route_path(self.leg_paths, self.stamp()))
         except Exception:

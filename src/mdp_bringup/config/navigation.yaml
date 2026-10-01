@@ -1,7 +1,7 @@
 # Everything that DRIVES the car - the one place to change it:
 #
 #   SPEEDS AT A GLANCE (m/s)
-#     task 1 path following    task1_runner  follower.desired_linear_vel   0.4
+#     task 1 path following    task1_runner  follower.desired_linear_vel   0.2
 #     task 2                   task2_runner  straight_speed / path_speed   0.45 / 0.25
 #     tablet arrow buttons     all nodes     manual_speed_mps              0.15
 #
@@ -97,9 +97,17 @@ task1_runner:
       max_planning_time: 60.0         # s per leg
       goal_xy_tolerance: 0.035        # m, the path must end this close to the checkpoint
       goal_yaw_tolerance: 0.3491      # rad = 20 deg
-      checkpoint_standoff: 0.20       # m, base_link stops this far from the
+      checkpoint_standoff: 0.30       # m, base_link stops this far from the
                                       # obstacle's centre, straight out from its
-                                      # image face (planning/visiting_order.py)
+                                      # image face (planning/visiting_order.py).
+                                      # 0.30, was 0.20 (2026-10-01): 0.20 left only
+                                      # 5.5 cm between the car's side and the block at
+                                      # every scan stop, less than the real car's
+                                      # ~3 cm/leg position error that adds up over a
+                                      # run; 0.30 leaves 15.5 cm. A multiple of the
+                                      # 10 cm cell: checkpoints snap to cell centres, so
+                                      # 0.25 snapped to 0.20 on some sides and was then
+                                      # "too close to its own block" - unreachable.
 
     # ------------------------------------------------------------- follower --
     # Pure pursuit on the planned path (control/pure_pursuit_follower.py).
@@ -107,13 +115,18 @@ task1_runner:
       lookahead_dist: 0.10            # m at 0.2 m/s (live)
       use_velocity_scaled_lookahead_dist: true   # above 0.2 m/s the lookahead
                                                  # grows with the speed
-      desired_linear_vel: 0.4         # m/s (live), clamped to 0.05 - 0.5. Sim
+      desired_linear_vel: 0.2         # m/s (live), clamped to 0.05 - 0.5. Sim
                                       # 2026-09-30 (6 blocks, lqr + pose_latency):
                                       # 0.4 closest body gap 0.9-1.7 cm; 0.5 touched
-                                      # (pure pursuit touched at 0.4 too)
+                                      # (pure pursuit touched at 0.4 too).
+                                      # Real car 2026-10-01: 0.2 - goto landed 0.7-1.5 cm
+                                      # there; task 1 at 0.4 rolled ~20 cm past
+                                      # checkpoints and arrived up to 61 deg off.
       xy_goal_tolerance: 0.05         # m, arrived at a checkpoint (Nav2 goal checker)
-      pose_latency: 0.06              # s - the EKF pose is this late (Gazebo
-                                      # 2026-09-30: ~2 cm behind the car at 0.3 m/s);
+      pose_latency: 0.09              # s - the EKF pose is this late. Gazebo
+                                      # 2026-09-30: 0.06 (~2 cm behind the car at 0.3 m/s);
+                                      # real car 2026-10-01: EKF yaw rate 80-96 ms behind
+                                      # the raw gyro (5 full-lock turns, calib bags);
                                       # the follower moves it on by the last command
       # How it steers (live): pure_pursuit = at the point lookahead_dist ahead
       # (cuts inside curves: ~5 cm off the path at 0.3-0.5 m/s, sim 2026-09-30);
@@ -129,12 +142,23 @@ task1_runner:
       # lqr: sideways error, heading error and the wheel angle (lagging its
       # command by steering_time_constant) in one small model; bigger weight =
       # that error matters more; lqr_r = how much big steering moves cost.
-      lqr_q_lateral: 100.0            # per m^2 - 1 cm off -> ~9 deg of steering
+      lqr_q_lateral: 50.0             # per m^2 - 100 in sim (1 cm off -> ~9 deg of
+                                      # steering); softer for the first real-car runs
+                                      # (2026-10-01: at 100 on the old firmware it
+                                      # swung lock-to-lock)
       lqr_q_heading: 30.0             # per rad^2
       lqr_q_steer: 0.1                # per rad^2 (wheel angle off the path's)
-      lqr_r: 0.2                      # per rad^2 of steering command
+      lqr_r: 2.0                      # per rad^2 of steering command. 0.2 in sim; real
+                                      # car 2026-10-01: 0.2 answered every bit of pose
+                                      # noise (steering flipped lock to lock); 2.0 calms
+                                      # it with the same tracking (simulated, measured
+                                      # 0.22 s steering lag, 0.09 s pose delay)
       steering_time_constant: 0.22    # s - Gazebo 2026-09-30: 90% of a steering
                                       # step in ~0.5 s. TODO: measure the real car
+      max_path_error: 0.06            # m - further than this off the planned path:
+                                      # stop and plan the leg again from there (task 1)
+                                      # or give up (goto). Real car 2026-10-01: lost the
+                                      # path 14 cm and drove into two blocks.
       cusp_tolerance: 0.01            # m, drive this close to a direction change
                                       # before switching gear (RPP style)
       # Slow down where it is tight (Nav2 Regulated Pure Pursuit names; all
@@ -147,7 +171,10 @@ task1_runner:
       # OFF: tried in sim 2026-09-30 - the paths are nearly all curves (median
       # radius 0.33 m), so it held ~0.41 m/s everywhere and did not reduce the
       # worst drift (~5 cm at 0.3-0.5 m/s either way).
-      use_regulated_linear_velocity_scaling: false
+      # ON for the real car (2026-10-01): off, it arrives at full speed and rolls
+      # on after the stop (~5 cm at 0.2 m/s, ~20 cm at 0.4) and reverses at full
+      # speed (max_reverse_linear_vel only applies when this is on).
+      use_regulated_linear_velocity_scaling: true
       max_lateral_accel: 0.5          # m/s^2 - full lock (~0.18 m) -> 0.30 m/s
       regulated_linear_scaling_min_speed: 0.15   # m/s, never slower in a curve
       max_reverse_linear_vel: 0.25    # m/s

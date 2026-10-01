@@ -7,6 +7,9 @@ serial_bridge_node:            # STM32 (real robot only)
     # device is plugged in, this name never does (it is the CH340's serial).
     serial_port: /dev/serial/by-id/usb-1a86_USB_Single_Serial_5A6C068008-if00
     baud_rate: 115200
+    # s of telemetry averaged for the gyro bias on every `pixi run reset` (the
+    # car must stand still) - see serial_bridge_node.cpp, gyro bias re-measure.
+    gyro_zero_s: 2.0
 
 bluetooth_bridge_node:         # the tablet (sim and real)
   ros__parameters:

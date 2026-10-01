@@ -34,9 +34,13 @@
   <xacro:property name="wheelbase" value="0.143"/>     <!-- rear axle to front axle -->
   <xacro:property name="rear_track" value="0.162"/>    <!-- wheel centre to centre -->
   <xacro:property name="front_track" value="0.164"/>
-  <!-- 66.2 mm tyre: what the tyres roll like (tape vs odometry, 4 x 2.0 m: the
-       car went 1.018x what 65 mm predicts). Front and rear the same tyre. -->
-  <xacro:property name="wheel_radius" value="0.0331"/>
+  <!-- 66.6 mm tyre: what the tyres roll like, from tape vs odometry. First
+       4 x 2.0 m: the car went 1.018x what 65 mm predicts -> 0.0331. Re-measured
+       2026-10-01 (calibration_log.csv, calib straight 2.0 at 0.15 and 0.41 m/s):
+       4 of 5 runs went 1.005-1.0085x odometry, mean 1.0068 -> 0.0333. The fifth
+       (0.980, and 15 cm sideways) was a bad run, left out. Front and rear the
+       same tyre. -->
+  <xacro:property name="wheel_radius" value="0.0333"/>
   <!-- Front wheel centre sits this far outboard of its steering pivot, and the
        pivot this far above the wheel centre (CAD). -->
   <xacro:property name="knuckle_out" value="0.030126"/>
