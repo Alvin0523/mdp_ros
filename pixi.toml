@@ -126,3 +126,9 @@ ROS_AUTOMATIC_DISCOVERY_RANGE = "LOCALHOST"
 ROS_STATIC_PEERS = "10.42.0.1;10.42.0.10"     # Ethernet cable
 # ROS_STATIC_PEERS = "10.43.0.1;10.43.0.10"   # Pi's WiFi hotspot MDP-Grp14
 GZ_SIM_SYSTEM_PLUGIN_PATH = "$CONDA_PREFIX/lib"
+
+# Pi only: OpenCV/numpy (OpenMP) worker threads spin between jobs - the camera
+# publisher took ~290% CPU for 10 fps. PASSIVE makes them sleep instead: 10%,
+# same frame rate, all threads still there for YOLO when the Pi runs it alone.
+[target.linux-aarch64.activation.env]
+OMP_WAIT_POLICY = "PASSIVE"
