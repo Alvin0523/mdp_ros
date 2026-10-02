@@ -23,6 +23,8 @@ clean = { cmd = "rm -rf build install log", description = "Delete build, install
 #   layout:=<tasks.yaml>  start_cell:=1,1  start_dir:=N  gui:=false (sim)  log:=full
 #   serial_port:=...  bluetooth_device:=...      (default: config/bridges.yaml)
 real = { cmd = "ros2 launch mdp_bringup mdp.launch.py sim:=false", description = "Real robot bringup. Args: task:=0|1|2 vision:=true|false obstacles:=tablet|yaml start_cell:=COL,ROW start_dir:=N|E|S|W" }
+car = { cmd = "ros2 launch mdp_bringup mdp.launch.py sim:=false role:=car", description = "On the Pi, with the laptop running `pixi run base`: the robot without YOLO. Same args as real" }
+base = { cmd = "ros2 launch mdp_bringup mdp.launch.py role:=base", description = "On the laptop, with the Pi running `pixi run car`: YOLO on the Pi camera's JPEG frames. Sim: `pixi run sim role:=car ...` + `pixi run base sim:=true`. Args: model:=..." }
 sim = { cmd = "ros2 launch mdp_bringup mdp.launch.py sim:=true", description = "Gazebo bringup, same args as real (+ gui:=false)" }
 vision = { cmd = "ros2 launch mdp_bringup vision.launch.py", description = "Camera and YOLO only, no robot" }
 

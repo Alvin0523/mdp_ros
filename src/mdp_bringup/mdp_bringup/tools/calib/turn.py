@@ -36,6 +36,11 @@ from mdp_bringup.tools.calib import log
 from mdp_bringup.utils.run import run, wall_timer
 
 SETTLE_DEG = 30.0      # left out of the circle fit: the steering is still swinging over
+SLOW_DEG = 30.0        # slow down over the last this-many degrees (still full lock), as
+                       # calib rotate: at 0.4 m/s it stopped late and rolled on (real car,
+                       # 2026-10-01)
+MIN_SPEED = 0.08       # m/s, the slowest it creeps to the stop
+STOP_HOLD_S = 1.0      # zeros this long after stopping (and the car settles) before reporting
 
 
 def fit_radius(points) -> float:
@@ -93,6 +98,8 @@ class Turn(Node):
         self.ekf, self.truth = Track(), Track()
         self.done = False
         self.t0 = None               # first full-lock command, s
+        self.stop_time = None        # when it reached the angle and started stopping
+        self.turned_at_stop = 0.0
         self.rates = []              # (s since t0, |yaw rate| rad/s) from the EKF
         self.cmd_pub = self.create_publisher(TwistStamped, '/cmd_vel', 10)
         self.create_subscription(Odometry, '/odometry/filtered', self.on_odom, 10)
@@ -107,7 +114,7 @@ class Turn(Node):
         if self.prev_yaw is not None:
             self.turned += math.degrees(math.atan2(math.sin(yaw - self.prev_yaw), math.cos(yaw - self.prev_yaw)))
         self.prev_yaw = yaw
-        if self.t0 is not None and not self.done:
+        if self.t0 is not None and self.stop_time is None and self.angle - abs(self.turned) >= SLOW_DEG:
             self.rates.append((self.now() - self.t0, abs(msg.twist.twist.angular.z)))
         self.ekf.add(p.position.x, p.position.y, self.turned)
 
@@ -136,14 +143,24 @@ class Turn(Node):
     def tick(self):
         if self.prev_yaw is None or self.done:
             return
-        if abs(self.turned) < self.angle:
+        left = self.angle - abs(self.turned)
+        if self.stop_time is None and left > 0.0:
             if self.t0 is None:
                 self.t0 = self.now()
-            self.send(self.speed, self.w)
+            v = self.speed if left >= SLOW_DEG else max(MIN_SPEED, self.speed * left / SLOW_DEG)
+            self.send(v, self.w * v / self.speed)      # same full-lock circle, slower
             return
+        # Stopped: keep sending zeros (one lost stop message left it rolling) and
+        # let the car settle before reading how far it really turned.
         self.send(0.0, 0.0)
+        if self.stop_time is None:
+            self.stop_time = self.now()
+            self.turned_at_stop = abs(self.turned)
+        if self.now() - self.stop_time < STOP_HOLD_S:
+            return
         self.done = True
-        lines = [f"STOPPED   after {abs(self.turned):.0f} deg - mark the floor again",
+        lines = [f"STOPPED   after {abs(self.turned):.0f} deg ({abs(self.turned) - self.turned_at_stop:+.0f} deg "
+                 f"rolled on after the stop) - mark the floor again",
                  self.ekf.report('EKF estimate', self.angle), self.truth.report('Gazebo (true)', self.angle)]
         delay = self.steering_delay()
         if delay is not None:

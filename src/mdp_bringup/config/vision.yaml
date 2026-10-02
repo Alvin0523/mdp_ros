@@ -8,6 +8,10 @@ rpi_cam_publisher:             # the Pi camera (real robot only; Gazebo has its 
     frame_rate: 30.0
     camera_topic: /image_raw
     jpeg_quality: 80
+    # Full-sensor mode (IMX219 1640x1232, binned) scaled to the image size: the
+    # whole ~62 deg view. Auto ('') picks the cropped 640x480 mode - a narrow view.
+    # Check the modes on the Pi: rpicam-hello --list-cameras
+    sensor_mode: "1640:1232:10:P"
 
 yolo_detector:
   ros__parameters:

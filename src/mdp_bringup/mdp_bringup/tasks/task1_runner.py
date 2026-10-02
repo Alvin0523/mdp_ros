@@ -29,8 +29,10 @@ Topics:
   services  /start_run  /stop_run   (reset: /reset_pose, robot_pose_feedback)
 """
 
+import json
 import math
 import threading
+import uuid
 import traceback
 from collections import Counter
 from enum import Enum, auto
@@ -39,6 +41,7 @@ import rclpy.time
 import tf2_ros
 from geometry_msgs.msg import PoseWithCovarianceStamped
 from mdp_interfaces.msg import RunStatus
+from rclpy.qos import QoSProfile, ReliabilityPolicy
 from std_msgs.msg import String
 
 from mdp_algorithm.control.pure_pursuit_follower import PurePursuitController, yaw_from_quaternion
@@ -94,6 +97,12 @@ class Task1Runner(RunnerBase):
         self.declare_parameter('scan_pause_s', 3.0)
         self.declare_parameter('scan_settle_s', 0.5)
         self.declare_parameter('scan_confirm_count', 3)
+        # role:=car (a laptop runs `pixi run base`): the paths between checkpoints
+        # are planned by task1_planner on the laptop; no answer within
+        # remote_plan_timeout s (or no new leg for max_planning_time + that) and
+        # the car plans them itself, as when it runs alone.
+        self.declare_parameter('remote_planner', False)
+        self.declare_parameter('remote_plan_timeout', 2.0)
         # true: don't stream zeros while idle, so another publisher (dist, rotate,
         # circle, teleop) can move the car. A run and STOP are unaffected.
         self.declare_parameter('external_control', False)
@@ -109,6 +118,11 @@ class Task1Runner(RunnerBase):
         self.create_subscription(String, '/obstacle_setup', self.setup_callback, 10)
         # Manual drive lives here, not in the bridge: this node already owns /cmd_vel.
         self.create_subscription(String, '/manual_drive', self.manual_drive_callback, 10)
+        plan_qos = QoSProfile(depth=20, reliability=ReliabilityPolicy.RELIABLE)
+        self.plan_request_pub = self.create_publisher(String, '/plan_legs/request', plan_qos)
+        self.create_subscription(String, '/plan_legs/result', self.plan_result_callback, plan_qos)
+        self._session = uuid.uuid4().hex[:8]   # tells this runner's requests from an earlier one's
+        self._remote = None                    # the request the laptop is planning, see plan()
 
         self.follower = PurePursuitController()
         self.current_pose = (0.0, 0.0, math.pi / 2)
@@ -374,6 +388,7 @@ class Task1Runner(RunnerBase):
 
     def control_loop(self):
         now = self.now()
+        self.check_remote_plan()
         if now - self._last_heartbeat >= 2.0:
             self._last_heartbeat = now
             self._last_sent.clear()
@@ -436,8 +451,61 @@ class Task1Runner(RunnerBase):
         self._off_path = {}
         self.current_target_idx = 0
         self.set_state(State.WAITING_FOR_GO)
+        if self.get_parameter('remote_planner').value:
+            self.request_remote_plan(obstacles_cm, start)
+        else:
+            self.plan_locally(start)
+
+    def plan_locally(self, start):
+        self._remote = None
         threading.Thread(target=self.plan_legs, daemon=True,
                          args=(start, self._plan_gen, self.leg_paths, self.checkpoints, self.costmap)).start()
+
+    def request_remote_plan(self, obstacles_cm, start):
+        """Ask task1_planner (laptop) for every leg; answers in plan_result_callback."""
+        gen = f'{self._session}:{self._plan_gen}'
+        self._remote = {'gen': gen, 'start': start, 'acked': False, 'last': self.now()}
+        self.plan_request_pub.publish(String(data=json.dumps({
+            'gen': gen, 'obstacles_cm': [list(o) for o in obstacles_cm], 'start': list(start),
+            'checkpoints': [list(c) for c in self.checkpoints],
+            'params': {name: self.get_parameter(name).value for name, _ in self.planner_settings}})))
+
+    def plan_result_callback(self, msg: String):
+        r = self._remote
+        data = json.loads(msg.data)
+        if r is None or data.get('gen') != r['gen']:
+            return                       # an old request's answer
+        r['last'] = self.now()
+        if data.get('ack'):
+            if not r['acked']:
+                r['acked'] = True
+                self.get_logger().info("PLAN      legs planned on the laptop")
+            return
+        idx = data['idx']
+        self.leg_starts[idx] = tuple(data['start'])
+        self.leg_paths[idx] = [tuple(p) for p in data['path']]
+        if not data['path']:
+            self.get_logger().warn(f"PLAN      leg {idx + 1}/{len(self.checkpoints)}: NO PATH")
+        self.path_pub.publish(markers.route_path(self.leg_paths, self.stamp()))
+        if all(p is not None for p in self.leg_paths):
+            self._remote = None
+            self.plan_state = 'DONE'
+            self.get_logger().info(f"PLAN      done, {len(self.checkpoints)} legs - waiting for GO")
+
+    def check_remote_plan(self):
+        """control_loop: plan here when the laptop does not answer."""
+        r = self._remote
+        if r is None:
+            return
+        if r['gen'] != f'{self._session}:{self._plan_gen}':
+            self._remote = None          # abandoned (new setup / stop)
+            return
+        timeout = float(self.get_parameter('remote_plan_timeout').value)
+        if r['acked']:
+            timeout += float(self.get_parameter('planner.max_planning_time').value)
+        if self.now() - r['last'] > timeout:
+            self.get_logger().warn("PLAN      no answer from the laptop planner - planning here")
+            self.plan_locally(r['start'])
 
     def plan_legs(self, start, gen, leg_paths, checkpoints, costmap):
         """Background thread: every leg back to back. Writes only single items of

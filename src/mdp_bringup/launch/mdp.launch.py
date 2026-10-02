@@ -11,7 +11,18 @@ Arguments
              false -> STM32 over `serial_port`, Pi camera            (default)
   task       0 bare car (manual drive, no runner), 1 explore + recognise,
              2 fastest car                                             (default 0)
-  vision     true/false - camera + YOLO                               (default true) 
+  vision     true/false - camera + YOLO                               (default true)
+  role       where this machine's part runs - one repo, two machines:
+             all  -> everything here (sim, or the Pi on its own)     (default)
+             car  -> the Pi with a laptop: everything except YOLO (the
+                     camera sends JPEG frames); task 1's paths are planned on
+                     the laptop, here if it does not answer  (`pixi run car`)
+             base -> the laptop: YOLO on the Pi's JPEG frames and task 1's
+                     path planning (`pixi run base`). Both machines on
+                     the same ROS_DOMAIN_ID, finding each other by
+                     ROS_STATIC_PEERS.
+             Sim, the same split on one laptop: `pixi run sim role:=car ...`
+             + `pixi run base sim:=true`.
   fake_arrows  task 2 in sim: a stand-in YOLO that always reads the sim layout's
              arrows (Gazebo's camera is too coarse to read them from home); the
              real YOLO is not started for them        (default: true in sim task 2)
@@ -111,7 +122,7 @@ def _launch_arg(name, default, argv=None):
 
 # Nodes whose normal (INFO) output is the story of the run; with log:=quiet
 # every other node shows only its warnings and errors in the terminal.
-_STORY_NODES = {'task1_runner', 'task2_runner', 'bluetooth_bridge_node',
+_STORY_NODES = {'task1_runner', 'task2_runner', 'task1_planner', 'bluetooth_bridge_node',
                 'serial_bridge_node', 'manual_drive', 'sim_helpers', 'bag_recorder'}
 
 
@@ -157,6 +168,9 @@ def generate_launch_description(argv=None):
     if task not in TASKS:
         raise ValueError(f"task:={task} - expected 0, 1 or 2")
     vision = _true(arg('vision', 'true'))
+    role = arg('role', 'all')
+    if role not in ('all', 'car', 'base'):
+        raise ValueError(f"role:={role} - expected all, car or base")
     fake_arrows = sim and task == '2' and _true(arg('fake_arrows', 'true'))
     obstacles = arg('obstacles', 'yaml' if sim else 'tablet')
     if obstacles not in ('yaml', 'tablet'):
@@ -180,6 +194,8 @@ def generate_launch_description(argv=None):
         DeclareLaunchArgument('sim', default_value='false', description='true: Gazebo, false: real robot'),
         DeclareLaunchArgument('task', default_value='0', description='0 bare car (manual drive), 1 explore+recognise, 2 fastest car'),
         DeclareLaunchArgument('vision', default_value='true', description='camera + YOLO (false: without)'),
+        DeclareLaunchArgument('role', default_value='all',
+                              description='all: everything here; car: the Pi without YOLO; base: the laptop (YOLO)'),
         DeclareLaunchArgument('fake_arrows', default_value='true in sim task 2',
                               description='sim task 2: stand-in YOLO reading the sim layout arrows (sim_helpers)'),
         DeclareLaunchArgument('obstacles', default_value='yaml in sim, tablet on real',
@@ -210,6 +226,23 @@ def generate_launch_description(argv=None):
     if quiet:
         # One short line per message: '[INFO] [task1_runner]: Leg 1/4 planned'.
         actions.append(SetEnvironmentVariable('RCUTILS_CONSOLE_OUTPUT_FORMAT', '[{severity}] [{name}]: {message}'))
+
+    if role == 'base':
+        # The laptop: YOLO on the Pi camera's JPEG copy (~40 KB a frame over
+        # WiFi; raw is ~0.9 MB). Everything else runs on the Pi (role:=car).
+        # Sim (sim:=true, next to `pixi run sim role:=car` on the same laptop):
+        # Gazebo's camera directly, on sim time - the same split as the car.
+        actions.append(IncludeLaunchDescription(
+            PythonLaunchDescriptionSource(os.path.join(pkg_bringup, 'launch', 'vision.launch.py')),
+            launch_arguments={'model': model, 'camera': 'false', 'yolo': 'true',
+                              'camera_topic': '/camera/image_raw' if sim else '/image_raw/compressed',
+                              'use_sim_time': str(sim).lower(),
+                              'log_level': 'warn' if quiet else 'info'}.items()))
+        # Task 1's paths between checkpoints, for task1_runner on the car
+        # (remote_planner) - it plans them itself if this does not answer.
+        actions.append(Node(package='mdp_bringup', executable='task1_planner', output='screen',
+                            parameters=[sim_time]))
+        return LaunchDescription(declared + actions)
 
     # ------------------------------------------------------------ robot ----
     config = os.path.join(pkg_bringup, 'config')
@@ -357,6 +390,7 @@ def generate_launch_description(argv=None):
         actions.append(IncludeLaunchDescription(
             PythonLaunchDescriptionSource(os.path.join(pkg_bringup, 'launch', 'vision.launch.py')),
             launch_arguments={'model': model, 'camera': str(not sim).lower(), 'camera_topic': camera_topic,
+                              'yolo': str(role != 'car').lower(),
                               'use_sim_time': str(sim).lower(),
                               'log_level': 'warn' if quiet else 'info'}.items()))
 
@@ -407,7 +441,8 @@ def generate_launch_description(argv=None):
             package='mdp_bringup', executable='task1_runner', output='screen',
             parameters=[navigation,
                         {f'robot.{k}': car[k] for k in ('wheelbase', 'steering_limit_left', 'steering_limit_right')},
-                        {'start_x': start_x, 'start_y': start_y, 'start_yaw': start_yaw}, sim_time]))
+                        {'start_x': start_x, 'start_y': start_y, 'start_yaw': start_yaw,
+                         'remote_planner': role == 'car'}, sim_time]))
     elif task == '2':
         actions.append(Node(
             package='mdp_bringup', executable='task2_runner', output='screen',

@@ -8,6 +8,7 @@ package_name = 'mdp_bringup'
 # tools (pixi run go / setup / calib ...). `ros2 run mdp_bringup <command>`.
 NODES = {
     'task1_runner': 'tasks.task1_runner', 'task2_runner': 'tasks.task2_runner',
+    'task1_planner': 'tasks.task1_planner',
     'robot_pose_feedback': 'robot.robot_pose_feedback', 'manual_drive': 'robot.manual_drive',
     'health_monitor': 'robot.health_monitor', 'bag_recorder': 'robot.bag_recorder',
     'bt_monitor': 'robot.bt_monitor',
