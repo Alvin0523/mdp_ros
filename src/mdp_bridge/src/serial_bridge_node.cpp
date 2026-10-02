@@ -106,7 +106,8 @@ public:
       std::chrono::milliseconds(250),
       std::bind(&SerialBridgeNode::checkLinkHealth, this));
 
-    /* Periodic serial-link diagnostic - distinguishes "nothing arriving on
+    /* Serial-link check every 3 s, printed only when it matters (once when the
+     * link is up, then on problems) - distinguishes "nothing arriving on
      * the port" (bytes_rx stays 0: wrong device/baud/cable, or firmware not
      * running) from "bytes arriving but framing/checksum always fails"
      * (protocol.h/protocol.hpp struct-size mismatch between the flashed
@@ -325,8 +326,23 @@ private:
         "STM32 firmware and this bridge build (protocol.h vs protocol.hpp out of sync, or "
         "STM32 not reflashed after a protocol change).",
         bytes, bad);
-    } else {
-      RCLCPP_INFO(get_logger(), "Serial: %lu bytes, %lu OK frames, %lu bad frames in last 3s", bytes, ok, bad);
+    } else if (!first_window_done_) {
+      // The first 3 s hold what queued on the port before we opened it, and a
+      // frame cut off at the start (2026-10-02: "112 frames/s, 1 bad").
+      first_window_done_ = true;
+    } else if (link_ok_frames_ == 0) {
+      // First clean window: say so once, and remember it as the normal rate.
+      link_ok_frames_ = ok;
+      RCLCPP_INFO(get_logger(), "Serial: link OK - %.0f frames/s, %lu bad", ok / 3.0, bad);
+      serial_quiet_ = bad == 0;
+    } else if (bad > 0 || ok < link_ok_frames_ * 8 / 10) {
+      // Silent while healthy: only bad frames or a rate drop (> 20%) are reported.
+      RCLCPP_WARN(get_logger(), "Serial: %lu bad frames, %.0f frames/s (normal %.0f) in the last 3s",
+        bad, ok / 3.0, link_ok_frames_ / 3.0);
+      serial_quiet_ = false;
+    } else if (!serial_quiet_) {
+      RCLCPP_INFO(get_logger(), "Serial: OK again - %.0f frames/s, no bad frames", ok / 3.0);
+      serial_quiet_ = true;
     }
   }
 
@@ -554,6 +570,9 @@ private:
   rclcpp::TimerBase::SharedPtr diag_timer_;
   std::atomic<int64_t> last_telemetry_ns_{0};
   std::atomic<uint64_t> bytes_rx_{0};
+  uint64_t link_ok_frames_{0};   // frames in the first good 3 s window (the normal rate)
+  bool serial_quiet_{false};     // healthy and already said so
+  bool first_window_done_{false};
   std::atomic<uint64_t> frames_ok_{0};
   std::atomic<uint64_t> frames_bad_{0};
 
