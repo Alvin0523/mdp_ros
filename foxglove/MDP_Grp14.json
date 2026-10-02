@@ -4,18 +4,19 @@
       "followTf": "base_link",
       "followMode": "follow-heading",
       "cameraState": {
-        "distance": 2.3522940499996885,
         "perspective": true,
+        "distance": 2.3522940499996885,
         "phi": 31.712741692739545,
+        "thetaOffset": 90.14047942546607,
+        "targetOffset": [
+          0.5015708531861107,
+          -0.7769665500581154,
+          1.5314085182673868e-16
+        ],
         "target": [
           0,
           0,
           0
-        ],
-        "targetOffset": [
-          0.5015560829795852,
-          -0.7829906977072477,
-          1.5347526020307037e-16
         ],
         "targetOrientation": [
           0,
@@ -23,7 +24,6 @@
           0,
           1
         ],
-        "thetaOffset": 90.14047942546607,
         "fovy": 45,
         "near": 0.5,
         "far": 5000
@@ -355,9 +355,31 @@
       "reverseDirection": false,
       "foxglovePanelTitle": "Battery"
     },
+    "Indicator!rec": {
+      "path": "/bag/recording.data",
+      "style": "bulb",
+      "fallbackColor": "#808080",
+      "fallbackLabel": "REC: no data",
+      "rules": [
+        {
+          "operator": "=",
+          "rawValue": "true",
+          "color": "#2eb82e",
+          "label": "● REC"
+        },
+        {
+          "operator": "=",
+          "rawValue": "false",
+          "color": "#555555",
+          "label": "NONE"
+        }
+      ],
+      "fontSize": 36,
+      "foxglovePanelTitle": "Serial"
+    },
     "Image!yolo": {
       "imageMode": {
-        "imageTopic": "/yolo_result/image_annotated"
+        "imageTopic": "/image_raw/compressed"
       },
       "cameraState": {
         "distance": 20,
@@ -411,6 +433,16 @@
       "timeoutSeconds": 10,
       "foxglovePanelTitle": "Reset pose"
     },
+    "CallService!setup": {
+      "serviceName": "/setup_obstacles",
+      "requestPayload": "{}",
+      "buttonText": "SETUP",
+      "buttonColor": "#2e7d32",
+      "layout": "vertical",
+      "editingMode": false,
+      "timeoutSeconds": 10,
+      "foxglovePanelTitle": "Obstacle Setup"
+    },
     "CallService!go": {
       "serviceName": "/start_run",
       "requestPayload": "{}",
@@ -431,12 +463,45 @@
       "timeoutSeconds": 10,
       "foxglovePanelTitle": "Stop"
     },
+    "CallService!rec": {
+      "requestPayload": "{}",
+      "layout": "vertical",
+      "editingMode": false,
+      "timeoutSeconds": 10,
+      "serviceName": "/bag/toggle",
+      "buttonText": "● REC / ■ STOP",
+      "buttonColor": "#ad1457",
+      "foxglovePanelTitle": "Record bag"
+    },
     "RosOut!6mutlw": {
       "minLogLevel": 1,
-      "searchTerms": [
-        "task1_runner"
-      ],
-      "nameFilter": {},
+      "searchTerms": [],
+      "nameFilter": {
+        "foxglove_bridge": {
+          "visible": false
+        },
+        "bt_monitor": {
+          "visible": false
+        },
+        "serial_bridge_node": {
+          "visible": false
+        },
+        "bluetooth_bridge_node": {
+          "visible": false
+        },
+        "ekf_filter_node": {
+          "visible": false
+        },
+        "controller_manager": {
+          "visible": false
+        },
+        "task1_runner": {
+          "visible": true
+        },
+        "task1_planner": {
+          "visible": true
+        }
+      },
       "fontSize": 12,
       "showLevel": false,
       "showDate": false,
@@ -451,7 +516,14 @@
       "searchTerms": [
         "bt_monitor"
       ],
-      "nameFilter": {},
+      "nameFilter": {
+        "foxglove_bridge": {
+          "visible": false
+        },
+        "task1_runner": {
+          "visible": false
+        }
+      },
       "fontSize": 12,
       "showLevel": false,
       "showDate": false,
@@ -461,372 +533,23 @@
       "showSourceLocation": false,
       "foxglovePanelTitle": "Bluetooth"
     },
-    "DiagnosticSummary!health": {
-      "minLevel": 0,
-      "pinnedIds": [],
-      "hardwareIdFilter": "",
-      "topicToRender": "/diagnostics",
-      "sortByLevel": true,
-      "secondsUntilStale": 5
-    },
-    "DiagnosticStatusPanel!detail": {
-      "topicToRender": "/diagnostics",
-      "collapsedSections": []
-    },
-    "RosOut!2w86lxz": {
-      "minLogLevel": 1,
-      "searchTerms": [],
-      "nameFilter": {},
-      "fontSize": 12,
-      "showLevel": true,
-      "showDate": true,
-      "showTime": true,
-      "showTimezone": true,
-      "showName": true,
-      "showSourceLocation": false,
-      "foxglovePanelTitle": "All logs"
-    },
-    "RawMessages!status": {
-      "topicPath": "/run_status",
-      "diffEnabled": false,
-      "diffMethod": "custom",
-      "diffTopicPath": "",
-      "showFullMessageForDiff": false,
-      "expansion": "all",
-      "defaultExpanded": false
-    },
-    "Plot!speed": {
-      "title": "Speed: commanded vs actual",
-      "paths": [
-        {
-          "value": "/run_status.cmd_v",
-          "enabled": true,
-          "timestampMethod": "receiveTime",
-          "label": "cmd v (m/s)"
-        },
-        {
-          "value": "/odometry/filtered.twist.twist.linear.x",
-          "enabled": true,
-          "timestampMethod": "receiveTime",
-          "label": "EKF v (m/s)"
-        },
-        {
-          "value": "/ackermann_steering_controller/odometry.twist.twist.linear.x",
-          "enabled": true,
-          "timestampMethod": "receiveTime",
-          "label": "wheel odom v (m/s)"
-        }
-      ],
-      "showXAxisLabels": true,
-      "showYAxisLabels": true,
-      "showLegend": true,
-      "legendDisplay": "floating",
-      "showPlotValuesInLegend": true,
-      "isSynced": true,
-      "xAxisVal": "timestamp",
-      "followingViewWidth": 30,
-      "sidebarDimension": 240
-    },
-    "Plot!steering": {
-      "title": "Steering (rad, + left; limits +0.75 / -0.57)",
-      "paths": [
-        {
-          "value": "/ackermann_steering_controller/controller_state.steering_angle_command[0]",
-          "enabled": true,
-          "timestampMethod": "receiveTime",
-          "label": "commanded"
-        },
-        {
-          "value": "/ackermann_steering_controller/controller_state.steer_positions[0]",
-          "enabled": true,
-          "timestampMethod": "receiveTime",
-          "label": "actual"
-        }
-      ],
-      "showXAxisLabels": true,
-      "showYAxisLabels": true,
-      "showLegend": true,
-      "legendDisplay": "floating",
-      "showPlotValuesInLegend": true,
-      "isSynced": true,
-      "xAxisVal": "timestamp",
-      "followingViewWidth": 30,
-      "sidebarDimension": 240
-    },
-    "Plot!yawrate": {
-      "title": "Yaw rate: IMU vs wheels (rad/s)",
-      "paths": [
-        {
-          "value": "/imu/data.angular_velocity.z",
-          "enabled": true,
-          "timestampMethod": "receiveTime",
-          "label": "IMU"
-        },
-        {
-          "value": "/ackermann_steering_controller/odometry.twist.twist.angular.z",
-          "enabled": true,
-          "timestampMethod": "receiveTime",
-          "label": "wheel odom"
-        },
-        {
-          "value": "/odometry/filtered.twist.twist.angular.z",
-          "enabled": true,
-          "timestampMethod": "receiveTime",
-          "label": "EKF"
-        }
-      ],
-      "showXAxisLabels": true,
-      "showYAxisLabels": true,
-      "showLegend": true,
-      "legendDisplay": "floating",
-      "showPlotValuesInLegend": true,
-      "isSynced": true,
-      "xAxisVal": "timestamp",
-      "followingViewWidth": 30,
-      "sidebarDimension": 240
-    },
-    "Plot!range": {
-      "title": "Range sensors (m)",
-      "paths": [
-        {
-          "value": "/ultrasonic.range",
-          "enabled": true,
-          "timestampMethod": "receiveTime",
-          "label": "ultrasonic (front)"
-        },
-        {
-          "value": "/ir.range",
-          "enabled": true,
-          "timestampMethod": "receiveTime",
-          "label": "IR"
-        },
-        {
-          "value": "/ir2.range",
-          "enabled": true,
-          "timestampMethod": "receiveTime",
-          "label": "IR 2"
-        }
-      ],
-      "showXAxisLabels": true,
-      "showYAxisLabels": true,
-      "showLegend": true,
-      "legendDisplay": "floating",
-      "showPlotValuesInLegend": true,
-      "isSynced": true,
-      "xAxisVal": "timestamp",
-      "followingViewWidth": 30,
-      "sidebarDimension": 240
-    },
-    "Tab!main": {
-      "activeTabIdx": 0,
-      "tabs": [
-        {
-          "title": "Task 1",
-          "layout": {
-            "direction": "row",
-            "first": {
-              "direction": "column",
-              "first": "3D!arena",
-              "second": {
-                "direction": "row",
-                "first": "StateTransitions!run",
-                "second": "Plot!progress",
-                "splitPercentage": 55
-              },
-              "splitPercentage": 58.33018137167999
-            },
-            "second": {
-              "direction": "column",
-              "first": {
-                "first": {
-                  "direction": "column",
-                  "first": {
-                    "first": {
-                      "first": "Indicator!stm32",
-                      "second": "Indicator!motor",
-                      "direction": "column"
-                    },
-                    "second": {
-                      "first": "Indicator!tablet",
-                      "second": "Gauge!battery",
-                      "direction": "column"
-                    },
-                    "direction": "column"
-                  },
-                  "second": "Indicator!rec",
-                  "splitPercentage": 80
-                },
-                "second": "Image!yolo",
-                "direction": "row"
-              },
-              "second": {
-                "direction": "column",
-                "first": {
-                  "direction": "row",
-                  "first": "CallService!reset_pose",
-                  "second": {
-                    "direction": "row",
-                    "first": "CallService!setup",
-                    "second": {
-                      "direction": "row",
-                      "first": "CallService!go",
-                      "second": {
-                        "direction": "row",
-                        "first": "CallService!stop",
-                        "second": "CallService!rec",
-                        "splitPercentage": 50
-                      },
-                      "splitPercentage": 33.333333333333336
-                    },
-                    "splitPercentage": 25
-                  },
-                  "splitPercentage": 20
-                },
-                "second": {
-                  "direction": "column",
-                  "first": "RosOut!6mutlw",
-                  "second": "RosOut!sibm87",
-                  "splitPercentage": 52.977214134126704
-                },
-                "splitPercentage": 12
-              },
-              "splitPercentage": 35.500544101609506
-            },
-            "splitPercentage": 55.024390243902445
-          }
-        },
-        {
-          "title": "Task 2",
-          "layout": {
-            "direction": "row",
-            "first": {
-              "direction": "column",
-              "first": "3D!t2_arena",
-              "second": {
-                "direction": "row",
-                "first": "StateTransitions!t2_run",
-                "second": "Plot!t2_progress",
-                "splitPercentage": 55
-              },
-              "splitPercentage": 58.33018137167999
-            },
-            "second": {
-              "direction": "column",
-              "first": {
-                "first": {
-                  "direction": "column",
-                  "first": {
-                    "first": {
-                      "first": "Indicator!t2_stm32",
-                      "second": "Indicator!t2_motor",
-                      "direction": "column"
-                    },
-                    "second": {
-                      "first": "Indicator!t2_tablet",
-                      "second": "Gauge!t2_battery",
-                      "direction": "column"
-                    },
-                    "direction": "column"
-                  },
-                  "second": "Indicator!t2_rec",
-                  "splitPercentage": 80
-                },
-                "second": "Image!t2_yolo",
-                "direction": "row"
-              },
-              "second": {
-                "direction": "column",
-                "first": {
-                  "direction": "row",
-                  "first": "CallService!t2_reset_pose",
-                  "second": {
-                    "direction": "row",
-                    "first": "CallService!t2_go",
-                    "second": {
-                      "direction": "row",
-                      "first": "CallService!t2_stop",
-                      "second": "CallService!t2_rec",
-                      "splitPercentage": 50
-                    },
-                    "splitPercentage": 33.333333333333336
-                  },
-                  "splitPercentage": 25
-                },
-                "second": {
-                  "direction": "column",
-                  "first": "RosOut!t2_6mutlw",
-                  "second": "RosOut!t2_sibm87",
-                  "splitPercentage": 52.977214134126704
-                },
-                "splitPercentage": 12
-              },
-              "splitPercentage": 35.500544101609506
-            },
-            "splitPercentage": 55.024390243902445
-          }
-        },
-        {
-          "title": "Health & tuning",
-          "layout": {
-            "direction": "row",
-            "first": {
-              "direction": "column",
-              "first": {
-                "direction": "row",
-                "first": "DiagnosticSummary!health",
-                "second": "DiagnosticStatusPanel!detail",
-                "splitPercentage": 47.90243902439024
-              },
-              "second": {
-                "direction": "column",
-                "first": "RosOut!2w86lxz",
-                "second": "RawMessages!status",
-                "splitPercentage": 55
-              },
-              "splitPercentage": 45.219184867181674
-            },
-            "second": {
-              "direction": "column",
-              "first": {
-                "direction": "column",
-                "first": "Plot!speed",
-                "second": "Plot!steering",
-                "splitPercentage": 50
-              },
-              "second": {
-                "direction": "column",
-                "first": {
-                  "direction": "column",
-                  "first": "Plot!yawrate",
-                  "second": "Plot!range",
-                  "splitPercentage": 50
-                },
-                "second": "Plot!pi",
-                "splitPercentage": 66
-              },
-              "splitPercentage": 40
-            },
-            "splitPercentage": 50
-          }
-        }
-      ]
-    },
     "3D!t2_arena": {
       "followTf": "base_link",
       "followMode": "follow-heading",
       "cameraState": {
-        "distance": 4.0,
         "perspective": true,
+        "distance": 2.3522940499996885,
         "phi": 31.712741692739545,
+        "thetaOffset": 90.14047942546607,
+        "targetOffset": [
+          0.5015708531861107,
+          -0.7769665500581154,
+          1.5314085182673868e-16
+        ],
         "target": [
           0,
           0,
           0
-        ],
-        "targetOffset": [
-          0.5015560829795852,
-          -0.7829906977072477,
-          1.5347526020307037e-16
         ],
         "targetOrientation": [
           0,
@@ -834,7 +557,6 @@
           0,
           1
         ],
-        "thetaOffset": 90.14047942546607,
         "fovy": 45,
         "near": 0.5,
         "far": 5000
@@ -1163,6 +885,56 @@
       "reverseDirection": false,
       "foxglovePanelTitle": "Battery"
     },
+    "Indicator!t2_pi": {
+      "path": "/pi/status.temp_c",
+      "style": "bulb",
+      "fallbackColor": "#808080",
+      "fallbackLabel": "Pi: no data",
+      "rules": [
+        {
+          "operator": ">=",
+          "rawValue": "80",
+          "color": "#e02020",
+          "label": "Pi HOT"
+        },
+        {
+          "operator": ">=",
+          "rawValue": "78",
+          "color": "#e0a020",
+          "label": "Pi hot"
+        },
+        {
+          "operator": "<",
+          "rawValue": "78",
+          "color": "#2eb82e",
+          "label": "Pi OK"
+        }
+      ],
+      "fontSize": 36,
+      "foxglovePanelTitle": "Serial"
+    },
+    "Indicator!t2_rec": {
+      "path": "/bag/recording.data",
+      "style": "bulb",
+      "fallbackColor": "#808080",
+      "fallbackLabel": "REC: no data",
+      "rules": [
+        {
+          "operator": "=",
+          "rawValue": "true",
+          "color": "#e02020",
+          "label": "● REC"
+        },
+        {
+          "operator": "=",
+          "rawValue": "false",
+          "color": "#555555",
+          "label": "not recording"
+        }
+      ],
+      "fontSize": 36,
+      "foxglovePanelTitle": "Serial"
+    },
     "Image!t2_yolo": {
       "imageMode": {
         "imageTopic": "/yolo_result/image_annotated"
@@ -1239,12 +1011,27 @@
       "timeoutSeconds": 10,
       "foxglovePanelTitle": "Stop"
     },
+    "CallService!t2_rec": {
+      "requestPayload": "{}",
+      "layout": "vertical",
+      "editingMode": false,
+      "timeoutSeconds": 10,
+      "serviceName": "/bag/toggle",
+      "buttonText": "● REC / ■ STOP",
+      "buttonColor": "#ad1457",
+      "foxglovePanelTitle": "Record bag"
+    },
     "RosOut!t2_6mutlw": {
       "minLogLevel": 1,
-      "searchTerms": [
-        "task2_runner"
-      ],
-      "nameFilter": {},
+      "searchTerms": [],
+      "nameFilter": {
+        "foxglove_bridge": {
+          "visible": false
+        },
+        "bt_monitor": {
+          "visible": false
+        }
+      },
       "fontSize": 12,
       "showLevel": false,
       "showDate": false,
@@ -1259,7 +1046,14 @@
       "searchTerms": [
         "bt_monitor"
       ],
-      "nameFilter": {},
+      "nameFilter": {
+        "foxglove_bridge": {
+          "visible": false
+        },
+        "task2_runner": {
+          "visible": false
+        }
+      },
       "fontSize": 12,
       "showLevel": false,
       "showDate": false,
@@ -1269,79 +1063,160 @@
       "showSourceLocation": false,
       "foxglovePanelTitle": "Bluetooth"
     },
-    "CallService!rec": {
-      "requestPayload": "{}",
-      "layout": "vertical",
-      "editingMode": false,
-      "timeoutSeconds": 10,
-      "serviceName": "/bag/toggle",
-      "buttonText": "\u25cf REC / \u25a0 STOP",
-      "buttonColor": "#ad1457",
-      "foxglovePanelTitle": "Record bag"
+    "DiagnosticSummary!health": {
+      "minLevel": 0,
+      "pinnedIds": [],
+      "hardwareIdFilter": "",
+      "topicToRender": "/diagnostics",
+      "sortByLevel": true,
+      "secondsUntilStale": 5
     },
-    "CallService!t2_rec": {
-      "requestPayload": "{}",
-      "layout": "vertical",
-      "editingMode": false,
-      "timeoutSeconds": 10,
-      "serviceName": "/bag/toggle",
-      "buttonText": "\u25cf REC / \u25a0 STOP",
-      "buttonColor": "#ad1457",
-      "foxglovePanelTitle": "Record bag"
+    "DiagnosticStatusPanel!detail": {
+      "topicToRender": "/diagnostics",
+      "collapsedSections": []
     },
-    "Indicator!rec": {
-      "path": "/bag/recording.data",
-      "style": "bulb",
-      "fallbackColor": "#808080",
-      "fallbackLabel": "REC: no data",
-      "rules": [
+    "RosOut!2w86lxz": {
+      "minLogLevel": 1,
+      "searchTerms": [],
+      "nameFilter": {},
+      "fontSize": 12,
+      "showLevel": true,
+      "showDate": true,
+      "showTime": true,
+      "showTimezone": true,
+      "showName": true,
+      "showSourceLocation": false
+    },
+    "RawMessages!status": {
+      "topicPath": "/run_status",
+      "diffEnabled": false,
+      "diffMethod": "custom",
+      "diffTopicPath": "",
+      "showFullMessageForDiff": false,
+      "expansion": "all",
+      "defaultExpanded": false
+    },
+    "Plot!speed": {
+      "title": "Speed: commanded vs actual",
+      "paths": [
         {
-          "operator": "=",
-          "rawValue": "true",
-          "color": "#e02020",
-          "label": "\u25cf REC"
+          "value": "/run_status.cmd_v",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "label": "cmd v (m/s)"
         },
         {
-          "operator": "=",
-          "rawValue": "false",
-          "color": "#555555",
-          "label": "not recording"
-        }
-      ],
-      "fontSize": 36,
-      "foxglovePanelTitle": "REC"
-    },
-    "Indicator!t2_rec": {
-      "path": "/bag/recording.data",
-      "style": "bulb",
-      "fallbackColor": "#808080",
-      "fallbackLabel": "REC: no data",
-      "rules": [
-        {
-          "operator": "=",
-          "rawValue": "true",
-          "color": "#e02020",
-          "label": "\u25cf REC"
+          "value": "/odometry/filtered.twist.twist.linear.x",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "label": "EKF v (m/s)"
         },
         {
-          "operator": "=",
-          "rawValue": "false",
-          "color": "#555555",
-          "label": "not recording"
+          "value": "/ackermann_steering_controller/odometry.twist.twist.linear.x",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "label": "wheel odom v (m/s)"
         }
       ],
-      "fontSize": 36,
-      "foxglovePanelTitle": "REC"
+      "showXAxisLabels": true,
+      "showYAxisLabels": true,
+      "showLegend": true,
+      "legendDisplay": "floating",
+      "showPlotValuesInLegend": true,
+      "isSynced": true,
+      "xAxisVal": "timestamp",
+      "followingViewWidth": 30,
+      "sidebarDimension": 240
     },
-    "CallService!setup": {
-      "serviceName": "/setup_obstacles",
-      "requestPayload": "{}",
-      "buttonText": "SETUP",
-      "buttonColor": "#2e7d32",
-      "layout": "vertical",
-      "editingMode": false,
-      "timeoutSeconds": 10,
-      "foxglovePanelTitle": "Setup"
+    "Plot!steering": {
+      "title": "Steering (rad, + left; limits +0.75 / -0.57)",
+      "paths": [
+        {
+          "value": "/ackermann_steering_controller/controller_state.steering_angle_command[0]",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "label": "commanded"
+        },
+        {
+          "value": "/ackermann_steering_controller/controller_state.steer_positions[0]",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "label": "actual"
+        }
+      ],
+      "showXAxisLabels": true,
+      "showYAxisLabels": true,
+      "showLegend": true,
+      "legendDisplay": "floating",
+      "showPlotValuesInLegend": true,
+      "isSynced": true,
+      "xAxisVal": "timestamp",
+      "followingViewWidth": 30,
+      "sidebarDimension": 240
+    },
+    "Plot!yawrate": {
+      "title": "Yaw rate: IMU vs wheels (rad/s)",
+      "paths": [
+        {
+          "value": "/imu/data.angular_velocity.z",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "label": "IMU"
+        },
+        {
+          "value": "/ackermann_steering_controller/odometry.twist.twist.angular.z",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "label": "wheel odom"
+        },
+        {
+          "value": "/odometry/filtered.twist.twist.angular.z",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "label": "EKF"
+        }
+      ],
+      "showXAxisLabels": true,
+      "showYAxisLabels": true,
+      "showLegend": true,
+      "legendDisplay": "floating",
+      "showPlotValuesInLegend": true,
+      "isSynced": true,
+      "xAxisVal": "timestamp",
+      "followingViewWidth": 30,
+      "sidebarDimension": 240
+    },
+    "Plot!range": {
+      "title": "Range sensors (m)",
+      "paths": [
+        {
+          "value": "/ultrasonic.range",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "label": "ultrasonic (front)"
+        },
+        {
+          "value": "/ir.range",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "label": "IR"
+        },
+        {
+          "value": "/ir2.range",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "label": "IR 2"
+        }
+      ],
+      "showXAxisLabels": true,
+      "showYAxisLabels": true,
+      "showLegend": true,
+      "legendDisplay": "floating",
+      "showPlotValuesInLegend": true,
+      "isSynced": true,
+      "xAxisVal": "timestamp",
+      "followingViewWidth": 30,
+      "sidebarDimension": 240
     },
     "Plot!pi": {
       "title": "Pi: CPU %, temperature C, memory %",
@@ -1374,6 +1249,247 @@
       "xAxisVal": "timestamp",
       "followingViewWidth": 120,
       "sidebarDimension": 240
+    },
+    "Plot!truth": {
+      "title": "Sim only: pose estimate vs Gazebo truth (m)",
+      "paths": [
+        {
+          "value": "/run_status.x",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "label": "estimate x"
+        },
+        {
+          "value": "/sim/ground_truth.transforms[0].transform.translation.x",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "label": "truth x"
+        },
+        {
+          "value": "/run_status.y",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "label": "estimate y"
+        },
+        {
+          "value": "/sim/ground_truth.transforms[0].transform.translation.y",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "label": "truth y"
+        }
+      ],
+      "showXAxisLabels": true,
+      "showYAxisLabels": true,
+      "showLegend": true,
+      "legendDisplay": "floating",
+      "showPlotValuesInLegend": true,
+      "isSynced": true,
+      "xAxisVal": "timestamp",
+      "followingViewWidth": 120,
+      "sidebarDimension": 240
+    },
+    "Tab!main": {
+      "activeTabIdx": 0,
+      "tabs": [
+        {
+          "title": "Task 1",
+          "layout": {
+            "direction": "row",
+            "first": {
+              "direction": "column",
+              "first": "3D!arena",
+              "second": {
+                "direction": "row",
+                "first": "StateTransitions!run",
+                "second": "Plot!progress",
+                "splitPercentage": 55
+              },
+              "splitPercentage": 58.33018137167999
+            },
+            "second": {
+              "direction": "column",
+              "first": {
+                "first": {
+                  "direction": "column",
+                  "first": {
+                    "first": {
+                      "first": "Indicator!stm32",
+                      "second": "Indicator!motor",
+                      "direction": "column"
+                    },
+                    "second": "Indicator!tablet",
+                    "direction": "column",
+                    "splitPercentage": 67.85464675716341
+                  },
+                  "second": {
+                    "first": "Gauge!battery",
+                    "second": "Indicator!rec",
+                    "direction": "row"
+                  },
+                  "splitPercentage": 73.91528905060893
+                },
+                "second": "Image!yolo",
+                "direction": "row"
+              },
+              "second": {
+                "direction": "column",
+                "first": {
+                  "direction": "row",
+                  "first": "CallService!reset_pose",
+                  "second": {
+                    "direction": "row",
+                    "first": "CallService!setup",
+                    "second": {
+                      "direction": "row",
+                      "first": "CallService!go",
+                      "second": {
+                        "direction": "row",
+                        "first": "CallService!stop",
+                        "second": "CallService!rec",
+                        "splitPercentage": 50
+                      },
+                      "splitPercentage": 33.333333333333336
+                    },
+                    "splitPercentage": 25
+                  },
+                  "splitPercentage": 20
+                },
+                "second": {
+                  "direction": "column",
+                  "first": "RosOut!6mutlw",
+                  "second": "RosOut!sibm87",
+                  "splitPercentage": 52.977214134126704
+                },
+                "splitPercentage": 12
+              },
+              "splitPercentage": 35.500544101609506
+            },
+            "splitPercentage": 53.1219512195122
+          }
+        },
+        {
+          "title": "Task 2",
+          "layout": {
+            "direction": "row",
+            "first": {
+              "direction": "column",
+              "first": "3D!t2_arena",
+              "second": {
+                "direction": "row",
+                "first": "StateTransitions!t2_run",
+                "second": "Plot!t2_progress",
+                "splitPercentage": 55
+              },
+              "splitPercentage": 58.33018137167999
+            },
+            "second": {
+              "direction": "column",
+              "first": {
+                "first": {
+                  "direction": "column",
+                  "first": {
+                    "first": {
+                      "first": "Indicator!t2_stm32",
+                      "second": "Indicator!t2_motor",
+                      "direction": "column"
+                    },
+                    "second": {
+                      "first": "Indicator!t2_tablet",
+                      "second": "Gauge!t2_battery",
+                      "direction": "column"
+                    },
+                    "direction": "column"
+                  },
+                  "second": {
+                    "first": "Indicator!t2_pi",
+                    "second": "Indicator!t2_rec",
+                    "direction": "row"
+                  },
+                  "splitPercentage": 66
+                },
+                "second": "Image!t2_yolo",
+                "direction": "row"
+              },
+              "second": {
+                "direction": "column",
+                "first": {
+                  "direction": "row",
+                  "first": "CallService!t2_reset_pose",
+                  "second": {
+                    "direction": "row",
+                    "first": "CallService!t2_go",
+                    "second": {
+                      "direction": "row",
+                      "first": "CallService!t2_stop",
+                      "second": "CallService!t2_rec",
+                      "splitPercentage": 50
+                    },
+                    "splitPercentage": 33.333333333333336
+                  },
+                  "splitPercentage": 25
+                },
+                "second": {
+                  "direction": "column",
+                  "first": "RosOut!t2_6mutlw",
+                  "second": "RosOut!t2_sibm87",
+                  "splitPercentage": 52.977214134126704
+                },
+                "splitPercentage": 12
+              },
+              "splitPercentage": 35.500544101609506
+            },
+            "splitPercentage": 55.024390243902445
+          }
+        },
+        {
+          "title": "Health & tuning",
+          "layout": {
+            "direction": "row",
+            "first": {
+              "direction": "column",
+              "first": {
+                "direction": "row",
+                "first": "DiagnosticSummary!health",
+                "second": "DiagnosticStatusPanel!detail",
+                "splitPercentage": 47.90243902439024
+              },
+              "second": {
+                "direction": "column",
+                "first": "RosOut!2w86lxz",
+                "second": "RawMessages!status",
+                "splitPercentage": 55
+              },
+              "splitPercentage": 45.219184867181674
+            },
+            "second": {
+              "direction": "column",
+              "first": {
+                "direction": "column",
+                "first": "Plot!speed",
+                "second": "Plot!steering",
+                "splitPercentage": 50
+              },
+              "second": {
+                "direction": "column",
+                "first": {
+                  "direction": "column",
+                  "first": "Plot!yawrate",
+                  "second": "Plot!range",
+                  "splitPercentage": 50
+                },
+                "second": "Plot!pi",
+                "splitPercentage": 66
+              },
+              "splitPercentage": 40
+            },
+            "splitPercentage": 50
+          }
+        },
+        {
+          "title": "Sim",
+          "layout": "Plot!truth"
+        }
+      ]
     }
   },
   "globalVariables": {},
