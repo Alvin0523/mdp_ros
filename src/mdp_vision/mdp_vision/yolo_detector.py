@@ -141,7 +141,7 @@ class YoloDetector(Node):
         )
         # A topic ending in /compressed is the JPEG copy (rpi_cam_publisher
         # sends it while something subscribes) - what YOLO on the laptop reads
-        # over WiFi (`pixi run base`): ~40 KB a frame instead of ~0.9 MB raw.
+        # over WiFi (`pixi run laptop`): ~20 KB a frame instead of ~0.9 MB raw.
         self.compressed = camera_topic.endswith('/compressed')
         self.create_subscription(CompressedImage if self.compressed else Image, camera_topic,
                                  self.image_callback, image_qos)

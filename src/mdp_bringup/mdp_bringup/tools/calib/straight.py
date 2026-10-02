@@ -57,7 +57,7 @@ Usage:
     pixi run calib straight -1.0          # reverse
     pixi run calib straight 2.0 --steer-deg -1.5   # trim test
 
-Requires the bare car to be running (pixi run real / pixi run sim, task:=0) and the
+Requires the bare car to be running (pixi run pi / pi-solo / sim, task:=0) and the
 motor switch to be on.
 """
 

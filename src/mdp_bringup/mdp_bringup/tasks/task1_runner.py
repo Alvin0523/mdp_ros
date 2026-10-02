@@ -23,7 +23,7 @@ Topics:
        /set_pose        the EKF being reset (-> RESET confirmation)
   out  /cmd_vel         the only /cmd_vel publisher; streams zeros when idle
        /bluetooth_tx    PLAN / RESET / STATUS / TARGET lines to the tablet
-       /rosout          one log line per run event (`pixi run runlog`)
+       /rosout          one log line per run event (launch terminal, Foxglove Log panel)
        /run_status      live numbers, 2 Hz (mdp_interfaces/RunStatus)
        Foxglove drawings - see mdp_bringup/utils/markers.py
   services  /start_run  /stop_run   (reset: /reset_pose, robot_pose_feedback)
@@ -97,15 +97,12 @@ class Task1Runner(RunnerBase):
         self.declare_parameter('scan_pause_s', 3.0)
         self.declare_parameter('scan_settle_s', 0.5)
         self.declare_parameter('scan_confirm_count', 3)
-        # role:=car (a laptop runs `pixi run base`): the paths between checkpoints
+        # role:=pi (a laptop runs `pixi run laptop`): the paths between checkpoints
         # are planned by task1_planner on the laptop; no answer within
         # remote_plan_timeout s (or no new leg for max_planning_time + that) and
         # the car plans them itself, as when it runs alone.
         self.declare_parameter('remote_planner', False)
         self.declare_parameter('remote_plan_timeout', 2.0)
-        # true: don't stream zeros while idle, so another publisher (dist, rotate,
-        # circle, teleop) can move the car. A run and STOP are unaffected.
-        self.declare_parameter('external_control', False)
         manual.declare_params(self)   # the tablet's movement buttons, see utils/manual.py
         # robot.wheelbase / steering_limit_* (URDF) + navigation.yaml, passed
         # by the launch; the same files are the defaults for a bare `ros2 run`.
@@ -415,8 +412,7 @@ class Task1Runner(RunnerBase):
         elif self.state == State.STOPPED:
             self.send_cmd(0.0, 0.0)
         elif self.state in (State.WAITING_FOR_GO, State.FINISHED):
-            if not self.get_parameter('external_control').value:
-                self.send_cmd(0.0, 0.0)   # idle: hold the car still
+            self.send_cmd(0.0, 0.0)   # idle: hold the car still
 
     def configure_planner(self):
         """Hand the planner the current parameter values - at startup and before

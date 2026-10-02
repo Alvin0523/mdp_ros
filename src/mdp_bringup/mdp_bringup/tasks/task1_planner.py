@@ -1,8 +1,8 @@
-"""Task 1 leg planner on the laptop (`pixi run base`): plans the Hybrid A*
+"""Task 1 leg planner on the laptop (`pixi run laptop`): plans the Hybrid A*
 paths between the car's checkpoints, the slow part of planning, and sends each
 one back as soon as it is found.
 
-task1_runner on the Pi (role:=car, remote_planner) still works out the visiting
+task1_runner on the Pi (role:=pi, remote_planner) still works out the visiting
 order and checkpoints itself (milliseconds), then sends
 
     /plan_legs/request  {"gen", "obstacles_cm": [[x, y, facing], ...],
