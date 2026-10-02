@@ -153,10 +153,10 @@ class YoloDetector(Node):
             # crashing (SIGILL, exit -4) on the Pi's Cortex-A72 with a .pt
             # model - see docs/pi-camera-vision.md "Known open issues" #1.
             self.model = YOLO(model_path, task='detect')
-            self.get_logger().info(f"[mdp_vision] Ultralytics YOLO loaded successfully from {model_path}!")
+            self.get_logger().info(f"YOLO      model loaded: {os.path.basename(model_path)}")
         else:
             self.model = None
-            self.get_logger().warn("[mdp_vision] Ultralytics library not installed. Simulation fallback mode active.")
+            self.get_logger().warn("YOLO      ultralytics not installed - no detections")
 
     def image_callback(self, msg):
         try:
@@ -165,7 +165,7 @@ class YoloDetector(Node):
             else:
                 cv_image = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
         except Exception as e:
-            self.get_logger().error(f"CvBridge Error: {e}")
+            self.get_logger().error(f"YOLO      bad image: {e}")
             return
 
         if self.model is not None:
@@ -176,7 +176,7 @@ class YoloDetector(Node):
                     class_name = self.model.names[int(box.cls[0])]
                     target_id = label_to_target_id(class_name)
                     if target_id is None:
-                        self.get_logger().warn(f"No MDP Target ID for class {class_name!r}")
+                        self.get_logger().warn(f"YOLO      no MDP Target ID for class {class_name!r}")
                         target_id = class_name.upper()
                     self.publish_detection(str(target_id), class_name)
                     return
@@ -210,10 +210,9 @@ class YoloDetector(Node):
         msg.data = target_id
         self.result_pub.publish(msg)
         if class_name is not None:
-            self.get_logger().info(
-                f"[mdp_vision] YOLO Detected: {class_name} -> Target ID {target_id}")
+            self.get_logger().debug(f"YOLO      {class_name} -> {target_id}")
         else:
-            self.get_logger().info(f"[mdp_vision] YOLO Detected Target ID {target_id}")
+            self.get_logger().debug(f"YOLO      {target_id}")
 
 def main(args=None):
     rclpy.init(args=args)

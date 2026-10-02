@@ -1,9 +1,10 @@
 """Always-on base node: position feedback to the tablet and pose reset.
 
 `/reset_pose` (Trigger, `pixi run reset`) puts the EKF pose back at the start pose.
-On the real car it also has the serial bridge re-measure the gyro bias over the
-next 2 s (/hardware_bridge/zero_gyro) - keep the car still - and zeroes the pose
-once more when the new bias arrives, so the heading starts clean.
+On the real car the serial bridge first re-measures the gyro bias over 2 s
+(/hardware_bridge/zero_gyro) - keep the car still - and the pose is reset once,
+when it reports (/hardware_bridge/gyro_bias), so the heading starts clean. It
+used to reset at once AND again after the bias: two RESETs on the tablet.
 
 Turns the EKF pose into `ROBOT,<x>,<y>,<N/E/S/W>` (cell x = column, y = row from
 the arena's bottom-left, 10 cm cells, 0..19) and publishes it on /bluetooth_tx.
@@ -55,9 +56,10 @@ class RobotPoseFeedback(Node):
         # Real car only (no serial bridge in sim): gyro bias re-measure on reset.
         self.zero_gyro = self.create_client(Trigger, '/hardware_bridge/zero_gyro')
         self.create_subscription(Float64, '/hardware_bridge/gyro_bias', self.on_gyro_bias, 10)
-        self.rezero_until = 0.0      # s (wall): a new gyro bias before this re-zeroes the pose
+        self.bias_deadline = None    # s (wall): resetting once the gyro bias arrives, or then
         self.last_line = None
         wall_timer(self, 2.0, self.heartbeat)
+        wall_timer(self, 0.5, self.check_bias_deadline)
 
     def send(self, line: str) -> None:
         self.pub.publish(String(data=line))
@@ -70,7 +72,7 @@ class RobotPoseFeedback(Node):
             tf = self.tf_buffer.lookup_transform(
                 self.arena_frame, msg.header.frame_id, msg.header.stamp)
         except tf2_ros.TransformException as exc:
-            self.get_logger().warn(f'No {self.arena_frame} transform yet ({exc})',
+            self.get_logger().warn(f'POSE      no {self.arena_frame} transform yet ({exc})',
                                    throttle_duration_sec=5.0)
             return
         pose = tf2_geometry_msgs.do_transform_pose(pose_in.pose, tf)
@@ -91,7 +93,7 @@ class RobotPoseFeedback(Node):
                               '--timeout', '2000', '--req', req], capture_output=True, text=True)
         ok = 'data: true' in out.stdout
         if not ok:
-            self.get_logger().warn(f'Gazebo set_pose failed: {out.stdout.strip()} {out.stderr.strip()}')
+            self.get_logger().warn(f'RESET     Gazebo set_pose failed: {out.stdout.strip()} {out.stderr.strip()}')
         return ok
 
     def publish_start_pose(self) -> None:
@@ -104,26 +106,31 @@ class RobotPoseFeedback(Node):
         self.set_pose_pub.publish(msg)
 
     def reset_pose(self, request, response):
+        response.success = True
+        if not self.gz_world and self.zero_gyro.service_is_ready():
+            # Real car: the gyro first, then the pose (on_gyro_bias).
+            self.zero_gyro.call_async(Trigger.Request())
+            self.bias_deadline = time.monotonic() + 4.0
+            response.message = 'Keep the car still: measuring the gyro bias (2 s), then the pose resets.'
+            return response
         moved = self.teleport_to_start() if self.gz_world else False
         self.publish_start_pose()
-        self.get_logger().info('Pose reset to the start pose.')
-        response.success = True
         response.message = ('Car moved back to the start in Gazebo, EKF pose reset.' if moved
                             else 'EKF pose reset to the start pose.')
-        if not self.gz_world and self.zero_gyro.service_is_ready():
-            self.zero_gyro.call_async(Trigger.Request())
-            self.rezero_until = time.monotonic() + 5.0
-            response.message += ' Re-measuring the gyro bias for 2 s - keep the car still.'
         return response
 
     def on_gyro_bias(self, msg: Float64) -> None:
-        """The bridge applied a new bias: zero the pose again, so the ~0.2 deg the
-        old bias added during the measurement does not carry into the run."""
-        if time.monotonic() > self.rezero_until:
-            return
-        self.rezero_until = 0.0
-        self.publish_start_pose()
-        self.get_logger().info(f'GYRO      bias {math.degrees(msg.data):+.3f} deg/s - pose reset again, ready')
+        """The bridge measured the bias (or kept the old one, the car moved -
+        it says so): reset the pose now, so nothing measured before counts."""
+        if self.bias_deadline is not None:
+            self.bias_deadline = None
+            self.publish_start_pose()
+
+    def check_bias_deadline(self) -> None:
+        if self.bias_deadline is not None and time.monotonic() > self.bias_deadline:
+            self.bias_deadline = None
+            self.publish_start_pose()
+            self.get_logger().warn('RESET     no gyro bias from the serial bridge - pose reset with the old bias')
 
     def heartbeat(self) -> None:
         if self.last_line is not None:

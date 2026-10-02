@@ -28,7 +28,6 @@ class ManualDrive(Node):
         self.cmd = (0.0, 0.0)
         self.until = 0.0
         self.active = False
-        self.get_logger().info('manual drive ready: /manual_drive -> /cmd_vel (bare car)')
 
     def now(self) -> float:
         return self.get_clock().now().nanoseconds / 1e9
@@ -36,7 +35,7 @@ class ManualDrive(Node):
     def on_button(self, msg: String):
         cmd = manual.burst(self, msg.data.strip().lower(), WHEELBASE_M)
         if cmd is None:
-            self.get_logger().warn(f'unknown manual drive command {msg.data!r}')
+            self.get_logger().warn(f'MANUAL    unknown command {msg.data!r}')
             return
         v, w, seconds = cmd
         self.cmd, self.until, self.active = (v, w), self.now() + seconds, True

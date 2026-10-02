@@ -25,7 +25,6 @@ class BtMonitor(Node):
         self.create_subscription(Bool, '/bluetooth_bridge/link_ok', self.on_link, 10)
         self.create_subscription(String, '/bluetooth_rx', self.on_rx, 50)
         self.create_subscription(String, '/bluetooth_tx', self.on_tx, 50)
-        self.get_logger().info('watching /bluetooth_bridge/link_ok, /bluetooth_rx, /bluetooth_tx')
 
     def show(self, text: str):
         self.get_logger().info(text)

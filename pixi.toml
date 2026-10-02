@@ -10,6 +10,7 @@ version = "0.1.0"
 build = { cmd = "colcon build --symlink-install", description = "Build all packages" }
 test = { cmd = "colcon test", description = "Run the package tests" }
 clean = { cmd = "rm -rf build install log", description = "Delete build, install and log folders" }
+realtime = { cmd = "scripts/realtime/install.sh", description = "Pi, once: allow real-time priority for the controller loop (asks for sudo; log in again after)" }
 
 # --- Robot bringup: ONE launch for real and sim (launch/mdp.launch.py) --------
 # Settings: src/mdp_bringup/config/ (planner, controller, ekf, bridges, vision,
