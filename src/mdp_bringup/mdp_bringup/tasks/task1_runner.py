@@ -27,6 +27,8 @@ Topics:
        /run_status      live numbers, 2 Hz (mdp_interfaces/RunStatus)
        Foxglove drawings - see mdp_bringup/utils/markers.py
   services  /start_run  /stop_run   (reset: /reset_pose, robot_pose_feedback)
+            /setup_obstacles  sends the `layout` file's obstacles on /obstacle_setup,
+                              as the tablet's DONE would (Foxglove SETUP, `pixi run setup`)
 """
 
 import json
@@ -43,6 +45,7 @@ from geometry_msgs.msg import PoseWithCovarianceStamped
 from mdp_interfaces.msg import RunStatus
 from rclpy.qos import QoSProfile, ReliabilityPolicy
 from std_msgs.msg import String
+from std_srvs.srv import Trigger
 
 from mdp_algorithm.control.pure_pursuit_follower import PurePursuitController, yaw_from_quaternion
 from mdp_algorithm.planning.costmap import Costmap, Obstacle
@@ -50,7 +53,7 @@ from mdp_algorithm.planning.planner import plan_leg, plan_visiting_order
 from mdp_algorithm.utils import params as planner_params
 from mdp_bringup.tasks.runner_base import RunnerBase
 from mdp_bringup.utils.run import run
-from mdp_bringup.utils import manual, markers
+from mdp_bringup.utils import manual, markers, obstacle_layout
 
 # RESET turns DONE once odometry reports the start pose within these.
 RESET_POS_TOL_M = 0.03
@@ -103,6 +106,7 @@ class Task1Runner(RunnerBase):
         # the car plans them itself, as when it runs alone.
         self.declare_parameter('remote_planner', False)
         self.declare_parameter('remote_plan_timeout', 2.0)
+        self.declare_parameter('layout', '')   # tasks.yaml for /setup_obstacles (launch's layout:=)
         manual.declare_params(self)   # the tablet's movement buttons, see utils/manual.py
         # robot.wheelbase / steering_limit_* (URDF) + navigation.yaml, passed
         # by the launch; the same files are the defaults for a bare `ros2 run`.
@@ -113,6 +117,10 @@ class Task1Runner(RunnerBase):
 
         # (/cmd_vel, /run_status, the Foxglove drawings, /start_run ...: RunnerBase)
         self.create_subscription(String, '/obstacle_setup', self.setup_callback, 10)
+        # Published like the tablet's set, so everything that follows it (sim's
+        # blocks) sees the same message.
+        self.setup_pub = self.create_publisher(String, '/obstacle_setup', 10)
+        self.create_service(Trigger, '/setup_obstacles', self.setup_obstacles_callback)
         # Manual drive lives here, not in the bridge: this node already owns /cmd_vel.
         self.create_subscription(String, '/manual_drive', self.manual_drive_callback, 10)
         plan_qos = QoSProfile(depth=20, reliability=ReliabilityPolicy.RELIABLE)
@@ -240,6 +248,21 @@ class Task1Runner(RunnerBase):
         cells = '  '.join(f"#{oid} ({markers.cell(x)},{markers.cell(y)}){face}"
                           for oid, (x, y, face) in zip(ids, obstacles))
         self.get_logger().info(f"OBSTACLES {cells}")
+
+    def setup_obstacles_callback(self, request, response):
+        """/setup_obstacles: the layout file's task 1 set, as if the tablet sent it."""
+        path = self.get_parameter('layout').value
+        try:
+            obstacles = obstacle_layout.load(path) if path else []
+        except (OSError, ValueError, KeyError) as exc:
+            obstacles, path = [], f'{path} ({exc})'
+        if not obstacles:
+            response.success, response.message = False, f'no task 1 obstacles in {path or "(no layout)"}'
+            self.get_logger().warn(f"OBSTACLES {response.message}")
+            return response
+        self.setup_pub.publish(String(data=obstacle_layout.setup_string(obstacles)))
+        response.success, response.message = True, f'{len(obstacles)} obstacles from {path}'
+        return response
 
     def yolo_callback(self, msg: String):
         target_id = msg.data.strip()

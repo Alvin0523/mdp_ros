@@ -1,9 +1,9 @@
-"""Start / stop recording a bag with a service call - a Foxglove button, the tablet-free
-way to record a run.
+"""Record a bag with one button - Foxglove's REC, the tablet-free way to record a run.
 
-    /bag/start   (std_srvs/Trigger, `pixi run bag`)       a new bag:
-                 <bag_dir>/rosbag2_<date>_<time>, every topic except camera images
-    /bag/stop    (std_srvs/Trigger, `pixi run bag-stop`)  stop and close it
+    /bag/toggle     (std_srvs/Trigger, `pixi run bag`)  not recording: start a new bag,
+                    <bag_dir>/rosbag2_<date>_<time>, every topic except camera images;
+                    recording: stop and close it
+    /bag/recording  (std_msgs/Bool, latched)  true while recording - Foxglove's REC light
 
 Runs `ros2 bag record` as a child process; stop sends it Ctrl+C so it finishes
 the file properly. A recording still going when this node stops is closed too.
@@ -15,6 +15,8 @@ import subprocess
 import time
 
 from rclpy.node import Node
+from rclpy.qos import DurabilityPolicy, QoSProfile
+from std_msgs.msg import Bool
 from std_srvs.srv import Trigger
 
 from mdp_bringup.utils.run import run
@@ -30,16 +32,18 @@ class BagRecorder(Node):
         self.proc = None
         self.path = None
         self.started = 0.0
-        self.create_service(Trigger, '/bag/start', self.start)
-        self.create_service(Trigger, '/bag/stop', self.stop)
+        self.create_service(Trigger, '/bag/toggle', self.toggle)
+        latched = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
+        self.recording_pub = self.create_publisher(Bool, '/bag/recording', latched)
+        self.recording_pub.publish(Bool(data=False))
 
     def recording(self) -> bool:
         return self.proc is not None and self.proc.poll() is None
 
+    def toggle(self, request, response):
+        return self.stop(request, response) if self.recording() else self.start(request, response)
+
     def start(self, request, response):
-        if self.recording():
-            response.success, response.message = False, f'already recording {self.path}'
-            return response
         os.makedirs(self.bag_dir, exist_ok=True)
         self.path = os.path.join(self.bag_dir, time.strftime('rosbag2_%Y%m%d_%H%M%S'))
         # Own process group: Ctrl+C in the launch terminal must not cut the bag short.
@@ -47,6 +51,7 @@ class BagRecorder(Node):
                                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
         self.started = time.monotonic()
         self.get_logger().info(f'REC       started -> {self.path}')
+        self.recording_pub.publish(Bool(data=True))
         response.success, response.message = True, f'recording {self.path}'
         return response
 
@@ -62,6 +67,7 @@ class BagRecorder(Node):
             os.killpg(self.proc.pid, signal.SIGKILL)
         seconds = time.monotonic() - self.started
         self.get_logger().info(f'REC       stopped after {seconds:.0f} s -> {self.path}')
+        self.recording_pub.publish(Bool(data=False))
         if response is not None:
             response.success, response.message = True, f'saved {self.path} ({seconds:.0f} s)'
         return response

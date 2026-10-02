@@ -31,7 +31,7 @@ sim = { cmd = "ros2 launch mdp_bringup mdp.launch.py sim:=true", description = "
 vision = { cmd = "ros2 launch mdp_bringup vision.launch.py", description = "Camera and YOLO only, no robot" }
 
 # --- Run control (same for real and sim; reset works on any bringup; setup/go/stop need task:=1)
-setup = { cmd = "ros2 run mdp_bringup publish_obstacles", description = "Publish the task 1 obstacles from config/tasks.yaml (like the tablet), optional path: setup my_tasks.yaml" }
+setup = { cmd = "ros2 run mdp_bringup trigger /setup_obstacles", description = "Send the task 1 obstacles from the layout file (config/tasks.yaml, or the launch's layout:=), like the tablet's DONE - same as Foxglove's SETUP" }
 reset = { cmd = "ros2 run mdp_bringup trigger /reset_pose", description = "Reset the EKF pose to the start pose (base bringup, any task)" }
 go = { cmd = "ros2 run mdp_bringup trigger /start_run", description = "Start the planned run (like the tablet's BEGIN)" }
 stop = { cmd = "ros2 run mdp_bringup trigger /stop_run", description = "Stop the run and hold zero velocity" }
@@ -46,8 +46,7 @@ teleop = { cmd = "ros2 run teleop_twist_keyboard teleop_twist_keyboard --ros-arg
 
 # --- Viewing and recording ---------------------------------------------------
 foxglove = { cmd = "ros2 launch foxglove_bridge foxglove_bridge_launch.xml", description = "Foxglove bridge (ws://<pi>:8765, display frame: map)" }
-bag = { cmd = "ros2 run mdp_bringup trigger /bag/start", description = "Start recording a bag (every topic except camera images) into bags/ - same as the Foxglove REC button" }
-bag-stop = { cmd = "ros2 run mdp_bringup trigger /bag/stop", description = "Stop recording and close the bag" }
+bag = { cmd = "ros2 run mdp_bringup trigger /bag/toggle", description = "Start recording a bag (every topic except camera images) into bags/, or stop it if recording - same as the Foxglove REC button" }
 bag-all = { cmd = "ros2 bag record -a -o bags/rosbag2_$(date +%Y%m%d_%H%M%S)", description = "Record everything, including camera images (large)" }
 
 # --- Sim assets ---------------------------------------------------------------

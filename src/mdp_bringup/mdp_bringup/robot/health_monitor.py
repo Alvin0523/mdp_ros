@@ -5,6 +5,7 @@ Publishes once a second, one status per check, named "mdp/<check>":
     STM32 link     /hardware_bridge/link_ok  (real) - simulated in sim
     Motor switch   /estop                    (real) - simulated in sim
     Tablet link    /bluetooth_bridge/link_ok
+    Pi             /pi/status: CPU, memory, temperature, throttling   (real)
     Wheel odometry /ackermann_steering_controller/odometry  data in the last 1 s
     IMU            /imu/data                 data in the last 1 s
     EKF            /odometry/filtered        data in the last 1 s
@@ -27,7 +28,7 @@ import time
 from diagnostic_msgs.msg import DiagnosticArray, DiagnosticStatus, KeyValue
 from nav_msgs.msg import Odometry
 from rclpy.node import Node
-from mdp_interfaces.msg import RunStatus
+from mdp_interfaces.msg import PiStatus, RunStatus
 from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import Imu
 from std_msgs.msg import Bool
@@ -79,6 +80,9 @@ class HealthMonitor(Node):
 
         self.run = Latest()
         self.create_subscription(RunStatus, '/run_status', self.run.set, 10)
+        self.pi = Latest()
+        if not self.sim:
+            self.create_subscription(PiStatus, '/pi/status', self.pi.set, 10)
 
         wall_timer(self, 1.0, self.publish)
 
@@ -100,6 +104,23 @@ class HealthMonitor(Node):
         good = (not latest.value) if invert else bool(latest.value)
         return self.status(name, OK if good else bad_level, ok_msg if good else bad_msg)
 
+    def pi_check(self) -> DiagnosticStatus:
+        """The Pi's load (pi_status). Hot = close to 80 C, where the Pi 4 starts
+        slowing itself down (this one ran at ~75 C and had throttled, 2026-10-02)."""
+        p = self.pi.value
+        if p is None:
+            return self.status('Pi', STALE, 'no /pi/status')
+        if self.pi.age() > 3.0:
+            return self.status('Pi', ERROR, f'silent for {self.pi.age():.0f} s')
+        text = f'CPU {p.cpu_percent:.0f}%, mem {p.mem_percent:.0f}%, {p.temp_c:.0f} C'
+        values = dict(cpu=f'{p.cpu_percent:.0f}', mem=f'{p.mem_percent:.0f}', temp=f'{p.temp_c:.1f}')
+        if p.throttled or p.undervoltage:
+            why = 'under-voltage' if p.undervoltage else 'throttled (hot)'
+            return self.status('Pi', ERROR, f'{why} - {text}', **values)
+        if p.temp_c >= 78.0 or p.cpu_percent >= 90.0:
+            return self.status('Pi', WARN, f'busy/hot - {text}', **values)
+        return self.status('Pi', OK, text, **values)
+
     def publish(self):
         out = DiagnosticArray()
         out.header.stamp = self.get_clock().now().to_msg()
@@ -113,6 +134,8 @@ class HealthMonitor(Node):
             st.append(self.link('Motor switch', self.estop, 'ON (ready)', WARN,
                                 'OFF - motors held at 0', invert=True))
         st.append(self.link('Tablet link', self.tablet, 'connected', WARN, 'not connected'))
+        if not self.sim:
+            st.append(self.pi_check())
 
         for name, (seen, topic) in self.flows.items():
             if seen.at is None:

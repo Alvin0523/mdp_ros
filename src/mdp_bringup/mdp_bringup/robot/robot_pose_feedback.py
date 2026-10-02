@@ -1,8 +1,8 @@
 """Always-on base node: position feedback to the tablet and pose reset.
 
 `/reset_pose` (Trigger, `pixi run reset`) puts the EKF pose back at the start pose.
-On the real car the serial bridge first re-measures the gyro bias over 2 s
-(/hardware_bridge/zero_gyro) - keep the car still - and the pose is reset once,
+On the real car the serial bridge first re-measures the gyro bias (gyro_zero_s,
+bridges.yaml; /hardware_bridge/zero_gyro) - keep the car still - and the pose is reset once,
 when it reports (/hardware_bridge/gyro_bias), so the heading starts clean. It
 used to reset at once AND again after the bias: two RESETs on the tablet.
 
@@ -110,8 +110,9 @@ class RobotPoseFeedback(Node):
         if not self.gz_world and self.zero_gyro.service_is_ready():
             # Real car: the gyro first, then the pose (on_gyro_bias).
             self.zero_gyro.call_async(Trigger.Request())
-            self.bias_deadline = time.monotonic() + 4.0
-            response.message = 'Keep the car still: measuring the gyro bias (2 s), then the pose resets.'
+            # Fallback only (the bridge always answers): above gyro_zero_s.
+            self.bias_deadline = time.monotonic() + 15.0
+            response.message = 'Keep the car still: measuring the gyro bias, then the pose resets.'
             return response
         moved = self.teleport_to_start() if self.gz_world else False
         self.publish_start_pose()

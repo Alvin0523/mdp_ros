@@ -11,7 +11,7 @@ NODES = {
     'task1_planner': 'tasks.task1_planner',
     'robot_pose_feedback': 'robot.robot_pose_feedback', 'manual_drive': 'robot.manual_drive',
     'health_monitor': 'robot.health_monitor', 'bag_recorder': 'robot.bag_recorder',
-    'bt_monitor': 'robot.bt_monitor',
+    'bt_monitor': 'robot.bt_monitor', 'pi_status': 'robot.pi_status',
     'sim_helpers': 'sim.sim_helpers',
 }
 TOOLS = {'trigger': 'tools.trigger', 'publish_obstacles': 'tools.publish_obstacles',

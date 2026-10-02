@@ -1,6 +1,7 @@
 """
-One-shot obstacle-setup publisher for task1_runner's /obstacle_setup
-(`pixi run setup`).
+One-shot obstacle-setup publisher for task1_runner's /obstacle_setup, run by
+mdp.launch.py at startup for obstacles:=yaml (the sim default). By hand, use
+`pixi run setup` / Foxglove SETUP (task1_runner's /setup_obstacles) instead.
 
 Reads the task 1 layout (config/tasks.yaml by default, see
 obstacle_layout.py) and publishes exactly the message bluetooth_bridge_node

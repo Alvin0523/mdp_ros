@@ -10,7 +10,10 @@ serial_bridge_node:            # STM32 (real robot only)
     baud_rate: 115200
     # s of telemetry averaged for the gyro bias on every `pixi run reset` (the
     # car must stand still) - see serial_bridge_node.cpp, gyro bias re-measure.
-    gyro_zero_s: 2.0
+    # Measured on the Pi 2026-10-02 (6 min still): bias error 0.012 deg/s after
+    # 2 s, 0.007 after 5 s, 0.005 after 10 s - ~1.1 / 0.6 / 0.4 deg of heading
+    # over a 90 s run.
+    gyro_zero_s: 5.0
 
 bluetooth_bridge_node:         # the tablet (sim and real)
   ros__parameters:

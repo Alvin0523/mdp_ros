@@ -433,15 +433,10 @@
     },
     "RosOut!6mutlw": {
       "minLogLevel": 1,
-      "searchTerms": [],
-      "nameFilter": {
-        "foxglove_bridge": {
-          "visible": false
-        },
-        "bt_monitor": {
-          "visible": false
-        }
-      },
+      "searchTerms": [
+        "task1_runner"
+      ],
+      "nameFilter": {},
       "fontSize": 12,
       "showLevel": false,
       "showDate": false,
@@ -456,14 +451,7 @@
       "searchTerms": [
         "bt_monitor"
       ],
-      "nameFilter": {
-        "foxglove_bridge": {
-          "visible": false
-        },
-        "task1_runner": {
-          "visible": false
-        }
-      },
+      "nameFilter": {},
       "fontSize": 12,
       "showLevel": false,
       "showDate": false,
@@ -495,7 +483,8 @@
       "showTime": true,
       "showTimezone": true,
       "showName": true,
-      "showSourceLocation": false
+      "showSourceLocation": false,
+      "foxglovePanelTitle": "All logs"
     },
     "RawMessages!status": {
       "topicPath": "/run_status",
@@ -628,44 +617,6 @@
       "followingViewWidth": 30,
       "sidebarDimension": 240
     },
-    "Plot!truth": {
-      "title": "Sim only: pose estimate vs Gazebo truth (m)",
-      "paths": [
-        {
-          "value": "/run_status.x",
-          "enabled": true,
-          "timestampMethod": "receiveTime",
-          "label": "estimate x"
-        },
-        {
-          "value": "/sim/ground_truth.transforms[0].transform.translation.x",
-          "enabled": true,
-          "timestampMethod": "receiveTime",
-          "label": "truth x"
-        },
-        {
-          "value": "/run_status.y",
-          "enabled": true,
-          "timestampMethod": "receiveTime",
-          "label": "estimate y"
-        },
-        {
-          "value": "/sim/ground_truth.transforms[0].transform.translation.y",
-          "enabled": true,
-          "timestampMethod": "receiveTime",
-          "label": "truth y"
-        }
-      ],
-      "showXAxisLabels": true,
-      "showYAxisLabels": true,
-      "showLegend": true,
-      "legendDisplay": "floating",
-      "showPlotValuesInLegend": true,
-      "isSynced": true,
-      "xAxisVal": "timestamp",
-      "followingViewWidth": 120,
-      "sidebarDimension": 240
-    },
     "Tab!main": {
       "activeTabIdx": 0,
       "tabs": [
@@ -688,17 +639,22 @@
               "direction": "column",
               "first": {
                 "first": {
+                  "direction": "column",
                   "first": {
-                    "first": "Indicator!stm32",
-                    "second": "Indicator!motor",
+                    "first": {
+                      "first": "Indicator!stm32",
+                      "second": "Indicator!motor",
+                      "direction": "column"
+                    },
+                    "second": {
+                      "first": "Indicator!tablet",
+                      "second": "Gauge!battery",
+                      "direction": "column"
+                    },
                     "direction": "column"
                   },
-                  "second": {
-                    "first": "Indicator!tablet",
-                    "second": "Gauge!battery",
-                    "direction": "column"
-                  },
-                  "direction": "column"
+                  "second": "Indicator!rec",
+                  "splitPercentage": 80
                 },
                 "second": "Image!yolo",
                 "direction": "row"
@@ -710,14 +666,14 @@
                   "first": "CallService!reset_pose",
                   "second": {
                     "direction": "row",
-                    "first": "CallService!go",
+                    "first": "CallService!setup",
                     "second": {
                       "direction": "row",
-                      "first": "CallService!stop",
+                      "first": "CallService!go",
                       "second": {
                         "direction": "row",
-                        "first": "CallService!rec",
-                        "second": "CallService!rec_stop",
+                        "first": "CallService!stop",
+                        "second": "CallService!rec",
                         "splitPercentage": 50
                       },
                       "splitPercentage": 33.333333333333336
@@ -758,17 +714,22 @@
               "direction": "column",
               "first": {
                 "first": {
+                  "direction": "column",
                   "first": {
-                    "first": "Indicator!t2_stm32",
-                    "second": "Indicator!t2_motor",
+                    "first": {
+                      "first": "Indicator!t2_stm32",
+                      "second": "Indicator!t2_motor",
+                      "direction": "column"
+                    },
+                    "second": {
+                      "first": "Indicator!t2_tablet",
+                      "second": "Gauge!t2_battery",
+                      "direction": "column"
+                    },
                     "direction": "column"
                   },
-                  "second": {
-                    "first": "Indicator!t2_tablet",
-                    "second": "Gauge!t2_battery",
-                    "direction": "column"
-                  },
-                  "direction": "column"
+                  "second": "Indicator!t2_rec",
+                  "splitPercentage": 80
                 },
                 "second": "Image!t2_yolo",
                 "direction": "row"
@@ -784,17 +745,12 @@
                     "second": {
                       "direction": "row",
                       "first": "CallService!t2_stop",
-                      "second": {
-                        "direction": "row",
-                        "first": "CallService!t2_rec",
-                        "second": "CallService!t2_rec_stop",
-                        "splitPercentage": 50
-                      },
-                      "splitPercentage": 33.333333333333336
+                      "second": "CallService!t2_rec",
+                      "splitPercentage": 50
                     },
-                    "splitPercentage": 25
+                    "splitPercentage": 33.333333333333336
                   },
-                  "splitPercentage": 20
+                  "splitPercentage": 25
                 },
                 "second": {
                   "direction": "column",
@@ -845,7 +801,7 @@
                   "second": "Plot!range",
                   "splitPercentage": 50
                 },
-                "second": "Plot!truth",
+                "second": "Plot!pi",
                 "splitPercentage": 66
               },
               "splitPercentage": 40
@@ -1285,15 +1241,10 @@
     },
     "RosOut!t2_6mutlw": {
       "minLogLevel": 1,
-      "searchTerms": [],
-      "nameFilter": {
-        "foxglove_bridge": {
-          "visible": false
-        },
-        "bt_monitor": {
-          "visible": false
-        }
-      },
+      "searchTerms": [
+        "task2_runner"
+      ],
+      "nameFilter": {},
       "fontSize": 12,
       "showLevel": false,
       "showDate": false,
@@ -1308,14 +1259,7 @@
       "searchTerms": [
         "bt_monitor"
       ],
-      "nameFilter": {
-        "foxglove_bridge": {
-          "visible": false
-        },
-        "task2_runner": {
-          "visible": false
-        }
-      },
+      "nameFilter": {},
       "fontSize": 12,
       "showLevel": false,
       "showDate": false,
@@ -1330,40 +1274,106 @@
       "layout": "vertical",
       "editingMode": false,
       "timeoutSeconds": 10,
-      "serviceName": "/bag/start",
-      "buttonText": "\u25cf REC",
+      "serviceName": "/bag/toggle",
+      "buttonText": "\u25cf REC / \u25a0 STOP",
       "buttonColor": "#ad1457",
       "foxglovePanelTitle": "Record bag"
-    },
-    "CallService!rec_stop": {
-      "requestPayload": "{}",
-      "layout": "vertical",
-      "editingMode": false,
-      "timeoutSeconds": 10,
-      "serviceName": "/bag/stop",
-      "buttonText": "\u25a0 STOP REC",
-      "buttonColor": "#455a64",
-      "foxglovePanelTitle": "Stop recording"
     },
     "CallService!t2_rec": {
       "requestPayload": "{}",
       "layout": "vertical",
       "editingMode": false,
       "timeoutSeconds": 10,
-      "serviceName": "/bag/start",
-      "buttonText": "\u25cf REC",
+      "serviceName": "/bag/toggle",
+      "buttonText": "\u25cf REC / \u25a0 STOP",
       "buttonColor": "#ad1457",
       "foxglovePanelTitle": "Record bag"
     },
-    "CallService!t2_rec_stop": {
+    "Indicator!rec": {
+      "path": "/bag/recording.data",
+      "style": "bulb",
+      "fallbackColor": "#808080",
+      "fallbackLabel": "REC: no data",
+      "rules": [
+        {
+          "operator": "=",
+          "rawValue": "true",
+          "color": "#e02020",
+          "label": "\u25cf REC"
+        },
+        {
+          "operator": "=",
+          "rawValue": "false",
+          "color": "#555555",
+          "label": "not recording"
+        }
+      ],
+      "fontSize": 36,
+      "foxglovePanelTitle": "REC"
+    },
+    "Indicator!t2_rec": {
+      "path": "/bag/recording.data",
+      "style": "bulb",
+      "fallbackColor": "#808080",
+      "fallbackLabel": "REC: no data",
+      "rules": [
+        {
+          "operator": "=",
+          "rawValue": "true",
+          "color": "#e02020",
+          "label": "\u25cf REC"
+        },
+        {
+          "operator": "=",
+          "rawValue": "false",
+          "color": "#555555",
+          "label": "not recording"
+        }
+      ],
+      "fontSize": 36,
+      "foxglovePanelTitle": "REC"
+    },
+    "CallService!setup": {
+      "serviceName": "/setup_obstacles",
       "requestPayload": "{}",
+      "buttonText": "SETUP",
+      "buttonColor": "#2e7d32",
       "layout": "vertical",
       "editingMode": false,
       "timeoutSeconds": 10,
-      "serviceName": "/bag/stop",
-      "buttonText": "\u25a0 STOP REC",
-      "buttonColor": "#455a64",
-      "foxglovePanelTitle": "Stop recording"
+      "foxglovePanelTitle": "Setup"
+    },
+    "Plot!pi": {
+      "title": "Pi: CPU %, temperature C, memory %",
+      "paths": [
+        {
+          "value": "/pi/status.cpu_percent",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "label": "CPU %"
+        },
+        {
+          "value": "/pi/status.temp_c",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "label": "temp C"
+        },
+        {
+          "value": "/pi/status.mem_percent",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "label": "mem %"
+        }
+      ],
+      "showXAxisLabels": true,
+      "showYAxisLabels": true,
+      "showLegend": true,
+      "legendDisplay": "floating",
+      "showPlotValuesInLegend": true,
+      "isSynced": true,
+      "xAxisVal": "timestamp",
+      "followingViewWidth": 120,
+      "sidebarDimension": 240
     }
   },
   "globalVariables": {},
