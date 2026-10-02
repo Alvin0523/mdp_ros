@@ -433,15 +433,10 @@
     },
     "RosOut!6mutlw": {
       "minLogLevel": 1,
-      "searchTerms": [],
-      "nameFilter": {
-        "foxglove_bridge": {
-          "visible": false
-        },
-        "bt_monitor": {
-          "visible": false
-        }
-      },
+      "searchTerms": [
+        "task1_runner"
+      ],
+      "nameFilter": {},
       "fontSize": 12,
       "showLevel": false,
       "showDate": false,
@@ -456,14 +451,7 @@
       "searchTerms": [
         "bt_monitor"
       ],
-      "nameFilter": {
-        "foxglove_bridge": {
-          "visible": false
-        },
-        "task1_runner": {
-          "visible": false
-        }
-      },
+      "nameFilter": {},
       "fontSize": 12,
       "showLevel": false,
       "showDate": false,
@@ -495,7 +483,8 @@
       "showTime": true,
       "showTimezone": true,
       "showName": true,
-      "showSourceLocation": false
+      "showSourceLocation": false,
+      "foxglovePanelTitle": "All logs"
     },
     "RawMessages!status": {
       "topicPath": "/run_status",
@@ -626,44 +615,6 @@
       "isSynced": true,
       "xAxisVal": "timestamp",
       "followingViewWidth": 30,
-      "sidebarDimension": 240
-    },
-    "Plot!truth": {
-      "title": "Sim only: pose estimate vs Gazebo truth (m)",
-      "paths": [
-        {
-          "value": "/run_status.x",
-          "enabled": true,
-          "timestampMethod": "receiveTime",
-          "label": "estimate x"
-        },
-        {
-          "value": "/sim/ground_truth.transforms[0].transform.translation.x",
-          "enabled": true,
-          "timestampMethod": "receiveTime",
-          "label": "truth x"
-        },
-        {
-          "value": "/run_status.y",
-          "enabled": true,
-          "timestampMethod": "receiveTime",
-          "label": "estimate y"
-        },
-        {
-          "value": "/sim/ground_truth.transforms[0].transform.translation.y",
-          "enabled": true,
-          "timestampMethod": "receiveTime",
-          "label": "truth y"
-        }
-      ],
-      "showXAxisLabels": true,
-      "showYAxisLabels": true,
-      "showLegend": true,
-      "legendDisplay": "floating",
-      "showPlotValuesInLegend": true,
-      "isSynced": true,
-      "xAxisVal": "timestamp",
-      "followingViewWidth": 120,
       "sidebarDimension": 240
     },
     "Tab!main": {
@@ -865,10 +816,6 @@
             },
             "splitPercentage": 50
           }
-        },
-        {
-          "title": "Sim",
-          "layout": "Plot!truth"
         }
       ]
     },
@@ -1302,15 +1249,10 @@
     },
     "RosOut!t2_6mutlw": {
       "minLogLevel": 1,
-      "searchTerms": [],
-      "nameFilter": {
-        "foxglove_bridge": {
-          "visible": false
-        },
-        "bt_monitor": {
-          "visible": false
-        }
-      },
+      "searchTerms": [
+        "task2_runner"
+      ],
+      "nameFilter": {},
       "fontSize": 12,
       "showLevel": false,
       "showDate": false,
@@ -1325,14 +1267,7 @@
       "searchTerms": [
         "bt_monitor"
       ],
-      "nameFilter": {
-        "foxglove_bridge": {
-          "visible": false
-        },
-        "task2_runner": {
-          "visible": false
-        }
-      },
+      "nameFilter": {},
       "fontSize": 12,
       "showLevel": false,
       "showDate": false,
@@ -1388,7 +1323,7 @@
         }
       ],
       "fontSize": 36,
-      "foxglovePanelTitle": "Serial"
+      "foxglovePanelTitle": "Pi"
     },
     "Indicator!rec": {
       "path": "/bag/recording.data",
@@ -1410,7 +1345,7 @@
         }
       ],
       "fontSize": 36,
-      "foxglovePanelTitle": "Serial"
+      "foxglovePanelTitle": "REC"
     },
     "Indicator!t2_pi": {
       "path": "/pi/status.temp_c",
@@ -1438,7 +1373,7 @@
         }
       ],
       "fontSize": 36,
-      "foxglovePanelTitle": "Serial"
+      "foxglovePanelTitle": "Pi"
     },
     "Indicator!t2_rec": {
       "path": "/bag/recording.data",
@@ -1460,7 +1395,7 @@
         }
       ],
       "fontSize": 36,
-      "foxglovePanelTitle": "Serial"
+      "foxglovePanelTitle": "REC"
     },
     "CallService!setup": {
       "serviceName": "/setup_obstacles",
@@ -1470,7 +1405,7 @@
       "layout": "vertical",
       "editingMode": false,
       "timeoutSeconds": 10,
-      "foxglovePanelTitle": "Go"
+      "foxglovePanelTitle": "Setup"
     },
     "Plot!pi": {
       "title": "Pi: CPU %, temperature C, memory %",
