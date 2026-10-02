@@ -58,6 +58,7 @@ these fits. Steering limits must also match `../mdp_stm32/include/servo.h`.
 | Sim, task 2 | `pixi run sim task:=2` then `pixi run go` |
 | Bare car (manual / calibration) | `pixi run sim` then `pixi run calib straight 1.0` / `rotate 90` / `turn left` / `goto 5 8 E` / `ultrasonic 60` |
 | Real car | `pixi run real [task:=1\|2]` on the Pi |
+| Real car + laptop | Pi: `pixi run car [task:=1\|2]`; laptop: `pixi run base` (YOLO + task 1 path planning, `tasks/task1_planner.py`; the Pi plans itself if it does not answer). Sim: `pixi run sim role:=car ...` + `pixi run base sim:=true`. `role:=all\|car\|base` in `mdp.launch.py` |
 | Headless | add `gui:=false`; no camera: `vision:=false` |
 
 Launch arguments, tablet protocol and pixi tasks: `../docs/quickstart.md`.

@@ -32,6 +32,15 @@ ObstacleSpec = Tuple[float, float, str]     # (x_cm, y_cm, facing) - block centr
 DensePose = Tuple[float, float, float, int]
 
 
+def build_costmap(obstacles_grid: List[ObstacleSpec]) -> Costmap:
+    """The costmap for (x_cm, y_cm, facing) obstacles, each snapped to its
+    cell's centre - the one plan_visiting_order() plans with. Also built by the
+    laptop planner (task1_planner) so its legs match the car's costmap."""
+    return Costmap([Obstacle(x_cm=snap_to_cell_centre(x_cm), y_cm=snap_to_cell_centre(y_cm),
+                             facing=facing, id=i)
+                    for i, (x_cm, y_cm, facing) in enumerate(obstacles_grid)])
+
+
 def plan_visiting_order(obstacles_grid: List[ObstacleSpec], start_pose_m: Pose,
                         theta_offset: float = 0.0,
                         ) -> Tuple[List[int], List[Pose], List[int], Costmap]:
@@ -49,10 +58,7 @@ def plan_visiting_order(obstacles_grid: List[ObstacleSpec], start_pose_m: Pose,
         unreachable: indices of obstacles with no valid checkpoint (skipped);
         costmap: pass it to plan_leg() and publish it (/occupancy_grid).
     """
-    obstacles = [Obstacle(x_cm=snap_to_cell_centre(x_cm), y_cm=snap_to_cell_centre(y_cm),
-                          facing=facing, id=i)
-                 for i, (x_cm, y_cm, facing) in enumerate(obstacles_grid)]
-    costmap = Costmap(obstacles)
+    costmap = build_costmap(obstacles_grid)
     radius = planner_params.ACTIVE.symmetric_turn_radius_cm
     start_cm = (start_pose_m[0] * CM_PER_M, start_pose_m[1] * CM_PER_M, start_pose_m[2])
 

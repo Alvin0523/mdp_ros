@@ -139,7 +139,12 @@ class YoloDetector(Node):
             reliability=ReliabilityPolicy.BEST_EFFORT,
             history=HistoryPolicy.KEEP_LAST,
         )
-        self.create_subscription(Image, camera_topic, self.image_callback, image_qos)
+        # A topic ending in /compressed is the JPEG copy (rpi_cam_publisher
+        # sends it while something subscribes) - what YOLO on the laptop reads
+        # over WiFi (`pixi run base`): ~40 KB a frame instead of ~0.9 MB raw.
+        self.compressed = camera_topic.endswith('/compressed')
+        self.create_subscription(CompressedImage if self.compressed else Image, camera_topic,
+                                 self.image_callback, image_qos)
 
         if ULTRALYTICS_AVAILABLE:
             # NCNN (exported via `model.export(format='ncnn')`) rather than a
@@ -153,9 +158,12 @@ class YoloDetector(Node):
             self.model = None
             self.get_logger().warn("[mdp_vision] Ultralytics library not installed. Simulation fallback mode active.")
 
-    def image_callback(self, msg: Image):
+    def image_callback(self, msg):
         try:
-            cv_image = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
+            if self.compressed:
+                cv_image = self.bridge.compressed_imgmsg_to_cv2(msg, desired_encoding='bgr8')
+            else:
+                cv_image = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
         except Exception as e:
             self.get_logger().error(f"CvBridge Error: {e}")
             return
