@@ -26,7 +26,7 @@ def generate_launch_description():
                               description='YOLO model dir under mdp_vision/models/, or an absolute path'),
         DeclareLaunchArgument('camera', default_value='true', description='start the Pi camera'),
         DeclareLaunchArgument('yolo', default_value='true',
-                              description='start YOLO (false: the laptop runs it - `pixi run car` / `base`)'),
+                              description='start YOLO (false: the laptop runs it - `pixi run pi` / `laptop`)'),
         DeclareLaunchArgument('camera_topic', default_value='/image_raw', description='image topic YOLO reads'),
         DeclareLaunchArgument('use_sim_time', default_value='false'),
         DeclareLaunchArgument('log_level', default_value='info'),

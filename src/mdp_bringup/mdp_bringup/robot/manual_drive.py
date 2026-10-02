@@ -1,4 +1,4 @@
-"""The tablet's movement buttons for the BARE car (task:=0, `pixi run real`).
+"""The tablet's movement buttons for the BARE car (task:=0, `pixi run pi` / `pi-solo`).
 
 /manual_drive (f b fl fr bl br) -> a short burst on /cmd_vel, then one zero -
 see mdp_bringup/utils/manual.py. Started only for task:=0: in task 1 the runner

@@ -19,7 +19,7 @@ def call(node: Node, service: str) -> bool:
     client = node.create_client(Trigger, service)
     node.get_logger().info(f"Waiting for {service} ...")
     if not client.wait_for_service(timeout_sec=10.0):
-        node.get_logger().error(f"{service} not available - is the bringup running? (pixi run real / drive)")
+        node.get_logger().error(f"{service} not available - is the bringup running? (pixi run pi / pi-solo / sim)")
         return False
     future = client.call_async(Trigger.Request())
     rclpy.spin_until_future_complete(node, future, timeout_sec=10.0)

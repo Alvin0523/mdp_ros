@@ -3,7 +3,7 @@
     ros2 launch mdp_bringup mdp.launch.py sim:=true  task:=1
     ros2 launch mdp_bringup mdp.launch.py sim:=false task:=2 vision:=false   (no camera)
 
-(`pixi run sim ...` / `pixi run real ...` wrap these; any argument below can be
+(`pixi run sim / pi / pi-solo / laptop ...` wrap these; any argument below can be
 appended.)
 
 Arguments
@@ -13,16 +13,18 @@ Arguments
              2 fastest car                                             (default 0)
   vision     true/false - camera + YOLO                               (default true)
   role       where this machine's part runs - one repo, two machines:
-             all  -> everything here (sim, or the Pi on its own)     (default)
-             car  -> the Pi with a laptop: everything except YOLO (the
-                     camera sends JPEG frames); task 1's paths are planned on
-                     the laptop, here if it does not answer  (`pixi run car`)
-             base -> the laptop: YOLO on the Pi's JPEG frames and task 1's
-                     path planning (`pixi run base`). Both machines on
-                     the same ROS_DOMAIN_ID, finding each other by
-                     ROS_STATIC_PEERS.
-             Sim, the same split on one laptop: `pixi run sim role:=car ...`
-             + `pixi run base sim:=true`.
+             solo -> everything here (sim, or the Pi on its own)     (default)
+                     (`pixi run pi-solo`)
+             pi   -> the Pi with a laptop: everything that touches the car
+                     (hardware, EKF, runner, tablet, camera - JPEG frames),
+                     not YOLO or the monitors; task 1's paths are planned on
+                     the laptop, here if it does not answer  (`pixi run pi`)
+             laptop -> the laptop: YOLO on the Pi's JPEG frames, task 1's path
+                     planning, and the monitors (health_monitor, bt_monitor -
+                     topics only) (`pixi run laptop`). Both machines on the same
+                     ROS_DOMAIN_ID, finding each other by ROS_STATIC_PEERS.
+             Sim, the same split on one laptop: `pixi run sim role:=pi ...`
+             + `pixi run laptop sim:=true`.
   fake_arrows  task 2 in sim: a stand-in YOLO that always reads the sim layout's
              arrows (Gazebo's camera is too coarse to read them from home); the
              real YOLO is not started for them        (default: true in sim task 2)
@@ -168,9 +170,9 @@ def generate_launch_description(argv=None):
     if task not in TASKS:
         raise ValueError(f"task:={task} - expected 0, 1 or 2")
     vision = _true(arg('vision', 'true'))
-    role = arg('role', 'all')
-    if role not in ('all', 'car', 'base'):
-        raise ValueError(f"role:={role} - expected all, car or base")
+    role = arg('role', 'solo')
+    if role not in ('solo', 'pi', 'laptop'):
+        raise ValueError(f"role:={role} - expected solo, pi or laptop")
     fake_arrows = sim and task == '2' and _true(arg('fake_arrows', 'true'))
     obstacles = arg('obstacles', 'yaml' if sim else 'tablet')
     if obstacles not in ('yaml', 'tablet'):
@@ -194,8 +196,8 @@ def generate_launch_description(argv=None):
         DeclareLaunchArgument('sim', default_value='false', description='true: Gazebo, false: real robot'),
         DeclareLaunchArgument('task', default_value='0', description='0 bare car (manual drive), 1 explore+recognise, 2 fastest car'),
         DeclareLaunchArgument('vision', default_value='true', description='camera + YOLO (false: without)'),
-        DeclareLaunchArgument('role', default_value='all',
-                              description='all: everything here; car: the Pi without YOLO; base: the laptop (YOLO)'),
+        DeclareLaunchArgument('role', default_value='solo',
+                              description='solo: everything here; pi: the Pi with a laptop; laptop: YOLO, planning, monitors'),
         DeclareLaunchArgument('fake_arrows', default_value='true in sim task 2',
                               description='sim task 2: stand-in YOLO reading the sim layout arrows (sim_helpers)'),
         DeclareLaunchArgument('obstacles', default_value='yaml in sim, tablet on real',
@@ -222,15 +224,31 @@ def generate_launch_description(argv=None):
         return RosNode(**kw)
 
     sim_time = {'use_sim_time': sim}
+
+    def monitors(camera_topic):
+        """Watchers of the car's topics, no hardware: on the Pi alone (role:=solo),
+        on the laptop with one (role:=laptop) - off the Pi's CPU. health_monitor:
+        one-glance health on /diagnostics (STM32/tablet links, sensors, camera/
+        YOLO, runner - Foxglove "Diagnostics" panels). bt_monitor: the tablet
+        link's traffic as log lines on /rosout (`pixi run btlog`), kept off this
+        terminal. camera_topic '' = no camera/YOLO checks."""
+        return [
+            Node(package='mdp_bringup', executable='health_monitor', output='screen',
+                 parameters=[{'sim': sim, 'vision': bool(camera_topic), 'camera_topic': camera_topic or '/image_raw'},
+                             sim_time]),
+            Node(package='mdp_bringup', executable='bt_monitor', output='screen',
+                 ros_arguments=['--disable-stdout-logs'], parameters=[sim_time]),
+        ]
+
     actions = []
     if quiet:
         # One short line per message: '[INFO] [task1_runner]: Leg 1/4 planned'.
         actions.append(SetEnvironmentVariable('RCUTILS_CONSOLE_OUTPUT_FORMAT', '[{severity}] [{name}]: {message}'))
 
-    if role == 'base':
-        # The laptop: YOLO on the Pi camera's JPEG copy (~40 KB a frame over
-        # WiFi; raw is ~0.9 MB). Everything else runs on the Pi (role:=car).
-        # Sim (sim:=true, next to `pixi run sim role:=car` on the same laptop):
+    if role == 'laptop':
+        # The laptop: YOLO on the Pi camera's JPEG copy (~20 KB a frame over
+        # WiFi; raw is ~0.9 MB). Everything else runs on the Pi (role:=pi).
+        # Sim (sim:=true, next to `pixi run sim role:=pi` on the same laptop):
         # Gazebo's camera directly, on sim time - the same split as the car.
         actions.append(IncludeLaunchDescription(
             PythonLaunchDescriptionSource(os.path.join(pkg_bringup, 'launch', 'vision.launch.py')),
@@ -242,6 +260,7 @@ def generate_launch_description(argv=None):
         # (remote_planner) - it plans them itself if this does not answer.
         actions.append(Node(package='mdp_bringup', executable='task1_planner', output='screen',
                             parameters=[sim_time]))
+        actions += monitors('/camera/image_raw' if sim else '/image_raw')
         return LaunchDescription(declared + actions)
 
     # ------------------------------------------------------------ robot ----
@@ -390,7 +409,7 @@ def generate_launch_description(argv=None):
         actions.append(IncludeLaunchDescription(
             PythonLaunchDescriptionSource(os.path.join(pkg_bringup, 'launch', 'vision.launch.py')),
             launch_arguments={'model': model, 'camera': str(not sim).lower(), 'camera_topic': camera_topic,
-                              'yolo': str(role != 'car').lower(),
+                              'yolo': str(role != 'pi').lower(),
                               'use_sim_time': str(sim).lower(),
                               'log_level': 'warn' if quiet else 'info'}.items()))
 
@@ -412,23 +431,17 @@ def generate_launch_description(argv=None):
             package='mdp_bringup', executable='publish_obstacles', output='screen',
             arguments=[layout], parameters=[sim_time]))
 
-    # Base nodes, any task: ROBOT,<cell>,<cell>,<dir> to the tablet + the
-    # /reset_pose service, and bt_monitor - the tablet link's traffic as log
-    # lines on /rosout (`pixi run btlog`), kept off this terminal.
+    # Always on, any task: ROBOT,<cell>,<cell>,<dir> to the tablet + the
+    # /reset_pose service.
     actions += [
         Node(package='mdp_bringup', executable='robot_pose_feedback', output='screen',
              parameters=[{'gz_world': world_name if sim else '', 'start_x': start_x, 'start_y': start_y,
                           'start_yaw': start_yaw}, sim_time]),
-        # One-glance health on /diagnostics (STM32/tablet links, sensor rates,
-        # camera/YOLO, runner) - Foxglove "Diagnostics" panels.
-        Node(package='mdp_bringup', executable='health_monitor', output='screen',
-             parameters=[{'sim': sim, 'vision': vision, 'task': task, 'camera_topic': camera_topic},
-                         sim_time]),
         # /bag/start, /bag/stop - record a bag from a Foxglove button (pixi run bag / bag-stop).
         Node(package='mdp_bringup', executable='bag_recorder', output='screen', parameters=[sim_time]),
-        Node(package='mdp_bringup', executable='bt_monitor', output='screen',
-             ros_arguments=['--disable-stdout-logs'], parameters=[sim_time]),
     ]
+    if role == 'solo':     # role:=pi - the laptop runs them (`pixi run laptop`)
+        actions += monitors(camera_topic if vision else '')
 
     if task == '0':
         # Bare car: the tablet's manual drive buttons, no runner.
@@ -442,7 +455,7 @@ def generate_launch_description(argv=None):
             parameters=[navigation,
                         {f'robot.{k}': car[k] for k in ('wheelbase', 'steering_limit_left', 'steering_limit_right')},
                         {'start_x': start_x, 'start_y': start_y, 'start_yaw': start_yaw,
-                         'remote_planner': role == 'car'}, sim_time]))
+                         'remote_planner': role == 'pi'}, sim_time]))
     elif task == '2':
         actions.append(Node(
             package='mdp_bringup', executable='task2_runner', output='screen',

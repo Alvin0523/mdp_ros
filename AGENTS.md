@@ -57,15 +57,15 @@ these fits. Steering limits must also match `../mdp_stm32/include/servo.h`.
 | Sim, task 1 (obstacles from `tasks.yaml`) | `pixi run sim task:=1` then `pixi run reset`, `pixi run go` |
 | Sim, task 2 | `pixi run sim task:=2` then `pixi run go` |
 | Bare car (manual / calibration) | `pixi run sim` then `pixi run calib straight 1.0` / `rotate 90` / `turn left` / `goto 5 8 E` / `ultrasonic 60` |
-| Real car | `pixi run real [task:=1\|2]` on the Pi |
-| Real car + laptop | Pi: `pixi run car [task:=1\|2]`; laptop: `pixi run base` (YOLO + task 1 path planning, `tasks/task1_planner.py`; the Pi plans itself if it does not answer). Sim: `pixi run sim role:=car ...` + `pixi run base sim:=true`. `role:=all\|car\|base` in `mdp.launch.py` |
+| Real car + laptop | Pi: `pixi run pi [task:=1\|2]`; laptop: `pixi run laptop` (YOLO + task 1 path planning, `tasks/task1_planner.py`, + the monitors `health_monitor`/`bt_monitor`; the Pi plans itself if it does not answer). Sim: `pixi run sim role:=pi ...` + `pixi run laptop sim:=true`. `role:=solo\|pi\|laptop` in `mdp.launch.py` |
+| Real car alone | `pixi run pi-solo [task:=1\|2]` on the Pi (YOLO there too) |
 | Headless | add `gui:=false`; no camera: `vision:=false` |
 
 Launch arguments, tablet protocol and pixi tasks: `../docs/quickstart.md`.
 
 ### Test sims must be isolated
 
-The user often has their own sim or Foxglove running. `pixi.toml` forces `ROS_DOMAIN_ID=0`, so
+The user often has their own sim or Foxglove running. `pixi.toml` forces `ROS_DOMAIN_ID=14`, so
 override it **inside** pixi, and give Gazebo its own partition:
 
 ```bash
@@ -90,7 +90,7 @@ the user's sim.
 
 ## Real-car safety
 
-- Driving commands (`go`, `calib`, `teleop`, `around-obstacle`) move a real car when `pixi run real` is
+- Driving commands (`go`, `calib`, `teleop`, `around-obstacle`) move a real car when `pixi run pi` / `pi-solo` is
   up. Don't run them unless the user asks. For tests, the wheels should be off the ground.
 - `calib` refuses to run while a task runner owns `/cmd_vel`; keep that check in any new driving tool.
 - Flashing the STM32 (`../mdp_stm32`, `pixi run flash`) only when asked.

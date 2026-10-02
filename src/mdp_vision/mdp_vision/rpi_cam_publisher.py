@@ -118,19 +118,23 @@ class RpiCamPublisher(Node):
             self.timer.cancel()
             raise SystemExit
 
-        yuv = np.frombuffer(raw, dtype=np.uint8).reshape((self.height * 3 // 2, self.width))
-        bgr = cv2.cvtColor(yuv, cv2.COLOR_YUV2BGR_I420)
+        # Each copy only while something subscribes: with a laptop (`pixi run
+        # car`) only the JPEG one is read, raw only by YOLO on the Pi or a viewer.
+        # Neither: the frame is still read (rpicam-vid's pipe must be drained).
+        want_raw = self.pub.get_subscription_count() > 0
+        want_jpeg = self.compressed_pub.get_subscription_count() > 0
+        if want_raw or want_jpeg:
+            yuv = np.frombuffer(raw, dtype=np.uint8).reshape((self.height * 3 // 2, self.width))
+            bgr = cv2.cvtColor(yuv, cv2.COLOR_YUV2BGR_I420)
+            stamp = self.get_clock().now().to_msg()
 
-        stamp = self.get_clock().now().to_msg()
+        if want_raw:
+            msg = self.bridge.cv2_to_imgmsg(bgr, encoding='bgr8')
+            msg.header.stamp = stamp
+            msg.header.frame_id = 'camera_frame'
+            self.pub.publish(msg)
 
-        msg = self.bridge.cv2_to_imgmsg(bgr, encoding='bgr8')
-        msg.header.stamp = stamp
-        msg.header.frame_id = 'camera_frame'
-        self.pub.publish(msg)
-
-        # Skip JPEG encode entirely when nobody's watching - costs real CPU
-        # that would otherwise go to capture/inference.
-        if self.compressed_pub.get_subscription_count() > 0:
+        if want_jpeg:
             ok, jpeg = cv2.imencode(
                 '.jpg', bgr, [cv2.IMWRITE_JPEG_QUALITY, self.jpeg_quality])
             if ok:
