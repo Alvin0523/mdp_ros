@@ -388,6 +388,9 @@ def generate_launch_description(argv=None):
             Node(package='mdp_bridge', executable='serial_bridge_node', output='screen',
                  parameters=[bridges] + ([{'serial_port': serial_port}] if serial_port else []),
                  remappings=[('/joint_states', '/joint_states_raw')]),
+            # The Pi's CPU / memory / temperature / throttling on /pi/status:
+            # the monitors may run on the laptop, which cannot read the Pi's /proc.
+            Node(package='mdp_bringup', executable='pi_status', output='screen'),
         ]
         camera_topic = '/image_raw'
 
@@ -437,7 +440,7 @@ def generate_launch_description(argv=None):
         Node(package='mdp_bringup', executable='robot_pose_feedback', output='screen',
              parameters=[{'gz_world': world_name if sim else '', 'start_x': start_x, 'start_y': start_y,
                           'start_yaw': start_yaw}, sim_time]),
-        # /bag/start, /bag/stop - record a bag from a Foxglove button (pixi run bag / bag-stop).
+        # /bag/toggle - record a bag from the Foxglove REC button (pixi run bag); /bag/recording.
         Node(package='mdp_bringup', executable='bag_recorder', output='screen', parameters=[sim_time]),
     ]
     if role == 'solo':     # role:=pi - the laptop runs them (`pixi run laptop`)
@@ -455,7 +458,7 @@ def generate_launch_description(argv=None):
             parameters=[navigation,
                         {f'robot.{k}': car[k] for k in ('wheelbase', 'steering_limit_left', 'steering_limit_right')},
                         {'start_x': start_x, 'start_y': start_y, 'start_yaw': start_yaw,
-                         'remote_planner': role == 'pi'}, sim_time]))
+                         'remote_planner': role == 'pi', 'layout': layout}, sim_time]))
     elif task == '2':
         actions.append(Node(
             package='mdp_bringup', executable='task2_runner', output='screen',
