@@ -87,9 +87,8 @@ class RpiCamPublisher(Node):
         if sensor_mode:
             cmd[1:1] = ['--mode', sensor_mode]
         self.get_logger().info(
-            f"rpicam-vid started ({self.width}x{self.height} @ {frame_rate} FPS, "
-            f"sensor mode {sensor_mode or 'auto'}), "
-            f"publishing to {camera_topic}")
+            f"CAMERA    {self.width}x{self.height} @ {frame_rate:.0f} fps, "
+            f"sensor mode {sensor_mode or 'auto'}, on {camera_topic}")
         self.proc = subprocess.Popen(
             cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
             bufsize=self.frame_size)
@@ -114,7 +113,7 @@ class RpiCamPublisher(Node):
     def tick(self):
         raw = self._read_exact(self.frame_size)
         if raw is None:
-            self.get_logger().error('rpicam-vid stream ended, shutting down')
+            self.get_logger().error('CAMERA    rpicam-vid stopped - shutting down')
             self.timer.cancel()
             raise SystemExit
 
@@ -152,8 +151,8 @@ class RpiCamPublisher(Node):
         if elapsed >= self.report_period_s:
             fps = self.window_count / elapsed
             avg_fps = self.frame_count / (time.monotonic() - self.start_time)
-            self.get_logger().info(
-                f'fps(window)={fps:.2f}  fps(avg)={avg_fps:.2f}  frames={self.frame_count}')
+            self.get_logger().debug(
+                f'CAMERA    fps(window)={fps:.2f}  fps(avg)={avg_fps:.2f}  frames={self.frame_count}')
             self.window_count = 0
             self.window_start = time.monotonic()
 

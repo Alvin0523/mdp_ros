@@ -56,10 +56,10 @@ public:
     const std::string port = get_parameter("serial_port").as_string();
     fd_ = open_serial(port);
     if (fd_ < 0) {
-      RCLCPP_FATAL(get_logger(), "Failed to open serial port %s", port.c_str());
+      RCLCPP_FATAL(get_logger(), "SERIAL    cannot open %s", port.c_str());
       throw std::runtime_error("serial open failed");
     }
-    RCLCPP_INFO(get_logger(), "Opened %s for mdp_stm32 bridge", port.c_str());
+    RCLCPP_INFO(get_logger(), "SERIAL    opened %s (STM32)", port.c_str());
 
     joint_state_pub_ = create_publisher<sensor_msgs::msg::JointState>("/joint_states", 10);
     imu_pub_ = create_publisher<sensor_msgs::msg::Imu>("/imu/data", 10);
@@ -242,7 +242,7 @@ private:
 
     ssize_t written = write(fd_, &pkt, sizeof(pkt));
     if (written != static_cast<ssize_t>(sizeof(pkt))) {
-      RCLCPP_WARN(get_logger(), "Short/failed write to serial port");
+      RCLCPP_WARN(get_logger(), "SERIAL    short/failed write");
     }
   }
 
@@ -315,13 +315,13 @@ private:
     if (bytes == 0) {
       RCLCPP_WARN(
         get_logger(),
-        "Serial: 0 bytes received in the last 3s - check serial_port, baud rate, cable, "
+        "SERIAL    0 bytes received in the last 3s - check serial_port, baud rate, cable, "
         "and that the STM32 firmware is actually running (try 'pixi run monitor' from "
         "mdp_stm32 with this bridge node stopped, to rule out the ROS side entirely).");
     } else if (ok == 0 && bad > 0) {
       RCLCPP_WARN(
         get_logger(),
-        "Serial: %lu bytes received, %lu frames failed checksum, 0 valid telemetry frames "
+        "SERIAL    %lu bytes received, %lu frames failed checksum, 0 valid telemetry frames "
         "in the last 3s - likely a TelemetryPacket size/layout mismatch between the flashed "
         "STM32 firmware and this bridge build (protocol.h vs protocol.hpp out of sync, or "
         "STM32 not reflashed after a protocol change).",
@@ -333,15 +333,15 @@ private:
     } else if (link_ok_frames_ == 0) {
       // First clean window: say so once, and remember it as the normal rate.
       link_ok_frames_ = ok;
-      RCLCPP_INFO(get_logger(), "Serial: link OK - %.0f frames/s, %lu bad", ok / 3.0, bad);
+      RCLCPP_INFO(get_logger(), "SERIAL    link OK - %.0f frames/s, %lu bad", ok / 3.0, bad);
       serial_quiet_ = bad == 0;
     } else if (bad > 0 || ok < link_ok_frames_ * 8 / 10) {
       // Silent while healthy: only bad frames or a rate drop (> 20%) are reported.
-      RCLCPP_WARN(get_logger(), "Serial: %lu bad frames, %.0f frames/s (normal %.0f) in the last 3s",
+      RCLCPP_WARN(get_logger(), "SERIAL    %lu bad frames, %.0f frames/s (normal %.0f) in the last 3s",
         bad, ok / 3.0, link_ok_frames_ / 3.0);
       serial_quiet_ = false;
     } else if (!serial_quiet_) {
-      RCLCPP_INFO(get_logger(), "Serial: OK again - %.0f frames/s, no bad frames", ok / 3.0);
+      RCLCPP_INFO(get_logger(), "SERIAL    OK again - %.0f frames/s, no bad frames", ok / 3.0);
       serial_quiet_ = true;
     }
   }
@@ -542,13 +542,15 @@ private:
       RCLCPP_WARN(get_logger(),
         "GYRO      bias NOT changed - the car moved (%ld ticks, yaw-rate spread %.2f deg/s, %d samples)",
         static_cast<long>(moved), std_deg, zero_n_);
-      return;
+    } else {
+      RCLCPP_INFO(get_logger(), "GYRO      bias %+.3f deg/s (was %+.3f), %d samples, spread %.2f deg/s",
+        mean * 180.0 / M_PI, gyro_bias_z_ * 180.0 / M_PI, zero_n_, std_deg);
+      gyro_bias_z_ = mean;
     }
-    RCLCPP_INFO(get_logger(), "GYRO      bias %+.3f deg/s (was %+.3f), %d samples, spread %.2f deg/s",
-      mean * 180.0 / M_PI, gyro_bias_z_ * 180.0 / M_PI, zero_n_, std_deg);
-    gyro_bias_z_ = mean;
+    // Sent either way (the old bias if the car moved): robot_pose_feedback
+    // resets the pose when it arrives.
     std_msgs::msg::Float64 msg;
-    msg.data = mean;
+    msg.data = gyro_bias_z_;
     gyro_bias_pub_->publish(msg);
   }
 

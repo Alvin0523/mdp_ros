@@ -170,7 +170,7 @@ class Task1Runner(RunnerBase):
         try:
             tf = self.tf_buffer.lookup_transform('base_link', 'camera_link', rclpy.time.Time())
         except tf2_ros.TransformException as exc:
-            self.get_logger().warn(f'Waiting for base_link -> camera_link (URDF): {exc}',
+            self.get_logger().warn(f'PLAN      waiting for base_link -> camera_link (URDF): {exc}',
                                    throttle_duration_sec=2.0)
             return None
         return yaw_from_quaternion(tf.transform.rotation)
@@ -201,14 +201,14 @@ class Task1Runner(RunnerBase):
             elif self.now() - self._reset_requested_at > RESET_CONFIRM_TIMEOUT_S:
                 self._reset_pending = False
                 self.get_logger().warn(
-                    f"Reset not confirmed after {RESET_CONFIRM_TIMEOUT_S:.0f}s - pose {self.fmt(self.current_pose)} "
-                    f"is not at the start {self.fmt(self.start_pose())}. Is the EKF running / did it take /set_pose?")
+                    f"RESET     not confirmed after {RESET_CONFIRM_TIMEOUT_S:.0f} s - pose {self.fmt(self.current_pose)} "
+                    f"is not the start {self.fmt(self.start_pose())} (EKF running? did it take /set_pose?)")
 
     def setup_callback(self, msg: String):
         """`id:x,y,facing|...` (metres). Replaces the previous set and plan, but
         never interrupts a run."""
         if self.in_run():
-            self.get_logger().warn("Obstacle setup ignored: a run is in progress. Stop it first.")
+            self.get_logger().warn("OBSTACLES ignored - a run is in progress, stop it first")
             return
         obstacles, ids = [], []
         for item in msg.data.strip().split('|'):
@@ -219,15 +219,15 @@ class Task1Runner(RunnerBase):
                 x, y, face = data.split(',')[:3]
                 x, y, face = float(x), float(y), face.strip().upper()
             except ValueError:
-                self.get_logger().warn(f"Skipping malformed obstacle entry {item!r}")
+                self.get_logger().warn(f"OBSTACLES skipping malformed entry {item!r}")
                 continue
             if face not in markers.FACING:
-                self.get_logger().warn(f"Skipping obstacle {obs_id!r}: facing {face!r} is not N/E/S/W")
+                self.get_logger().warn(f"OBSTACLES skipping #{obs_id}: facing {face!r} is not N/E/S/W")
                 continue
             obstacles.append((x, y, face))
             ids.append(obs_id.strip())
         if not obstacles:
-            self.get_logger().warn("Obstacle setup contained no valid obstacles - ignored.")
+            self.get_logger().warn("OBSTACLES none valid - ignored")
             return
 
         self._plan_gen += 1
@@ -304,7 +304,7 @@ class Task1Runner(RunnerBase):
         self.set_state(State.STOPPED)
         self.send_cmd(0.0, 0.0)
         self.end_run()
-        self.get_logger().warn(f"STOP      at {self.fmt(self.current_pose)} after {self.run_time():.1f} s"
+        self.get_logger().info(f"STOP      at {self.fmt(self.current_pose)} after {self.run_time():.1f} s"
                                f" - reset before the next run")
         self.publish_checkpoints()
         self.sync_indicators()
@@ -334,7 +334,6 @@ class Task1Runner(RunnerBase):
                 self.set_state(State.PLANNING_PATH)
             else:
                 self.set_state(State.WAITING_FOR_SETUP)
-        self.get_logger().info("RESET     ...")
         self.sync_indicators()
 
     def manual_drive_callback(self, msg: String):
@@ -343,10 +342,10 @@ class Task1Runner(RunnerBase):
         key = msg.data.strip().lower()
         cmd = manual.burst(self, key, planner_params.ACTIVE.wheelbase)
         if cmd is None:
-            self.get_logger().warn(f"Unknown manual drive command {msg.data!r}")
+            self.get_logger().warn(f"MANUAL    unknown command {msg.data!r}")
             return
         if self.stopped or self.in_run():
-            self.get_logger().info(f"Manual drive {key!r} ignored (run in progress or stopped).")
+            self.get_logger().warn(f"MANUAL    {key!r} ignored - a run is in progress or stopped")
             return
         v, w, seconds = cmd
         self._manual_cmd = (v, w)
@@ -437,7 +436,7 @@ class Task1Runner(RunnerBase):
         self.publish_checkpoints()
         if self.unreachable:
             self.get_logger().warn(
-                f"Obstacles with no valid scan checkpoint, skipped: {[self.tablet_id(i) for i in self.unreachable]}")
+                f"PLAN      no scan checkpoint for {' '.join('#' + self.tablet_id(i) for i in self.unreachable)} - skipped")
         self.get_logger().info(f"PLAN      order {' -> '.join(self.tablet_id(i) for i in self.visiting_order)}")
 
         self.leg_paths = [None] * len(self.visiting_order)
@@ -524,7 +523,7 @@ class Task1Runner(RunnerBase):
                 self.plan_state = 'DONE'
                 self.get_logger().info(f"PLAN      done, {len(checkpoints)} legs - waiting for GO")
         except Exception:
-            self.get_logger().error(f"Background leg-planning thread crashed:\n{traceback.format_exc()}")
+            self.get_logger().error(f"PLAN      crashed:\n{traceback.format_exc()}")
 
     def navigate(self):
         if self.current_target_idx >= len(self.leg_paths):
@@ -685,7 +684,7 @@ class Task1Runner(RunnerBase):
             self.leg_paths[idx] = path
             self.path_pub.publish(markers.route_path(self.leg_paths, self.stamp()))
         except Exception:
-            self.get_logger().error(f"Leg replanning thread crashed:\n{traceback.format_exc()}")
+            self.get_logger().error(f"REPLAN    crashed:\n{traceback.format_exc()}")
             self.leg_paths[idx] = []
 
     def finish_scan(self):

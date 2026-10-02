@@ -147,7 +147,7 @@ class Task2Runner(RunnerBase):
                 tf = self.tf_buffer.lookup_transform('base_link', 'ultrasonic_link', rclpy.time.Time())
                 self.us_offset = tf.transform.translation.x
             except tf2_ros.TransformException:
-                self.get_logger().warn("No base_link -> ultrasonic_link transform - assuming 0.19 m",
+                self.get_logger().warn("PLAN      no base_link -> ultrasonic_link transform - assuming 0.19 m",
                                        throttle_duration_sec=5.0)
                 return 0.19
         return self.us_offset
@@ -228,7 +228,7 @@ class Task2Runner(RunnerBase):
         self.set_state(State.STOPPED)
         self.send_cmd(0.0, 0.0)
         self.end_run()
-        self.get_logger().warn(f"STOP      at {self.fmt(self.current_pose)} after {self.run_time():.1f} s"
+        self.get_logger().info(f"STOP      at {self.fmt(self.current_pose)} after {self.run_time():.1f} s"
                                f" - reset before the next run")
         response.success, response.message = True, "Stopped."
         return response
@@ -726,7 +726,7 @@ class Task2Runner(RunnerBase):
                 pose = target
             self.get_logger().info(f"PLAN      done, 3 legs in {time.monotonic() - t0:.1f} s")
         except Exception:
-            self.get_logger().error(f"Leg planning crashed:\n{traceback.format_exc()}")
+            self.get_logger().error(f"PLAN      crashed:\n{traceback.format_exc()}")
 
     # -------------------------------------------------------------- output ----
 

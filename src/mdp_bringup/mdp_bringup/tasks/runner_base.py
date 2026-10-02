@@ -114,7 +114,7 @@ class RunnerBase(Node):
         try:
             tf = self.tf_buffer.lookup_transform('map', msg.header.frame_id, msg.header.stamp)
         except tf2_ros.TransformException as exc:
-            self.get_logger().warn(f"No map <- {msg.header.frame_id} transform yet ({exc})",
+            self.get_logger().warn(f"POSE      no map <- {msg.header.frame_id} transform yet ({exc})",
                                    throttle_duration_sec=2.0)
             return
         pose = tf2_geometry_msgs.do_transform_pose(msg.pose.pose, tf)

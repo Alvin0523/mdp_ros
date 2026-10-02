@@ -151,7 +151,7 @@ public:
     reset_client_ = create_client<std_srvs::srv::Trigger>("/reset_pose");
 
     timer_ = create_wall_timer(std::chrono::milliseconds(10), [this]() {poll();});
-    RCLCPP_INFO(get_logger(), "bluetooth_bridge_node: waiting for %s", device_.c_str());
+    RCLCPP_INFO(get_logger(), "BT        waiting for the tablet on %s", device_.c_str());
   }
 
   ~BluetoothBridgeNode() override {closeLink("shutdown");}
@@ -163,14 +163,14 @@ private:
   {
     fd_ = ::open(device_.c_str(), O_RDWR | O_NOCTTY | O_NONBLOCK);
     if (fd_ < 0) {
-      // Keep retrying every reopen_period_s, but say so once (and again only
-      // if the reason changes) - the live state is on /diagnostics
-      // (mdp/Tablet link) and /bluetooth_bridge/link_ok.
+      // Keep retrying every reopen_period_s. No such device = no tablet yet,
+      // which the "waiting" line already said; any other reason is a real
+      // problem, said once (and again only if it changes). The live state is
+      // on /diagnostics (mdp/Tablet link) and /bluetooth_bridge/link_ok.
       const std::string why = std::strerror(errno);
-      if (why != last_open_error_) {
+      if (errno != ENOENT && why != last_open_error_) {
         last_open_error_ = why;
-        RCLCPP_WARN(get_logger(), "cannot open %s: %s - retrying quietly until the tablet connects",
-          device_.c_str(), why.c_str());
+        RCLCPP_WARN(get_logger(), "BT        cannot open %s: %s - retrying", device_.c_str(), why.c_str());
       }
       return;
     }
@@ -187,7 +187,7 @@ private:
     rx_buf_.clear();
     tx_buf_.clear();
     got_rx_since_open_ = false;
-    RCLCPP_INFO(get_logger(), "link up on %s", device_.c_str());
+    RCLCPP_INFO(get_logger(), "BT        link up (%s)", device_.c_str());
     publishLink();
     resendState();
   }
@@ -207,7 +207,7 @@ private:
     if (fd_ >= 0) {
       ::close(fd_);
       fd_ = -1;
-      RCLCPP_WARN(get_logger(), "link down (%s)", why);
+      RCLCPP_WARN(get_logger(), "BT        link down (%s)", why);
       publishLink();
     }
   }
@@ -253,7 +253,7 @@ private:
     }
     // No terminator ever arriving would otherwise grow this without bound.
     if (rx_buf_.size() > 4096) {
-      RCLCPP_WARN(get_logger(), "discarding %zu bytes with no newline", rx_buf_.size());
+      RCLCPP_WARN(get_logger(), "BT        discarding %zu bytes with no newline", rx_buf_.size());
       rx_buf_.clear();
     }
   }
@@ -364,14 +364,14 @@ private:
       out.data = manual;
       manual_pub_->publish(out);
     } else {
-      RCLCPP_WARN(get_logger(), "unrecognised line from tablet: '%s'", line.c_str());
+      RCLCPP_WARN(get_logger(), "BT        unrecognised line from the tablet: '%s'", line.c_str());
     }
   }
 
   void handleObstacle(const std::vector<std::string> & f)
   {
     if (f.size() != 5) {
-      RCLCPP_WARN(get_logger(), "OBSTACLE needs 4 fields (n,x,y,facing), got %zu", f.size() - 1);
+      RCLCPP_WARN(get_logger(), "BT        OBSTACLE needs 4 fields (n,x,y,facing), got %zu", f.size() - 1);
       return;
     }
     const auto n = parseInt(f[1]);
@@ -379,12 +379,12 @@ private:
     const auto y = parseInt(f[3]);
     const auto facing = parseFacing(f[4]);
     if (!n || !x || !y || !facing) {
-      RCLCPP_WARN(get_logger(), "bad OBSTACLE line (n=%s x=%s y=%s facing=%s)",
+      RCLCPP_WARN(get_logger(), "BT        bad OBSTACLE line (n=%s x=%s y=%s facing=%s)",
         f[1].c_str(), f[2].c_str(), f[3].c_str(), f[4].c_str());
       return;
     }
     if (*x < 0 || *x >= kArenaCm || *y < 0 || *y >= kArenaCm) {
-      RCLCPP_WARN(get_logger(), "OBSTACLE %d at (%d,%d)cm is outside the %dcm arena - ignored",
+      RCLCPP_WARN(get_logger(), "BT        OBSTACLE %d at (%d,%d)cm is outside the %dcm arena - ignored",
         *n, *x, *y, kArenaCm);
       return;
     }
@@ -406,7 +406,7 @@ private:
   void publishSetup()
   {
     if (obstacles_.empty()) {
-      RCLCPP_WARN(get_logger(), "DONE received with no obstacles - ignored");
+      RCLCPP_WARN(get_logger(), "BT        DONE with no obstacles - ignored");
       return;
     }
     // task1_runner's format: "id:x_m,y_m,facing|..." in metres, at the centre
@@ -422,24 +422,18 @@ private:
     std_msgs::msg::String msg;
     msg.data = out;
     setup_pub_->publish(msg);
-    set_closed_ = true;
-    RCLCPP_INFO(get_logger(), "published %zu obstacles: %s", obstacles_.size(), out.c_str());
+    set_closed_ = true;   // task1_runner logs the set (OBSTACLES ...)
   }
 
   void callTrigger(
     const rclcpp::Client<std_srvs::srv::Trigger>::SharedPtr & client, const char * name)
   {
     if (!client->service_is_ready()) {
-      RCLCPP_WARN(get_logger(), "%s not available - is task1_runner up?", name);
+      RCLCPP_WARN(get_logger(), "BT        %s not available - is a task runner up?", name);
       return;
     }
-    client->async_send_request(
-      std::make_shared<std_srvs::srv::Trigger::Request>(),
-      [this, name](rclcpp::Client<std_srvs::srv::Trigger>::SharedFuture fut) {
-        const auto res = fut.get();
-        RCLCPP_INFO(get_logger(), "%s -> %s: %s", name,
-          res->success ? "accepted" : "rejected", res->message.c_str());
-      });
+    // The runner logs the outcome (GO / `go` rejected / STOP / RESET done).
+    client->async_send_request(std::make_shared<std_srvs::srv::Trigger::Request>());
   }
 
   std::string device_;
