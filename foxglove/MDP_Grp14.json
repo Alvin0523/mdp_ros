@@ -365,7 +365,7 @@
           "operator": "=",
           "rawValue": "true",
           "color": "#2eb82e",
-          "label": "● REC"
+          "label": "\u25cf REC"
         },
         {
           "operator": "=",
@@ -375,7 +375,7 @@
         }
       ],
       "fontSize": 36,
-      "foxglovePanelTitle": "Serial"
+      "foxglovePanelTitle": "REC"
     },
     "Image!yolo": {
       "imageMode": {
@@ -469,7 +469,7 @@
       "editingMode": false,
       "timeoutSeconds": 10,
       "serviceName": "/bag/toggle",
-      "buttonText": "● REC / ■ STOP",
+      "buttonText": "\u25cf REC / \u25a0 STOP",
       "buttonColor": "#ad1457",
       "foxglovePanelTitle": "Record bag"
     },
@@ -885,34 +885,6 @@
       "reverseDirection": false,
       "foxglovePanelTitle": "Battery"
     },
-    "Indicator!t2_pi": {
-      "path": "/pi/status.temp_c",
-      "style": "bulb",
-      "fallbackColor": "#808080",
-      "fallbackLabel": "Pi: no data",
-      "rules": [
-        {
-          "operator": ">=",
-          "rawValue": "80",
-          "color": "#e02020",
-          "label": "Pi HOT"
-        },
-        {
-          "operator": ">=",
-          "rawValue": "78",
-          "color": "#e0a020",
-          "label": "Pi hot"
-        },
-        {
-          "operator": "<",
-          "rawValue": "78",
-          "color": "#2eb82e",
-          "label": "Pi OK"
-        }
-      ],
-      "fontSize": 36,
-      "foxglovePanelTitle": "Serial"
-    },
     "Indicator!t2_rec": {
       "path": "/bag/recording.data",
       "style": "bulb",
@@ -922,22 +894,22 @@
         {
           "operator": "=",
           "rawValue": "true",
-          "color": "#e02020",
-          "label": "● REC"
+          "color": "#2eb82e",
+          "label": "\u25cf REC"
         },
         {
           "operator": "=",
           "rawValue": "false",
           "color": "#555555",
-          "label": "not recording"
+          "label": "NONE"
         }
       ],
       "fontSize": 36,
-      "foxglovePanelTitle": "Serial"
+      "foxglovePanelTitle": "REC"
     },
     "Image!t2_yolo": {
       "imageMode": {
-        "imageTopic": "/yolo_result/image_annotated"
+        "imageTopic": "/image_raw/compressed"
       },
       "cameraState": {
         "distance": 20,
@@ -1017,7 +989,7 @@
       "editingMode": false,
       "timeoutSeconds": 10,
       "serviceName": "/bag/toggle",
-      "buttonText": "● REC / ■ STOP",
+      "buttonText": "\u25cf REC / \u25a0 STOP",
       "buttonColor": "#ad1457",
       "foxglovePanelTitle": "Record bag"
     },
@@ -1030,6 +1002,21 @@
         },
         "bt_monitor": {
           "visible": false
+        },
+        "serial_bridge_node": {
+          "visible": false
+        },
+        "bluetooth_bridge_node": {
+          "visible": false
+        },
+        "ekf_filter_node": {
+          "visible": false
+        },
+        "controller_manager": {
+          "visible": false
+        },
+        "task2_runner": {
+          "visible": true
         }
       },
       "fontSize": 12,
@@ -1250,44 +1237,6 @@
       "followingViewWidth": 120,
       "sidebarDimension": 240
     },
-    "Plot!truth": {
-      "title": "Sim only: pose estimate vs Gazebo truth (m)",
-      "paths": [
-        {
-          "value": "/run_status.x",
-          "enabled": true,
-          "timestampMethod": "receiveTime",
-          "label": "estimate x"
-        },
-        {
-          "value": "/sim/ground_truth.transforms[0].transform.translation.x",
-          "enabled": true,
-          "timestampMethod": "receiveTime",
-          "label": "truth x"
-        },
-        {
-          "value": "/run_status.y",
-          "enabled": true,
-          "timestampMethod": "receiveTime",
-          "label": "estimate y"
-        },
-        {
-          "value": "/sim/ground_truth.transforms[0].transform.translation.y",
-          "enabled": true,
-          "timestampMethod": "receiveTime",
-          "label": "truth y"
-        }
-      ],
-      "showXAxisLabels": true,
-      "showYAxisLabels": true,
-      "showLegend": true,
-      "legendDisplay": "floating",
-      "showPlotValuesInLegend": true,
-      "isSynced": true,
-      "xAxisVal": "timestamp",
-      "followingViewWidth": 120,
-      "sidebarDimension": 240
-    },
     "Tab!main": {
       "activeTabIdx": 0,
       "tabs": [
@@ -1393,19 +1342,16 @@
                       "second": "Indicator!t2_motor",
                       "direction": "column"
                     },
-                    "second": {
-                      "first": "Indicator!t2_tablet",
-                      "second": "Gauge!t2_battery",
-                      "direction": "column"
-                    },
-                    "direction": "column"
+                    "second": "Indicator!t2_tablet",
+                    "direction": "column",
+                    "splitPercentage": 67.85464675716341
                   },
                   "second": {
-                    "first": "Indicator!t2_pi",
+                    "first": "Gauge!t2_battery",
                     "second": "Indicator!t2_rec",
                     "direction": "row"
                   },
-                  "splitPercentage": 66
+                  "splitPercentage": 73.91528905060893
                 },
                 "second": "Image!t2_yolo",
                 "direction": "row"
@@ -1438,7 +1384,7 @@
               },
               "splitPercentage": 35.500544101609506
             },
-            "splitPercentage": 55.024390243902445
+            "splitPercentage": 53.1219512195122
           }
         },
         {
@@ -1484,10 +1430,6 @@
             },
             "splitPercentage": 50
           }
-        },
-        {
-          "title": "Sim",
-          "layout": "Plot!truth"
         }
       ]
     }
