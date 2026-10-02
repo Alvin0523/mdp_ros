@@ -653,12 +653,8 @@
                     },
                     "direction": "column"
                   },
-                  "second": {
-                    "direction": "column",
-                    "first": "Indicator!pi",
-                    "second": "Indicator!rec"
-                  },
-                  "splitPercentage": 66
+                  "second": "Indicator!rec",
+                  "splitPercentage": 80
                 },
                 "second": "Image!yolo",
                 "direction": "row"
@@ -732,12 +728,8 @@
                     },
                     "direction": "column"
                   },
-                  "second": {
-                    "direction": "column",
-                    "first": "Indicator!t2_pi",
-                    "second": "Indicator!t2_rec"
-                  },
-                  "splitPercentage": 66
+                  "second": "Indicator!t2_rec",
+                  "splitPercentage": 80
                 },
                 "second": "Image!t2_yolo",
                 "direction": "row"
@@ -1297,34 +1289,6 @@
       "buttonColor": "#ad1457",
       "foxglovePanelTitle": "Record bag"
     },
-    "Indicator!pi": {
-      "path": "/pi/status.temp_c",
-      "style": "bulb",
-      "fallbackColor": "#808080",
-      "fallbackLabel": "Pi: no data",
-      "rules": [
-        {
-          "operator": ">=",
-          "rawValue": "80",
-          "color": "#e02020",
-          "label": "Pi HOT"
-        },
-        {
-          "operator": ">=",
-          "rawValue": "78",
-          "color": "#e0a020",
-          "label": "Pi hot"
-        },
-        {
-          "operator": "<",
-          "rawValue": "78",
-          "color": "#2eb82e",
-          "label": "Pi OK"
-        }
-      ],
-      "fontSize": 36,
-      "foxglovePanelTitle": "Pi"
-    },
     "Indicator!rec": {
       "path": "/bag/recording.data",
       "style": "bulb",
@@ -1346,34 +1310,6 @@
       ],
       "fontSize": 36,
       "foxglovePanelTitle": "REC"
-    },
-    "Indicator!t2_pi": {
-      "path": "/pi/status.temp_c",
-      "style": "bulb",
-      "fallbackColor": "#808080",
-      "fallbackLabel": "Pi: no data",
-      "rules": [
-        {
-          "operator": ">=",
-          "rawValue": "80",
-          "color": "#e02020",
-          "label": "Pi HOT"
-        },
-        {
-          "operator": ">=",
-          "rawValue": "78",
-          "color": "#e0a020",
-          "label": "Pi hot"
-        },
-        {
-          "operator": "<",
-          "rawValue": "78",
-          "color": "#2eb82e",
-          "label": "Pi OK"
-        }
-      ],
-      "fontSize": 36,
-      "foxglovePanelTitle": "Pi"
     },
     "Indicator!t2_rec": {
       "path": "/bag/recording.data",
