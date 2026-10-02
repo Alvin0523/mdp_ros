@@ -120,4 +120,9 @@ scripts = ["install/setup.bash", "scripts/activate_gpu.sh"]
 
 [activation.env]
 ROS_DOMAIN_ID = "14"
+# Pi <-> laptop: no multicast discovery, reach the other machine directly.
+# Same list on both machines (Pi first, laptop second; listing yourself is harmless).
+ROS_AUTOMATIC_DISCOVERY_RANGE = "LOCALHOST"
+ROS_STATIC_PEERS = "10.42.0.1;10.42.0.10"     # Ethernet cable
+# ROS_STATIC_PEERS = "10.43.0.1;10.43.0.10"   # Pi's WiFi hotspot MDP-Grp14
 GZ_SIM_SYSTEM_PLUGIN_PATH = "$CONDA_PREFIX/lib"
