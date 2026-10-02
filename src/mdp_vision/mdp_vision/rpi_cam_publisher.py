@@ -42,6 +42,12 @@ class RpiCamPublisher(Node):
         self.declare_parameter('frame_rate', 30.0)
         self.declare_parameter('camera_topic', '/image_raw')
         self.declare_parameter('jpeg_quality', 80)
+        # The sensor mode rpicam-vid reads, '' = its own pick. Left to itself,
+        # 640x480 takes the IMX219's small 640x480 mode, which crops the middle
+        # of the sensor: a much narrower view than the camera's ~62 deg. A
+        # full-sensor mode (1640x1232, 2x2 binned) scaled down to 640x480 keeps
+        # the whole view at the same image size.
+        self.declare_parameter('sensor_mode', '')
 
         self.width = self.get_parameter('image_width').value
         self.height = self.get_parameter('image_height').value
@@ -77,8 +83,12 @@ class RpiCamPublisher(Node):
             '--flush',
             '-o', '-',
         ]
+        sensor_mode = self.get_parameter('sensor_mode').value
+        if sensor_mode:
+            cmd[1:1] = ['--mode', sensor_mode]
         self.get_logger().info(
-            f"rpicam-vid started ({self.width}x{self.height} @ {frame_rate} FPS), "
+            f"rpicam-vid started ({self.width}x{self.height} @ {frame_rate} FPS, "
+            f"sensor mode {sensor_mode or 'auto'}), "
             f"publishing to {camera_topic}")
         self.proc = subprocess.Popen(
             cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
