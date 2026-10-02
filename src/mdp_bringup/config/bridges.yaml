@@ -1,11 +1,12 @@
 # The two serial links. Override a device at launch:
-#   pixi run real serial_port:=/dev/ttyUSB0 bluetooth_device:=/dev/rfcomm1
+#   pixi run real serial_port:=/dev/ttyACM0 bluetooth_device:=/dev/rfcomm1
 
 serial_bridge_node:            # STM32 (real robot only)
   ros__parameters:
-    # by-id, not /dev/ttyUSB0: the number changes when another USB serial
-    # device is plugged in, this name never does (it is the CH340's serial).
-    serial_port: /dev/serial/by-id/usb-1a86_USB_Single_Serial_5A6C068008-if00
+    # /dev/stm32, not /dev/ttyACM0: the number changes when another USB serial
+    # device is plugged in, this name never does. Made by the udev rule in
+    # mdp_stm32/udev (once per machine: cd mdp_stm32 && pixi run udev).
+    serial_port: /dev/stm32
     baud_rate: 115200
     # s of telemetry averaged for the gyro bias on every `pixi run reset` (the
     # car must stand still) - see serial_bridge_node.cpp, gyro bias re-measure.
