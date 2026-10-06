@@ -22,6 +22,7 @@
 #include <cstdlib>
 #include <limits>
 #include <thread>
+#include <vector>
 
 #include <fcntl.h>
 #include <termios.h>
@@ -52,6 +53,25 @@ public:
     declare_parameter<int>("baud_rate", 115200);
     declare_parameter<double>("gyro_zero_s", 2.0);
     gyro_zero_ms_ = static_cast<uint32_t>(get_parameter("gyro_zero_s").as_double() * 1000.0);
+    /* Each IR sensor's own curve, cm = a / (raw/4095)^b, applied here to the raw
+     * ADC value the STM32 sends (config/bridges.yaml). Defaults = the STM32's
+     * generic formula (ir.c), so a missing setting cannot stop the bridge. */
+    declare_parameter<std::vector<double>>("ir1_curve", {6.30, 1.226});
+    declare_parameter<std::vector<double>>("ir2_curve", {6.30, 1.226});
+    declare_parameter<double>("ir_min_cm", 4.0);
+    declare_parameter<double>("ir_max_cm", 80.0);
+    ir_curve_[0] = get_parameter("ir1_curve").as_double_array();
+    ir_curve_[1] = get_parameter("ir2_curve").as_double_array();
+    for (auto & c : ir_curve_) {
+      if (c.size() != 2) {
+        RCLCPP_WARN(get_logger(), "IR        curve needs [a, b] - using the STM32's 6.30 / x^1.226");
+        c = {6.30, 1.226};
+      }
+    }
+    ir_min_cm_ = get_parameter("ir_min_cm").as_double();
+    ir_max_cm_ = get_parameter("ir_max_cm").as_double();
+    RCLCPP_INFO(get_logger(), "IR        IR1 %.2f / x^%.3f, IR2 %.2f / x^%.3f, %.0f-%.0f cm",
+                ir_curve_[0][0], ir_curve_[0][1], ir_curve_[1][0], ir_curve_[1][1], ir_min_cm_, ir_max_cm_);
 
     const std::string port = get_parameter("serial_port").as_string();
     fd_ = open_serial(port);
@@ -487,19 +507,19 @@ private:
     ir_range.radiation_type = sensor_msgs::msg::Range::INFRARED;
     /* Sharp GP2Y0A21YK typical spec, not measured on this unit. */
     ir_range.field_of_view = 0.1f; /* ~6 deg, radians - narrow analog IR beam */
-    ir_range.min_range = 0.10f;    /* matches ir.c's IR_DISTANCE_MIN_CM */
-    ir_range.max_range = 0.80f;    /* matches ir.c's IR_DISTANCE_MAX_CM */
+    ir_range.min_range = static_cast<float>(ir_min_cm_ / 100.0);
+    ir_range.max_range = static_cast<float>(ir_max_cm_ / 100.0);
     /* Unlike ultrasonic, ir_raw_to_distance_cm() always returns a
      * clamped value in [MIN,MAX] - it has no "invalid/no detection" sentinel
      * to check, so there is no +Inf case here. A reading pinned exactly at
      * the min or max bound may mean "actually closer/farther than the
      * sensor can tell", not a literal measurement at that exact distance. */
-    ir_range.range = pkt.ir_distance_cm / 100.0f;
+    ir_range.range = static_cast<float>(ir_cm(pkt.ir_raw, 0) / 100.0);
     ir_pub_->publish(ir_range);
 
     /* Second IR sensor (PC1/ADC1_CH11) - same spec and simplifications as the first. */
     sensor_msgs::msg::Range ir2_range = ir_range;
-    ir2_range.range = pkt.ir2_distance_cm / 100.0f;
+    ir2_range.range = static_cast<float>(ir_cm(pkt.ir2_raw, 1) / 100.0);
     ir2_pub_->publish(ir2_range);
 
     std_msgs::msg::UInt16 pwm_msg;
@@ -564,6 +584,19 @@ private:
   rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr link_ok_pub_;
   rclcpp::Publisher<sensor_msgs::msg::BatteryState>::SharedPtr battery_pub_;
   rclcpp::Publisher<sensor_msgs::msg::Range>::SharedPtr ultrasonic_pub_;
+  /* cm from a raw IR ADC value with sensor i's curve, clamped to ir_min/max_cm. */
+  double ir_cm(uint16_t raw, int i) const
+  {
+    if (raw == 0) {
+      return ir_max_cm_;           /* no light back: as far as it can tell */
+    }
+    const double cm = ir_curve_[i][0] / std::pow(raw / 4095.0, ir_curve_[i][1]);
+    return std::clamp(cm, ir_min_cm_, ir_max_cm_);
+  }
+
+  std::vector<double> ir_curve_[2];
+  double ir_min_cm_ = 4.0;
+  double ir_max_cm_ = 80.0;
   rclcpp::Publisher<sensor_msgs::msg::Range>::SharedPtr ir_pub_;
   rclcpp::Publisher<sensor_msgs::msg::Range>::SharedPtr ir2_pub_;
   rclcpp::Publisher<std_msgs::msg::UInt16>::SharedPtr steering_pwm_pub_;

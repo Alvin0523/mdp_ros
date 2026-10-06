@@ -14,6 +14,15 @@ serial_bridge_node:            # STM32 (real robot only)
     # 2 s, 0.007 after 5 s, 0.005 after 10 s - ~1.1 / 0.6 / 0.4 deg of heading
     # over a 90 s run.
     gyro_zero_s: 5.0
+    # IR distance per sensor: cm = a / (raw/4095)^b on the raw ADC value, [a, b].
+    # Fitted 2026-10-06 from a bag at 10/15/20/25/30 cm (within +-0.5 cm at
+    # 15-30 cm); the STM32's own formula (6.30, 1.226) was +3 cm (IR1) / -4 cm
+    # (IR2) off at 30 cm. IR1 is ~6x noisier than IR2 (+-2.9 vs +-0.5 cm at
+    # 30 cm): check its wiring / supply capacitor.
+    ir1_curve: [6.41, 1.128]   # IR1, /ir, PC2
+    ir2_curve: [5.22, 1.513]   # IR2, /ir2, PC1
+    ir_min_cm: 4.0             # clamp (Sharp readings are unreliable below ~7 cm)
+    ir_max_cm: 80.0
 
 bluetooth_bridge_node:         # the tablet (sim and real)
   ros__parameters:
