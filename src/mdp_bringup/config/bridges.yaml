@@ -3,10 +3,12 @@
 
 serial_bridge_node:            # STM32 (real robot only)
   ros__parameters:
-    # /dev/stm32, not /dev/ttyACM0: the number changes when another USB serial
-    # device is plugged in, this name never does. Made by the udev rule in
-    # mdp_stm32/udev (once per machine: cd mdp_stm32 && pixi run udev).
-    serial_port: /dev/stm32
+    # /dev/stm32_serial (the board's UART3 = the car link), not /dev/ttyACM0: the
+    # number changes when another USB serial device is plugged in, this name never
+    # does. Its other port, UART1, is /dev/stm32_flash (flashing + debug printf).
+    # Made by the udev rule from mdp_stm32/udev (once per machine, board plugged in:
+    # cd mdp_stm32 && pixi run udev).
+    serial_port: /dev/stm32_serial
     baud_rate: 115200
     # s of telemetry averaged for the gyro bias on every `pixi run reset` (the
     # car must stand still) - see serial_bridge_node.cpp, gyro bias re-measure.
