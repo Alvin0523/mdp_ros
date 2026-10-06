@@ -42,6 +42,21 @@ MODELS_DIR = os.path.join(get_package_share_directory('mdp_vision'), 'models')
 DEFAULT_MODEL = 'mdp_v2_ncnn_model'
 
 
+def pick_device(model_path: str):
+    """(device for Ultralytics, what to log). A .pt model runs on the NVIDIA GPU
+    when PyTorch sees one (the laptop's CUDA build, pixi.toml), else the CPU; an
+    NCNN model always runs on the CPU (NCNN's own runtime)."""
+    if not model_path.endswith('.pt'):
+        return 'cpu', 'CPU (NCNN)'
+    try:
+        import torch
+        if torch.cuda.is_available():
+            return 0, f'GPU (CUDA: {torch.cuda.get_device_name(0)})'
+        return 'cpu', f'CPU (PyTorch {torch.__version__}, no CUDA)'
+    except Exception:
+        return 'cpu', 'CPU'
+
+
 def resolve_model_path(value: str) -> str:
     """Accept either a bare model name (e.g. 'mdp_v2_ncnn_model', resolved under
     the package models/ dir) or an absolute/relative path to a model dir."""
@@ -106,12 +121,22 @@ class YoloDetector(Node):
         self.declare_parameter('result_topic', '/yolo_result')
         self.declare_parameter('annotated_topic', '/yolo_result/image_annotated')
         self.declare_parameter('jpeg_quality', 80)
+        # Which box to report when YOLO sees several (pick_box): below
+        # min_confidence is ignored (Ultralytics' own default was 0.25); boxes
+        # within edge_margin_px of the frame edge are cut off, used only when
+        # nothing else is seen; of the rest the BIGGEST - the symbols are all one
+        # size, so the closest one looks biggest (a neighbouring block further
+        # away was read instead of the target, sim 2026-09-30).
+        self.declare_parameter('min_confidence', 0.5)
+        self.declare_parameter('edge_margin_px', 3)
 
         camera_topic = self.get_parameter('camera_topic').value
         model_path = resolve_model_path(self.get_parameter('model_path').value)
         result_topic = self.get_parameter('result_topic').value
         annotated_topic = self.get_parameter('annotated_topic').value
         self.jpeg_quality = self.get_parameter('jpeg_quality').value
+        self.min_conf = float(self.get_parameter('min_confidence').value)
+        self.edge_margin = int(self.get_parameter('edge_margin_px').value)
 
         self.bridge = CvBridge()
         self.result_pub = self.create_publisher(String, result_topic, 10)
@@ -153,7 +178,8 @@ class YoloDetector(Node):
             # crashing (SIGILL, exit -4) on the Pi's Cortex-A72 with a .pt
             # model - see docs/pi-camera-vision.md "Known open issues" #1.
             self.model = YOLO(model_path, task='detect')
-            self.get_logger().info(f"YOLO      model loaded: {os.path.basename(model_path)}")
+            self.device, where = pick_device(model_path)
+            self.get_logger().info(f"YOLO      model loaded: {os.path.basename(model_path)} on {where}")
         else:
             self.model = None
             self.get_logger().warn("YOLO      ultralytics not installed - no detections")
@@ -169,19 +195,45 @@ class YoloDetector(Node):
             return
 
         if self.model is not None:
-            results = self.model(cv_image, verbose=False)
+            results = self.model(cv_image, verbose=False, device=self.device, conf=self.min_conf)
             for r in results:
-                self.publish_annotated(r, msg.header)
-                for box in r.boxes:
-                    class_name = self.model.names[int(box.cls[0])]
-                    target_id = label_to_target_id(class_name)
-                    if target_id is None:
-                        self.get_logger().warn(f"YOLO      no MDP Target ID for class {class_name!r}")
-                        target_id = class_name.upper()
-                    self.publish_detection(str(target_id), class_name)
+                box = self.pick_box(r, cv_image.shape)
+                self.publish_annotated(r, msg.header, box)
+                if box is None:
                     return
+                class_name = self.model.names[int(box.cls[0])]
+                target_id = label_to_target_id(class_name)
+                if target_id is None:
+                    self.get_logger().warn(f"YOLO      no MDP Target ID for class {class_name!r}")
+                    target_id = class_name.upper()
+                self.publish_detection(str(target_id), class_name)
+                return
 
-    def publish_annotated(self, result, header):
+    def pick_box(self, result, shape):
+        """The box to report (see min_confidence / edge_margin_px): the biggest
+        whole one; a cut-off one only when nothing whole is seen; within 10 % in
+        size, the more confident. None when nothing is seen."""
+        h, w = shape[:2]
+        m = self.edge_margin
+        whole, cut = [], []
+        for box in result.boxes:
+            x1, y1, x2, y2 = (float(v) for v in box.xyxy[0])
+            edge = x1 <= m or y1 <= m or x2 >= w - m or y2 >= h - m
+            (cut if edge else whole).append(((x2 - x1) * (y2 - y1), float(box.conf[0]), box))
+        boxes = whole or cut
+        if not boxes:
+            return None
+        biggest = max(a for a, _, _ in boxes)
+        close = [b for b in boxes if b[0] >= 0.9 * biggest]       # as big as the biggest, within 10 %
+        chosen = max(close, key=lambda b: b[1])
+        if len(whole) + len(cut) > 1:
+            name = lambda b: self.model.names[int(b[2].cls[0])]
+            others = ', '.join(name(b) for b in whole + cut if b is not chosen)
+            self.get_logger().debug(f"YOLO      picked {name(chosen)} (biggest{'' if whole else ', cut off'}) "
+                                    f"over {others}")
+        return chosen[2]
+
+    def publish_annotated(self, result, header, chosen=None):
         # Drawing boxes/labels and re-encoding a full frame costs real CPU on
         # the same core doing inference - skip it entirely when nobody's
         # actually subscribed (e.g. no Foxglove/rviz open during a real run).
@@ -194,6 +246,10 @@ class YoloDetector(Node):
         # needed. Reuses the original frame's header/timestamp so this
         # topic stays sync'able with /image_raw in Foxglove/rviz.
         annotated = result.plot()
+        if chosen is not None:                 # the box sent on /yolo_result: thick green frame
+            x1, y1, x2, y2 = (int(v) for v in chosen.xyxy[0])
+            cv2.rectangle(annotated, (x1, y1), (x2, y2), (0, 255, 0), 4)
+            cv2.putText(annotated, 'SENT', (x1, max(15, y1 - 8)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
         ok, jpeg = cv2.imencode('.jpg', annotated, [cv2.IMWRITE_JPEG_QUALITY, self.jpeg_quality])
         if not ok:
             return

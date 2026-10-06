@@ -7,7 +7,7 @@ rpi_cam_publisher:             # the Pi camera (real robot only; Gazebo has its 
     image_height: 480
     frame_rate: 10.0           # YOLO needs a few frames per scan stop; 30 wasted CPU
     camera_topic: /image_raw
-    jpeg_quality: 80
+    jpeg_quality: 95     # the copy YOLO reads on the laptop: 95 keeps letter edges clean (~80 KB a frame)
     # Full-sensor mode (IMX219 1640x1232, binned) scaled to the image size: the
     # whole ~62 deg view. Auto ('') picks the cropped 640x480 mode - a narrow view.
     # Check the modes on the Pi: rpicam-hello --list-cameras
@@ -18,3 +18,9 @@ yolo_detector:
     result_topic: /yolo_result
     annotated_topic: /yolo_result/image_annotated
     jpeg_quality: 80
+    # When YOLO sees several symbols, /yolo_result gets ONE: confidence at least
+    # min_confidence (Ultralytics' default was 0.25), not cut off by the frame edge
+    # (edge_margin_px; used only if nothing else is seen), and the BIGGEST = the
+    # closest (all symbols are one size). Foxglove's annotated image marks it SENT.
+    min_confidence: 0.5
+    edge_margin_px: 3

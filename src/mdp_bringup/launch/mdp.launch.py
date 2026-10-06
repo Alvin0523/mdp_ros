@@ -260,7 +260,7 @@ def generate_launch_description(argv=None):
             launch_arguments={'model': model, 'camera': 'false', 'yolo': 'true',
                               'camera_topic': '/camera/image_raw' if sim else '/image_raw/compressed',
                               'use_sim_time': str(sim).lower(),
-                              'log_level': 'warn' if quiet else 'info'}.items()))
+                              'log_level': 'info'}.items()))   # one startup line each: model + GPU/CPU, camera mode
         # Task 1's paths between checkpoints, for task1_runner on the car
         # (remote_planner) - it plans them itself if this does not answer.
         actions.append(Node(package='mdp_bringup', executable='task1_planner', output='screen',
@@ -419,7 +419,7 @@ def generate_launch_description(argv=None):
             launch_arguments={'model': model, 'camera': str(not sim).lower(), 'camera_topic': camera_topic,
                               'yolo': str(role != 'pi').lower(),
                               'use_sim_time': str(sim).lower(),
-                              'log_level': 'warn' if quiet else 'info'}.items()))
+                              'log_level': 'info'}.items()))   # one startup line each: model + GPU/CPU, camera mode
 
     # Tablet link - the real tablet, in sim as on the robot.
     actions.append(Node(
