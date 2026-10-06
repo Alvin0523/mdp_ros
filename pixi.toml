@@ -88,9 +88,8 @@ hypothesis = ">=6.168.1,<7"
 
 [pypi-dependencies]
 ultralytics = "*"
-torch = { version = "==2.8.0", index = "https://download.pytorch.org/whl/cpu" }
-torchvision = { version = "==0.23.0", index = "https://download.pytorch.org/whl/cpu" }
 ncnn = "*"
+# torch / torchvision per machine (below): CUDA on the laptop, CPU on the Pi.
 
 # ---------------------------------------------------------------------------
 # Laptop-only targets (Simulation, GUI testing, Model conversion)
@@ -102,6 +101,15 @@ ros-jazzy-joint-state-publisher-gui = "*"
 
 [target.linux-64.pypi-dependencies]
 pnnx = "*"
+# CUDA 12.8 build: YOLO (best.pt) on the laptop's NVIDIA GPU - 12.8 is the
+# first CUDA for RTX 50-series. Without an NVIDIA GPU it runs on the CPU.
+torch = { version = "==2.8.0", index = "https://download.pytorch.org/whl/cu128" }
+torchvision = { version = "==0.23.0", index = "https://download.pytorch.org/whl/cu128" }
+
+[target.linux-aarch64.pypi-dependencies]
+# The Pi: CPU build (no CUDA; YOLO there uses NCNN anyway - PyTorch crashes on it)
+torch = { version = "==2.8.0", index = "https://download.pytorch.org/whl/cpu" }
+torchvision = { version = "==0.23.0", index = "https://download.pytorch.org/whl/cpu" }
 
 [target.osx-arm64.dependencies]
 ros-jazzy-ros-gz = "*"
@@ -110,6 +118,8 @@ ros-jazzy-joint-state-publisher-gui = "*"
 
 [target.osx-arm64.pypi-dependencies]
 pnnx = "*"
+torch = "==2.8.0"
+torchvision = "==0.23.0"
 
 [activation]
 scripts = ["install/setup.bash"]
@@ -124,8 +134,9 @@ ROS_DOMAIN_ID = "14"
 # Pi <-> laptop: no multicast discovery, reach the other machine directly.
 # Same list on both machines (Pi first, laptop second; listing yourself is harmless).
 ROS_AUTOMATIC_DISCOVERY_RANGE = "LOCALHOST"
-ROS_STATIC_PEERS = "10.42.0.1;10.42.0.10"     # Ethernet cable
-# ROS_STATIC_PEERS = "10.43.0.1;10.43.0.10"   # Pi's WiFi hotspot MDP-Grp14
+ROS_STATIC_PEERS = "192.168.68.103;192.168.68.104"   # router "scott1": Pi .103, laptop .104
+# ROS_STATIC_PEERS = "10.42.0.10;10.42.0.1"     # Ethernet cable
+# ROS_STATIC_PEERS = "10.43.0.1;10.43.0.10"     # Pi's WiFi hotspot MDP-Grp14
 GZ_SIM_SYSTEM_PLUGIN_PATH = "$CONDA_PREFIX/lib"
 
 # Pi only: OpenCV/numpy (OpenMP) worker threads spin between jobs - the camera
