@@ -21,6 +21,8 @@ setup(
                 [f for f in glob(os.path.join(d, '*')) if os.path.isfile(f)])
             for d in glob('models/*') if os.path.isdir(d)
         ],
+        # PyTorch weights (best.pt), a single file each: share/mdp_vision/models/best.pt.
+        (os.path.join('share', package_name, 'models'), glob('models/*.pt')),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
