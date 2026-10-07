@@ -384,7 +384,6 @@ class Task1Runner(RunnerBase):
         dx, dy, note = self.ir_fix.correction()
         if math.hypot(dx, dy) < 0.005 or self.last_odom is None:
             self.get_logger().info(f"IR FIX    #{self.current_label()} none: {note}")
-            self.show_ir_fix(self.current_pose, self.current_pose, f"IR #{self.current_label()} none")
             return self.current_pose
         try:   # the shift is in the map frame; the EKF wants odom
             tf = self.tf_buffer.lookup_transform('odom', 'map', rclpy.time.Time())
@@ -404,13 +403,13 @@ class Task1Runner(RunnerBase):
         self.ekf_set_pose.call_async(req)
         x, y, yaw = self.current_pose
         fixed = (x + dx, y + dy, yaw)
-        self.show_ir_fix(self.current_pose, fixed,
-                         f"IR #{self.current_label()} {dx * 100:+.1f}, {dy * 100:+.1f} cm")
+        self.show_ir_fix(self.current_pose, fixed, f"{math.hypot(dx, dy) * 100:.1f} cm")
         self.get_logger().info(f"IR FIX    #{self.current_label()} {note} -> {self.fmt(fixed)}")
         return fixed
 
     def show_ir_fix(self, before, after, text):
-        """This run's IR fixes in the 3D view (/ir_fix_markers), one per scan stop."""
+        """This run's IR fixes in the 3D view (/ir_fix_markers): an arrow from where the
+        pose was to where the IRs put it, and how far. None where nothing moved."""
         self._ir_fix_marks += markers.ir_fix_markers(self.stamp(), len(self._ir_fix_marks), before, after, text)
         self.ir_fix_pub.publish(MarkerArray(markers=self._ir_fix_marks))
 
