@@ -55,7 +55,7 @@ from mdp_algorithm.control.pure_pursuit_follower import PurePursuitController, y
 from mdp_algorithm.planning.costmap import Costmap, Obstacle
 from mdp_algorithm.planning.planner import plan_leg, plan_visiting_order
 from mdp_algorithm.utils import params as planner_params
-from mdp_bringup.tasks.ir_pose_fix import (IR_CREEP_MAX_M, IR_FIX_DELAY_S, IR_FIX_MAX_S, IR_SEARCH_MAX_M,
+from mdp_bringup.tasks.ir_pose_fix import (IR_APPROACH_M, IR_CREEP_MAX_M, IR_FIX_DELAY_S, IR_FIX_MAX_S, IR_SEARCH_MAX_M,
                                            Face, IrPoseFix)
 from mdp_bringup.tasks.runner_base import RunnerBase
 from mdp_bringup.utils.run import run
@@ -840,10 +840,17 @@ class Task1Runner(RunnerBase):
         f.lqr_weights = tuple(float(p(n)) for n in ('lqr_q_lateral', 'lqr_q_heading', 'lqr_q_steer', 'lqr_r'))
         f.steer_tau = float(p('steering_time_constant'))
         f.pose_latency = float(p('pose_latency'))
-        cmd = self.follower.compute_cmd()
+        ir_stop = self.ir_approach()
+        if ir_stop:
+            self.follower.set_path([])            # both IRs on the block: this is the stop
+        cmd = None if ir_stop else self.follower.compute_cmd()
         if cmd is None or self.follower.is_done():
-            self.send_cmd(0.0, 0.0)
             idx = self.current_target_idx
+            # Only the IR that meets the block first is on it: creep on, no stop in between.
+            creep_on = (not ir_stop and self.ir_fix is not None and self.get_parameter('ir_pose_fix').value
+                        and idx not in self._slid and self.ir_fix.seen() == self.leading_ir())
+            if not creep_on:
+                self.send_cmd(0.0, 0.0)
             cx, cy, ct = self.checkpoints[idx]
             yaw = self.current_pose[2]
             dyaw = math.degrees(math.atan2(math.sin(yaw - ct), math.cos(yaw - ct)))
@@ -867,17 +874,42 @@ class Task1Runner(RunnerBase):
             self.set_state(State.PAUSE_FOR_SCAN)
             if self.ir_fix is not None and self.get_parameter('ir_pose_fix').value:
                 self.ir_fix.at_stop()
-                self._ir_fix_pending, self._crept = True, False
-                # Which way it drove in (the leg's last gear): a block no IR sees now is
-                # behind if one saw it on the way in, ahead if none did (start_find).
-                path = self.follower.path
-                self._arrive_dir = 1.0 if not path or path[-1][3] >= 0 else -1.0
+                self._ir_fix_pending, self._crept = True, ir_stop or creep_on
+            how = ('both IRs on the block' if ir_stop else
+                   f'{self.leading_ir()} IR on the block - creeping on' if creep_on else 'scanning')
             self.get_logger().info(f"ARRIVED   #{self.current_label()} at {self.fmt(self.current_pose)} "
-                                   f"(target {self.fmt((cx, cy, ct))}, heading {dyaw:+.0f}deg) - scanning")
+                                   f"(target {self.fmt((cx, cy, ct))}, heading {dyaw:+.0f}deg) - {how}")
+            if creep_on:
+                self.start_find()
         elif self.left_path():
             return
         else:
             self.send_cmd(*cmd)
+
+    def leading_ir(self) -> str:
+        """The IR that meets the block first driving into the stop: 'front' forward, 'rear' reversing."""
+        return 'front' if self._arrive_dir > 0 else 'rear'
+
+    def ir_approach(self) -> bool:
+        """The leg's last stretch (IR_APPROACH_M from the stop, IR fix on): the IR
+        that meets the block first is on it - creep speed; both on - stop there
+        (True), that is the stop. Not at a stop slid from the table's edge."""
+        f = self.follower
+        f.speed_cap = math.inf
+        idx = self.current_target_idx
+        if (self.ir_fix is None or self.ir_fix.face is None or not self.get_parameter('ir_pose_fix').value
+                or idx in self._slid or not f.path or not f.on_last_segment()):
+            return False
+        self._arrive_dir = 1.0 if f.path[-1][3] >= 0 else -1.0
+        cx, cy, _ = self.checkpoints[idx]
+        if math.hypot(self.current_pose[0] - cx, self.current_pose[1] - cy) > IR_APPROACH_M:
+            return False
+        seen = self.ir_fix.seen()
+        if seen == 'both':
+            return True
+        if seen == self.leading_ir():
+            f.speed_cap = float(self.get_parameter('follower.creep_linear_vel').value)
+        return False
 
     def left_path(self) -> bool:
         """Further than follower.max_path_error off the leg's path: stop, and plan
