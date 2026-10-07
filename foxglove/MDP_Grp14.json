@@ -260,6 +260,18 @@
           "enabled": true,
           "timestampMethod": "receiveTime",
           "label": "to checkpoint (m)"
+        },
+        {
+          "value": "/ir.range",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "label": "IR1 rear (m)"
+        },
+        {
+          "value": "/ir2.range",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "label": "IR2 front (m)"
         }
       ],
       "showXAxisLabels": true,
@@ -1186,13 +1198,13 @@
           "value": "/ir.range",
           "enabled": true,
           "timestampMethod": "receiveTime",
-          "label": "IR"
+          "label": "IR1 (rear)"
         },
         {
           "value": "/ir2.range",
           "enabled": true,
           "timestampMethod": "receiveTime",
-          "label": "IR 2"
+          "label": "IR2 (front)"
         }
       ],
       "showXAxisLabels": true,
