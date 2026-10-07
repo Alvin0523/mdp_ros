@@ -177,7 +177,9 @@ task1_runner:
       # on after the stop (~5 cm at 0.2 m/s, ~20 cm at 0.4) and reverses at full
       # speed (max_reverse_linear_vel only applies when this is on).
       use_regulated_linear_velocity_scaling: true
-      max_lateral_accel: 0.5          # m/s^2 - full lock (~0.18 m) -> 0.30 m/s
+      max_lateral_accel: 0.25         # m/s^2 - full lock (~0.18 m) -> 0.21 m/s. Was 0.5
+                                      # (0.30 at full lock): at 0.3 m/s the car skidded at
+                                      # full lock - 9 cm of drift on one leg (2026-10-07)
       regulated_linear_scaling_min_speed: 0.15   # m/s, never slower in a curve
       max_reverse_linear_vel: 0.3     # m/s
       approach_velocity_scaling_dist: 0.20   # m
