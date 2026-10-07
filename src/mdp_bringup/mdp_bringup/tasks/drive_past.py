@@ -1,6 +1,7 @@
-"""Task 1: reading a block's image while driving past it (task1_runner, LOG ONLY
-for now - the car still stops at every block; the log and the 3D view show what
-it would have read on the way, to check it never credits the wrong block).
+"""Task 1: reading a block's image while driving past it (task1_runner). The
+block being driven to, when the IR rule allows (task1_runner.pass_ok), is read on
+the last stretch into its stop and passed without stopping; any other block read
+on the way is only logged (SEEN) - the car still stops there.
 
 Every YOLO frame while driving brings its boxes (/yolo_detections). A box counts
 for a block only when it is where that block's image face must appear in the
@@ -9,7 +10,8 @@ image, and the right size for its distance:
   candidate face  not read yet; facing the camera (within MAX_ANGLE of square);
                   RANGE_M away; its projected centre in the middle band of the
                   image (BAND); no other block between the camera and it
-  matching box    centre within POS_TOL_PX of the face's projected centre, its
+  matching box    centre within POS_TOL_U_PX across / POS_TOL_V_PX up of the
+                  face's projected centre, its
                   longer side SIZE_RATIO x the printed symbol's projected size
                   (SYMBOL_M square; YOLO boxes the symbol, a '1' is narrow but
                   tall), not cut by the image edge, confidence >= MIN_CONF
@@ -30,7 +32,9 @@ SYMBOL_M = 0.061                    # the printed symbol, square (models/symbols
 MAX_ANGLE = math.radians(30.0)
 RANGE_M = (0.20, 0.60)
 BAND = 0.25                         # the projected centre within the middle 50 % across
-POS_TOL_PX = 40.0
+POS_TOL_U_PX = 80.0                 # ~4.5 cm along the face at 30 cm: the pose drifts 2-9 cm
+                                    # along a leg between IR fixes (car, 2026-10-07)
+POS_TOL_V_PX = 40.0                 # up/down: the camera's height is fixed, the pose does not move it
 SIZE_RATIO = (0.6, 1.5)
 EDGE_PX = 3.0
 MIN_CONF = 0.5
@@ -118,7 +122,7 @@ def match(cands, boxes, width, height):
             continue
         u, v, size = (x1 + x2) / 2.0, (y1 + y2) / 2.0, max(x2 - x1, y2 - y1)
         ok = [i for i, cu, cv, cw in cands
-              if abs(u - cu) <= POS_TOL_PX and abs(v - cv) <= POS_TOL_PX
+              if abs(u - cu) <= POS_TOL_U_PX and abs(v - cv) <= POS_TOL_V_PX
               and SIZE_RATIO[0] * cw <= size <= SIZE_RATIO[1] * cw]
         if len(ok) == 1:
             pairs.append((ok[0], tid))

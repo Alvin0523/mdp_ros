@@ -163,6 +163,8 @@ class Task1Runner(RunnerBase):
         self.ir_fix = None             # IrPoseFix once the IR positions are known (plan)
         self._ir_fix_pending = False   # at a scan stop, the fix not yet applied
         self._finds = 0                # searches (start_find) at this stop - at most 2
+        self._since_fix = 0            # blocks visited since the last IR fix (pass_ok)
+        self._fixed_here = False       # this stop had its IR fix
         self._creep = None             # a straight creep in progress, see creep()
         for name in ('ir', 'ir2'):
             self.create_subscription(Range, f'/{name}', lambda m, n=name: self.ir_callback(n, m), 10)
@@ -293,6 +295,7 @@ class Task1Runner(RunnerBase):
         # Both IRs on the block (or as close as the search got): the car stays where
         # it is - the fix only puts the pose estimate where the car really is.
         fixed = self.apply_ir_fix()
+        self._fixed_here = True
         self.ir_fix.reset(None)
         self.check_next_leg(fixed)
         return False
@@ -556,6 +559,10 @@ class Task1Runner(RunnerBase):
             self.run_start, self.run_end = self.now(), None
             self._ir_fix_marks = []                  # a new run: last run's IR fixes off the 3D view
             self._results, self._last_result = {}, ''
+            self._since_fix, self._fixed_here = 0, False
+            camera = self.camera_on_car() if self.drive_past is None else None
+            if camera is not None:
+                self.drive_past = DrivePast(camera)
             if self.drive_past is not None:
                 self.drive_past.reset([(x, y) for x, y, _ in self.obstacles],
                                       [markers.FACING[f] for _, _, f in self.obstacles])
@@ -908,6 +915,9 @@ class Task1Runner(RunnerBase):
         cmd = None if ir_stop else self.follower.compute_cmd()
         if cmd is None or self.follower.is_done():
             idx = self.current_target_idx
+            if self.pass_ok(idx) and self.visiting_order[idx] in self.drive_past.read:
+                self.pass_block(idx)              # read on the way in: no stop
+                return
             # Only the IR that meets the block first is on it: creep on, no stop in between.
             creep_on = not ir_stop and self.ir_active(idx) and self.ir_fix.seen() == self.leading_ir()
             if not (creep_on or ir_stop):
@@ -949,6 +959,23 @@ class Task1Runner(RunnerBase):
         else:
             self.send_cmd(*cmd)
 
+    def pass_ok(self, idx) -> bool:
+        """May block `idx` be read on the way in and passed without stopping? Only
+        with the last block's IR fix done and the next block an IR stop (or none
+        next): the car is never more than one block without an IR fix."""
+        return (self.drive_past is not None and self._since_fix == 0
+                and (idx == len(self.visiting_order) - 1 or self.ir_active(idx + 1)))
+
+    def pass_block(self, idx):
+        """Read on the way in (drive_past): report it and go on to the next block."""
+        tid = self.drive_past.read[self.visiting_order[idx]]
+        self.get_logger().info(f"PASSED    #{self.current_label()} = {targets.label(tid)} read on the way in - "
+                               f"no stop (IR fix at the next one)")
+        self.detected_target_id, self.scan_detections = tid, []
+        self.state_start = self.now()
+        self._fixed_here = False
+        self.finish_scan()
+
     def ir_active(self, idx) -> bool:
         """The IR approach, creep and fix at stop `idx`: not at the last one (nothing
         is driven after it, a better pose is no use) nor at one slid clear of the table's
@@ -967,7 +994,7 @@ class Task1Runner(RunnerBase):
         f = self.follower
         f.speed_cap = math.inf
         idx = self.current_target_idx
-        if not self.ir_active(idx) or self.ir_fix.face is None or not f.path or not f.on_last_segment():
+        if self.pass_ok(idx) or not self.ir_active(idx) or self.ir_fix.face is None or not f.path or not f.on_last_segment():
             return False
         self._arrive_dir = 1.0 if f.path[-1][3] >= 0 else -1.0
         cx, cy, ct = self.checkpoints[idx]
@@ -1105,6 +1132,8 @@ class Task1Runner(RunnerBase):
         self.get_logger().info(f"TARGET    #{obs} = {targets.label(target_id)}   (YOLO saw {seen}, "
                                f"{self.now() - self.state_start:.1f} s{check})")
         found = self.detected_target_id is not None
+        self._since_fix = 0 if self._fixed_here else self._since_fix + 1
+        self._fixed_here = False
         self._last_result = f'#{obs} = {targets.label(target_id) if found else "UNKNOWN"}'
         self._results[self.visiting_order[self.current_target_idx]] = (targets.short(target_id) if found else '?',
                                                                        found)
