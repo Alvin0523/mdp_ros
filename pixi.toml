@@ -32,6 +32,7 @@ vision = { cmd = "ros2 launch mdp_bringup vision.launch.py", description = "Came
 
 # --- Run control (same for real and sim; reset works on any bringup; setup/go/stop need task:=1)
 setup = { cmd = "ros2 run mdp_bringup trigger /setup_obstacles", description = "Send the task 1 obstacles from the layout file (config/tasks.yaml, or the launch's layout:=), like the tablet's DONE - same as Foxglove's SETUP" }
+block = { cmd = "ros2 run mdp_bringup publish_obstacles --block", description = "Task 1 with ONE block, like the tablet sending just it: pixi run block COL ROW N|E|S|W (image side). One checkpoint - e.g. to test the IR position fix (ros2 param set /task1_runner ir_pose_fix true|false)" }
 reset = { cmd = "ros2 run mdp_bringup trigger /reset_pose", description = "Reset the EKF pose to the start pose (base bringup, any task)" }
 go = { cmd = "ros2 run mdp_bringup trigger /start_run", description = "Start the planned run (like the tablet's BEGIN)" }
 stop = { cmd = "ros2 run mdp_bringup trigger /stop_run", description = "Stop the run and hold zero velocity" }

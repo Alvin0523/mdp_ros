@@ -29,10 +29,18 @@ DEFAULT_CONFIG = f"{get_package_share_directory('mdp_bringup')}/config/tasks.yam
 
 
 class ObstaclePublisher(Node):
-    def __init__(self, config_path: str):
+    def __init__(self, config_path: str, block=None):
         super().__init__('publish_obstacles')
 
-        obstacles = obstacle_layout.load(config_path)
+        if block is not None:
+            # One block from the command line (pixi run block COL ROW FACE): task 1
+            # with a single checkpoint - e.g. testing the IR position fix there.
+            col, row, facing = block
+            obstacles = [obstacle_layout.LayoutObstacle(
+                1, (col + 0.5) * obstacle_layout.CELL_M, (row + 0.5) * obstacle_layout.CELL_M, facing)]
+            config_path = 'the command line'
+        else:
+            obstacles = obstacle_layout.load(config_path)
         if not obstacles:
             self.get_logger().warn(f"No obstacles found in {config_path} - nothing to publish.")
 
@@ -77,8 +85,17 @@ def main(args=None):
     argv = sys.argv[1:]
     if '--ros-args' in argv:
         argv = argv[:argv.index('--ros-args')]
+    block = None
+    if argv and argv[0] == '--block':
+        # --block COL ROW N|E|S|W : one block, in tablet cells
+        if len(argv) != 4 or argv[3].upper() not in 'NESW' or len(argv[3]) != 1:
+            sys.exit('usage: pixi run block COL ROW N|E|S|W   (cells 0..19, the image side)')
+        col, row = int(argv[1]), int(argv[2])
+        if not (0 <= col < 20 and 0 <= row < 20):
+            sys.exit('cells are 0..19')
+        block, argv = (col, row, argv[3].upper()), []
     config_path = argv[0] if argv else DEFAULT_CONFIG
-    node = ObstaclePublisher(config_path)
+    node = ObstaclePublisher(config_path, block)
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:
