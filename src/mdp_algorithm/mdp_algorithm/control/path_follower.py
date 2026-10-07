@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
-Pure pursuit path follower for the Ackermann car (ROS-free).
+Path follower for the Ackermann car (ROS-free): pure pursuit, feedback or LQR
+steering (follower.path_tracking; task 1 runs lqr).
 
 Give it a path of (x, y, theta, gear) points and a stream of poses; each tick
 compute_cmd() returns the /cmd_vel (linear.x, angular.z) to send. task1_runner
@@ -75,7 +76,7 @@ def yaw_from_quaternion(q) -> float:
     return math.atan2(2.0 * (q.w * q.z + q.x * q.y), 1.0 - 2.0 * (q.y * q.y + q.z * q.z))
 
 
-class PurePursuitController:
+class PathFollower:
     def __init__(self, wheelbase: Optional[float] = None, lookahead_dist: Optional[float] = None,
                  max_steering_left: Optional[float] = None, max_steering_right: Optional[float] = None,
                  target_speed: Optional[float] = None, goal_tolerance: Optional[float] = None,

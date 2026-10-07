@@ -22,7 +22,7 @@ from std_msgs.msg import String
 from std_srvs.srv import Trigger
 from visualization_msgs.msg import Marker, MarkerArray
 
-from mdp_algorithm.control.pure_pursuit_follower import yaw_from_quaternion
+from mdp_algorithm.control.path_follower import yaw_from_quaternion
 from mdp_bringup.utils import markers
 from mdp_bringup.utils.run import wall_timer
 
@@ -58,7 +58,7 @@ class RunnerBase(Node):
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
         wall_timer(self, 0.05, self._loop)   # 20 Hz
 
-        self.follower = None             # the runner's PurePursuitController
+        self.follower = None             # the runner's PathFollower
         self.current_pose = (0.0, 0.0, 0.0)   # map frame, from odom_callback
         self.have_pose = False
         self.last_odom = None

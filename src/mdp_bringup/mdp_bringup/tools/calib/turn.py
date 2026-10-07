@@ -30,7 +30,7 @@ from rclpy.node import Node
 from geometry_msgs.msg import TwistStamped
 from tf2_msgs.msg import TFMessage
 
-from mdp_algorithm.control.pure_pursuit_follower import yaw_from_quaternion
+from mdp_algorithm.control.path_follower import yaw_from_quaternion
 from mdp_algorithm.utils import params as planner_params
 from mdp_bringup.tools.calib import log
 from mdp_bringup.utils.run import run, wall_timer

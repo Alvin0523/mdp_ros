@@ -48,6 +48,9 @@ IR_FIX_MAX_S = 1.5
 IR_CREEP_MAX_M = 0.10    # one IR on the block: creep at most this far for the other
 IR_APPROACH_M = 0.15     # this close to the stop (last stretch of the leg): the IR that meets the
                          # block first on it - creep speed; both on - stop there
+IR_APPROACH_YAW = math.radians(8.0)   # ...only this square to the stop's heading: still turning
+                         # in, the IRs saw the block and it stopped 19 deg off - the camera
+                         # looked past it (sim 2026-10-07)
 IR_SEARCH_MAX_M = 0.15   # neither on it: search at most this far
 
 

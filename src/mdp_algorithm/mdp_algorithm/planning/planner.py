@@ -76,7 +76,7 @@ def plan_leg(costmap: Costmap, start_pose_m: Pose, target_pose_m: Pose,
     the costmap from plan_visiting_order().
 
     Returns a list of DensePose (x, y, theta, gear) in metres / radians, ready
-    for PurePursuitController.set_path() - or [] if Hybrid A* found no path
+    for PathFollower.set_path() - or [] if Hybrid A* found no path
     (the caller skips that obstacle).
 
     progress_callback: called every `progress_interval` expansions with the
