@@ -56,7 +56,7 @@ from mdp_algorithm.planning.costmap import Costmap, Obstacle
 from mdp_algorithm.planning.planner import plan_leg, plan_visiting_order
 from mdp_algorithm.utils import params as planner_params
 from mdp_bringup.tasks.ir_pose_fix import (IR_APPROACH_M, IR_APPROACH_YAW, IR_CREEP_MAX_M, IR_FIX_DELAY_S,
-                                           IR_FIX_MAX_S, IR_SEARCH_MAX_M, Face, IrPoseFix)
+                                           IR_FIX_MAX_S, IR_PAST_EDGE_M, IR_SEARCH_MAX_M, Face, IrPoseFix)
 from mdp_bringup.tasks.runner_base import RunnerBase
 from mdp_bringup.utils.run import run
 from mdp_bringup.utils import manual, markers, obstacle_layout, targets
@@ -154,7 +154,7 @@ class Task1Runner(RunnerBase):
 
         self.ir_fix = None             # IrPoseFix once the IR positions are known (plan)
         self._ir_fix_pending = False   # at a scan stop, the fix not yet applied
-        self._crept = False            # this stop already crept towards the block
+        self._finds = 0                # searches (start_find) at this stop - at most 2
         self._creep = None             # a straight creep in progress, see creep()
         for name in ('ir', 'ir2'):
             self.create_subscription(Range, f'/{name}', lambda m, n=name: self.ir_callback(n, m), 10)
@@ -265,8 +265,8 @@ class Task1Runner(RunnerBase):
     def ir_stop_step(self, waited) -> bool:
         """A control tick at a scan stop with the IR fix due (ir_pose_fix.py):
         wait for readings; until both IRs see the face, creep the way it must be
-        (start_find), stop there; fix the pose estimate. True while it holds
-        the scan back."""
+        (start_find) and on IR_PAST_EDGE_M; fix the pose estimate. True while
+        it holds the scan back."""
         if self._creep is not None:
             self.creep()
             return True
@@ -274,9 +274,9 @@ class Task1Runner(RunnerBase):
             return False
         if waited < IR_FIX_DELAY_S or not (self.ir_fix.ready() or waited >= IR_FIX_MAX_S):
             return True
-        slid = self.current_target_idx in self._slid
-        if self.ir_fix.seen() != 'both' and not self._crept and not slid:
-            self._crept = True
+        # Not both on (stopped short, or rolled one off): search - at most twice.
+        if self.ir_fix.seen() != 'both' and self._finds < 2:
+            self._finds += 1
             if self.start_find():
                 return True
         self._ir_fix_pending = False
@@ -315,6 +315,12 @@ class Task1Runner(RunnerBase):
                                f"{'forward' if direction > 0 else 'back'} <={dist * 100:.0f} cm")
         return True
 
+    def start_past(self, direction):
+        """Both IRs on: creep on until IR_PAST_EDGE_M past where the second came onto
+        the face (from that reading's pose, so the detection delay is not added)."""
+        start = self.ir_fix.second_on_pose() or self.current_pose
+        self._creep = {'mode': 'past', 'dir': direction, 'dist': IR_PAST_EDGE_M, 'from': start, 'after': 0.0}
+
     def creep(self):
         """Straight at follower.creep_linear_vel: 'find' until both
         IRs see the face, 'return' back to where it started; then the scan starts over."""
@@ -325,8 +331,15 @@ class Task1Runner(RunnerBase):
         if c['from'] is None:
             c['from'] = self.current_pose
         done = math.hypot(self.current_pose[0] - c['from'][0], self.current_pose[1] - c['from'][1])
+        if c['mode'] == 'past' and self.ir_fix.face is not None:
+            # Along the face: coming in still turning, the car also moves towards it.
+            done = abs(self.ir_fix.along_offset(self.current_pose)[0] - self.ir_fix.along_offset(c['from'])[0])
         seen = self.ir_fix.seen() if c['mode'] == 'find' else None
         found = seen == 'both'
+        if found:                                 # on, without stopping, to IR_PAST_EDGE_M
+            self.get_logger().info(f"IR CREEP  #{self.current_label()} both on after {done * 100:.1f} cm")
+            self.start_past(c['dir'])
+            return
         # The IR that saw the block lost it before the other found it: wrong way, or
         # the other cannot see it - go back to where it started (car, 2026-10-07: it
         # crept the full 10 cm off the block).
@@ -357,8 +370,10 @@ class Task1Runner(RunnerBase):
                                'after': self.now() + 0.2}
             return
         if c['mode'] == 'find':
-            self.get_logger().info(f"IR CREEP  #{self.current_label()} {'both on' if found else 'not both'} "
-                                   f"after {done * 100:.1f} cm")
+            self.get_logger().info(f"IR CREEP  #{self.current_label()} not both after {done * 100:.1f} cm")
+        elif c['mode'] == 'past':
+            self.get_logger().info(f"IR STOP   #{self.current_label()} {done * 100:.1f} cm past the edge - "
+                                   f"both IRs on the block")
         self.ir_fix.at_stop()                     # the gaps: from standing still again
         self.scan_detections, self.detected_target_id = [], None
         self.set_state(State.PAUSE_FOR_SCAN)      # the scan starts over
@@ -688,7 +703,7 @@ class Task1Runner(RunnerBase):
                                    f"level with each block")
         for i, d in self._slid.items():
             self.get_logger().info(f"PLAN      #{self.tablet_id(self.visiting_order[i])} stop slid {d * 100:.0f} cm "
-                                   f"back from the table's edge - no IR creep there")
+                                   f"back from the table's edge - no IR fix there")
         self.publish_map()
         self.publish_checkpoints()
         if self.unreachable:
@@ -851,9 +866,8 @@ class Task1Runner(RunnerBase):
         if cmd is None or self.follower.is_done():
             idx = self.current_target_idx
             # Only the IR that meets the block first is on it: creep on, no stop in between.
-            creep_on = (not ir_stop and self.ir_fix is not None and self.get_parameter('ir_pose_fix').value
-                        and idx not in self._slid and self.ir_fix.seen() == self.leading_ir())
-            if not creep_on:
+            creep_on = not ir_stop and self.ir_active(idx) and self.ir_fix.seen() == self.leading_ir()
+            if not (creep_on or ir_stop):
                 self.send_cmd(0.0, 0.0)
             cx, cy, ct = self.checkpoints[idx]
             yaw = self.current_pose[2]
@@ -876,19 +890,28 @@ class Task1Runner(RunnerBase):
                 return
             self.detected_target_id, self.scan_detections = None, []
             self.set_state(State.PAUSE_FOR_SCAN)
-            if self.ir_fix is not None and self.get_parameter('ir_pose_fix').value:
+            if self.ir_active(idx):
                 self.ir_fix.at_stop()
-                self._ir_fix_pending, self._crept = True, ir_stop or creep_on
-            how = ('both IRs on the block' if ir_stop else
+                self._ir_fix_pending, self._finds = True, int(ir_stop or creep_on)
+            how = ('both IRs on the block - creeping on' if ir_stop else
                    f'{self.leading_ir()} IR on the block - creeping on' if creep_on else 'scanning')
             self.get_logger().info(f"ARRIVED   #{self.current_label()} at {self.fmt(self.current_pose)} "
                                    f"(target {self.fmt((cx, cy, ct))}, heading {dyaw:+.0f}deg) - {how}")
             if creep_on:
                 self.start_find()
+            elif ir_stop:
+                self.start_past(self._arrive_dir)
         elif self.left_path():
             return
         else:
             self.send_cmd(*cmd)
+
+    def ir_active(self, idx) -> bool:
+        """The IR approach, creep and fix at stop `idx`: not at the last one (nothing
+        is driven after it, a better pose is no use) nor at one slid from the table's
+        edge (only the front IR reaches the block, on its very edge - a wrong fix)."""
+        return (self.ir_fix is not None and bool(self.get_parameter('ir_pose_fix').value)
+                and idx not in self._slid and idx != len(self.visiting_order) - 1)
 
     def leading_ir(self) -> str:
         """The IR that meets the block first driving into the stop: 'front' forward, 'rear' reversing."""
@@ -897,12 +920,11 @@ class Task1Runner(RunnerBase):
     def ir_approach(self) -> bool:
         """The leg's last stretch (IR_APPROACH_M from the stop, IR fix on): the IR
         that meets the block first is on it - creep speed; both on - stop there
-        (True), that is the stop. Not at a stop slid from the table's edge."""
+        (True): the leg ends, start_past() takes it on. Only where ir_active()."""
         f = self.follower
         f.speed_cap = math.inf
         idx = self.current_target_idx
-        if (self.ir_fix is None or self.ir_fix.face is None or not self.get_parameter('ir_pose_fix').value
-                or idx in self._slid or not f.path or not f.on_last_segment()):
+        if not self.ir_active(idx) or self.ir_fix.face is None or not f.path or not f.on_last_segment():
             return False
         self._arrive_dir = 1.0 if f.path[-1][3] >= 0 else -1.0
         cx, cy, ct = self.checkpoints[idx]

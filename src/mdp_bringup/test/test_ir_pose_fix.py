@@ -151,3 +151,19 @@ def test_edge_while_rolling_not_used():
         for name, sensor in SENSORS.items():
             fix.on_reading(name, true_reading(sensor, (x, CAR_Y, YAW)), (x + 0.03, CAR_Y, YAW), speed=0.10)
     assert fix.edges == []
+
+
+def test_second_on_pose_is_where_it_crossed():
+    """Both on: the pose returned is where the second IR's run on the face began
+    (its edge crossing), not where both were confirmed STEADY_READINGS later."""
+    fix = IrPoseFix(SENSORS)
+    fix.reset(FACE)
+    x, first = 0.94, None
+    while fix.seen() != 'both':
+        x += 0.002
+        before = fix.on_from.copy()
+        readings(fix, x, (0.0, 0.0))
+        if first is None and len(fix.on_from) == 2 and len(before) < 2:
+            first = x
+    assert fix.second_on_pose()[0] == first
+    assert x - first >= 0.002 * (STEADY_READINGS - 1)
