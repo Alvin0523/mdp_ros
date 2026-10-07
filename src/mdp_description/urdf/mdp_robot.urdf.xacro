@@ -166,8 +166,8 @@
        its 10 cm face, and task1_runner corrects the car's position against
        the block (tasks/ir_pose_fix.py; it takes whichever is further forward as
        the front one). Their ranges are measured from here.
-       Measured on the car 2026-10-07: IR2 (/ir2, ir2_link) 42 mm AHEAD of the rear
-       axle, IR1 (/ir, ir_link) 72 mm behind it = 30 mm BEHIND the rear axle.
+       Measured on the car 2026-10-07: IR2 (/ir2, ir2_link) 41 mm AHEAD of the rear
+       axle, IR1 (/ir, ir_link) 72.5 mm behind it = 31.5 mm BEHIND the rear axle.
        Both faces 62 mm left of the centre line (base_link y). Height 90 mm above
        the table (not measured; only needs to clear the left rear tyre, top ~66 mm). -->
   <xacro:macro name="sharp_ir" params="name x">
@@ -184,8 +184,8 @@
       <child link="${name}_link"/>
     </joint>
   </xacro:macro>
-  <xacro:sharp_ir name="ir" x="-0.030"/>    <!-- IR1, /ir: the rear one -->
-  <xacro:sharp_ir name="ir2" x="0.042"/>    <!-- IR2, /ir2: the front one -->
+  <xacro:sharp_ir name="ir" x="-0.0315"/>   <!-- IR1, /ir: the rear one -->
+  <xacro:sharp_ir name="ir2" x="0.041"/>    <!-- IR2, /ir2: the front one -->
 
   <!-- Raspberry Pi Camera v2 (25 x 24 mm board, 9 mm deep). Looks along this
        link's +x; camera_yaw turns it (task 1: left). On the 3D-printed mount
