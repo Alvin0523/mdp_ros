@@ -385,7 +385,7 @@
     },
     "Image!yolo": {
       "imageMode": {
-        "imageTopic": "/image_raw/compressed"
+        "imageTopic": "/yolo_result/image_annotated"
       },
       "cameraState": {
         "distance": 20,
@@ -915,7 +915,7 @@
     },
     "Image!t2_yolo": {
       "imageMode": {
-        "imageTopic": "/image_raw/compressed"
+        "imageTopic": "/yolo_result/image_annotated"
       },
       "cameraState": {
         "distance": 20,
