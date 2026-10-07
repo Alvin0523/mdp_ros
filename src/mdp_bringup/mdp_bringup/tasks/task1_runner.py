@@ -177,7 +177,7 @@ class Task1Runner(RunnerBase):
         self._off_path = {}            # leg -> times it left its path (left_path)
         self._on_path = False          # car has reached its leg's path (left_path)
         self.unreachable = []
-        self._slid = {}                # checkpoint index -> m slid from the table's edge (plan)
+        self._slid = {}                # checkpoint index -> m slid along the face to fit (plan)
         self.current_target_idx = 0
         self.costmap = None
         # Bumped whenever a plan is abandoned (new setup, stop): a planning thread
@@ -679,7 +679,7 @@ class Task1Runner(RunnerBase):
         start = self.start_pose()
         self.visiting_order, self.checkpoints, self.unreachable, self.costmap = plan_visiting_order(
             obstacles_cm, start, theta_offset=camera_yaw)
-        # Stops the planner slid along the face to keep the car on the table (visiting_order):
+        # Stops the planner slid along the face for the car to fit (visiting_order):
         # index -> how far. Their IRs are not centred on the block; creeping would drive off.
         self._slid = {}
         for i, (x, y, t) in enumerate(self.checkpoints):
@@ -697,7 +697,7 @@ class Task1Runner(RunnerBase):
             # base_link: they are not centred on it (URDF), and lined up on base_link the
             # front one sat 0.9 cm from the block's edge and flickered off it (car,
             # 2026-10-07). Centred on their middle, both are as far inside as can be.
-            # A stop the planner slid back from the table's edge stays where it is.
+            # A stop the planner slid along the face stays where it is.
             mid = self.ir_mid_x()
             self.checkpoints = [(x, y, t) if i in self._slid else (x - mid * math.cos(t), y - mid * math.sin(t), t)
                                 for i, (x, y, t) in enumerate(self.checkpoints)]
@@ -705,7 +705,7 @@ class Task1Runner(RunnerBase):
                                    f"level with each block")
         for i, d in self._slid.items():
             self.get_logger().info(f"PLAN      #{self.tablet_id(self.visiting_order[i])} stop slid {d * 100:.0f} cm "
-                                   f"back from the table's edge - no IR fix there")
+                                   f"along the face to fit - no IR fix there")
         self.publish_map()
         self.publish_checkpoints()
         if self.unreachable:
@@ -910,8 +910,8 @@ class Task1Runner(RunnerBase):
 
     def ir_active(self, idx) -> bool:
         """The IR approach, creep and fix at stop `idx`: not at the last one (nothing
-        is driven after it, a better pose is no use) nor at one slid from the table's
-        edge (only the front IR reaches the block, on its very edge - a wrong fix)."""
+        is driven after it, a better pose is no use) nor at one slid clear of the table's
+        edge or a block (one IR at most reaches the block, on its very edge - a wrong fix)."""
         return (self.ir_fix is not None and bool(self.get_parameter('ir_pose_fix').value)
                 and idx not in self._slid and idx != len(self.visiting_order) - 1)
 

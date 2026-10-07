@@ -1,7 +1,7 @@
 # Everything that DRIVES the car - the one place to change it:
 #
 #   SPEEDS AT A GLANCE (m/s)
-#     task 1 path following    task1_runner  follower.desired_linear_vel   0.2
+#     task 1 path following    task1_runner  follower.desired_linear_vel   0.3 (reverse 0.3)
 #     task 2                   task2_runner  straight_speed / path_speed   0.45 / 0.25
 #     tablet arrow buttons     all nodes     manual_speed_mps              0.15
 #
@@ -59,11 +59,13 @@ task1_runner:
     costmap:
       resolution: 0.01                # m per costmap cell (the tablet's 10 cm
                                       # cells are too coarse for a 19 cm car)
-      footprint_padding: 0.03         # m added on every side of the footprint
+      footprint_padding: 0.04         # m added on every side of the footprint
                                       # for the hard collision check. Nav2's
                                       # default is 0.01; with 0.01 the planner
                                       # passed blocks at ~1 cm, less than the
-                                      # car tracks (hit obstacle 1 in sim).
+                                      # car tracks (hit obstacle 1 in sim). 0.04:
+                                      # with 0.03 it squeezed past (16,13)E at
+                                      # 3 cm and hit it (car, 2026-10-07).
       inflation_radius: 0.25          # m from a lethal cell over which cost is
                                       # spread. Nav2 advises >= the circumscribed
                                       # radius (base_link to the far front corner
@@ -115,7 +117,7 @@ task1_runner:
       lookahead_dist: 0.10            # m at 0.2 m/s (live)
       use_velocity_scaled_lookahead_dist: true   # above 0.2 m/s the lookahead
                                                  # grows with the speed
-      desired_linear_vel: 0.2         # m/s (live), clamped to 0.05 - 0.5. Sim
+      desired_linear_vel: 0.3         # m/s (live), clamped to 0.05 - 0.5. Sim
                                       # 2026-09-30 (6 blocks, lqr + pose_latency):
                                       # 0.4 closest body gap 0.9-1.7 cm; 0.5 touched
                                       # (pure pursuit touched at 0.4 too).
@@ -177,7 +179,7 @@ task1_runner:
       use_regulated_linear_velocity_scaling: true
       max_lateral_accel: 0.5          # m/s^2 - full lock (~0.18 m) -> 0.30 m/s
       regulated_linear_scaling_min_speed: 0.15   # m/s, never slower in a curve
-      max_reverse_linear_vel: 0.25    # m/s
+      max_reverse_linear_vel: 0.3     # m/s
       approach_velocity_scaling_dist: 0.20   # m
       min_approach_linear_velocity: 0.10     # m/s
       # Task 1 scan stop: the straight creep to the block for the IR fix
