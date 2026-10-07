@@ -5,6 +5,7 @@
     calib turn left [--speed 0.35]     turning circle at full lock + steering delay
     calib goto 5 8 E        planner + follower end to end: stop in cell (5,8) facing E
     calib ultrasonic 60     front ultrasonic vs a block 60 cm away (the car stays put)
+    calib ir                side IR curves: you move a block 10..40 cm, it fits ir1/ir2_curve
 
 `calib <what> -h` shows each one's options. Each run asks for the tape value at
 the end (in sim it uses Gazebo's true pose) and adds a row to
@@ -25,6 +26,7 @@ MODES = {
     'turn': 'turn',
     'goto': 'goto',
     'ultrasonic': 'ultrasonic',
+    'ir': 'ir',
 }
 DRIVES = ('straight', 'rotate', 'turn', 'goto')
 RUNNERS = ('task1_runner', 'task2_runner')
