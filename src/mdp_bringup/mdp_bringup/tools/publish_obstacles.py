@@ -29,10 +29,18 @@ DEFAULT_CONFIG = f"{get_package_share_directory('mdp_bringup')}/config/tasks.yam
 
 
 class ObstaclePublisher(Node):
-    def __init__(self, config_path: str):
+    def __init__(self, config_path: str, block=None):
         super().__init__('publish_obstacles')
 
-        obstacles = obstacle_layout.load(config_path)
+        if block is not None:
+            # Blocks from the command line (pixi run block COL ROW FACE [COL ROW FACE ...]):
+            # a short task 1 - e.g. testing the IR position fix at one or two checkpoints.
+            obstacles = [obstacle_layout.LayoutObstacle(
+                i + 1, (col + 0.5) * obstacle_layout.CELL_M, (row + 0.5) * obstacle_layout.CELL_M, facing)
+                for i, (col, row, facing) in enumerate(block)]
+            config_path = 'the command line'
+        else:
+            obstacles = obstacle_layout.load(config_path)
         if not obstacles:
             self.get_logger().warn(f"No obstacles found in {config_path} - nothing to publish.")
 
@@ -77,8 +85,25 @@ def main(args=None):
     argv = sys.argv[1:]
     if '--ros-args' in argv:
         argv = argv[:argv.index('--ros-args')]
+    block = None
+    if argv and argv[0] == '--block':
+        # --block COL ROW N|E|S|W [COL ROW N|E|S|W ...] : blocks in tablet cells
+        usage = 'usage: pixi run block COL ROW N|E|S|W [COL ROW N|E|S|W ...]   (cells 0..19, the image side)'
+        args = argv[1:]
+        if not args or len(args) % 3:
+            sys.exit(usage)
+        block = []
+        for i in range(0, len(args), 3):
+            try:
+                col, row, facing = int(args[i]), int(args[i + 1]), args[i + 2].upper()
+            except ValueError:
+                sys.exit(usage)
+            if facing not in ('N', 'E', 'S', 'W') or not (0 <= col < 20 and 0 <= row < 20):
+                sys.exit(usage)
+            block.append((col, row, facing))
+        argv = []
     config_path = argv[0] if argv else DEFAULT_CONFIG
-    node = ObstaclePublisher(config_path)
+    node = ObstaclePublisher(config_path, block)
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:

@@ -2,7 +2,7 @@
 past a block with two left IRs; the fix must find that amount."""
 import math
 
-from mdp_bringup.tasks.ir_pose_fix import BLOCK_HALF, Face, IrPoseFix
+from mdp_bringup.tasks.ir_pose_fix import BLOCK_HALF, STEADY_READINGS, Face, IrPoseFix
 
 SENSORS = {'ir': (0.04, 0.085, math.pi / 2), 'ir2': (-0.04, 0.085, math.pi / 2)}
 BLOCK = (1.0, 1.0)            # block centre; image side faces S (-y)
@@ -103,6 +103,27 @@ def test_seen_says_which_way_to_creep():
                          (BLOCK[0] + 0.12, 'none')]:
         fix = IrPoseFix(SENSORS)
         fix.reset(FACE)
-        for name, sensor in SENSORS.items():
-            fix.on_reading(name, true_reading(sensor, (stop_x, CAR_Y, YAW)), (stop_x, CAR_Y, YAW))
+        for _ in range(STEADY_READINGS):
+            for name, sensor in SENSORS.items():
+                fix.on_reading(name, true_reading(sensor, (stop_x, CAR_Y, YAW)), (stop_x, CAR_Y, YAW))
         assert fix.seen() == want, (stop_x, fix.seen())
+
+
+def test_one_stray_reading_does_not_count_as_on_the_face():
+    """On the car 2026-10-07: stopped with only the rear IR on the face, the
+    front one read a background jumping 23-80 cm; a single reading inside
+    HIT_TOL must not make it 'on the face' (the creep stopped after 0 cm)."""
+    fix = IrPoseFix(SENSORS)
+    fix.reset(FACE)
+    pose = (BLOCK[0] + 0.07, CAR_Y, YAW)   # front IR (ir, x+0.04) beyond the block's east edge,
+                                           # rear IR (ir2, x-0.04) on the face
+    fix.at_stop()
+    for _ in range(10):
+        fix.on_reading('ir2', true_reading(SENSORS['ir2'], pose), pose)
+        fix.on_reading('ir', 0.30, pose)          # past the block: background
+    assert fix.seen() == 'rear'
+    fix.on_reading('ir', 0.20, pose)              # one stray reading near the expected gap
+    assert fix.seen() == 'rear'
+    for _ in range(STEADY_READINGS):              # really on the face now
+        fix.on_reading('ir', 0.20, pose)
+    assert fix.seen() == 'both'
