@@ -29,7 +29,7 @@ from geometry_msgs.msg import TwistStamped
 from nav_msgs.msg import Odometry, Path
 from rclpy.node import Node
 
-from mdp_algorithm.control.pure_pursuit_follower import PurePursuitController, yaw_from_quaternion
+from mdp_algorithm.control.path_follower import PathFollower, yaw_from_quaternion
 from mdp_algorithm.planning.costmap import Costmap, Obstacle
 from mdp_algorithm.planning.planner import plan_leg
 from mdp_bringup.tools.calib import log
@@ -152,7 +152,7 @@ class GoTo(Node):
         moves = ' '.join('fwd' if gears[i] >= 0 else 'REV'
                          for i in range(len(gears)) if i == 0 or gears[i] != gears[i - 1])
         self.get_logger().info(f"GO        {moves}")
-        self.follower = PurePursuitController(target_speed=self.speed)
+        self.follower = PathFollower(target_speed=self.speed)
         self.follower.update_pose(*self.pose)
         self.follower.set_path(path)
         self.state = 'DRIVE'

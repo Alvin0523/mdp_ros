@@ -51,15 +51,15 @@ from std_msgs.msg import String
 from visualization_msgs.msg import MarkerArray
 from std_srvs.srv import Trigger
 
-from mdp_algorithm.control.pure_pursuit_follower import PurePursuitController, yaw_from_quaternion
+from mdp_algorithm.control.path_follower import PathFollower, yaw_from_quaternion
 from mdp_algorithm.planning.costmap import Costmap, Obstacle
 from mdp_algorithm.planning.planner import plan_leg, plan_visiting_order
 from mdp_algorithm.utils import params as planner_params
-from mdp_bringup.tasks.ir_pose_fix import (IR_APPROACH_M, IR_CREEP_MAX_M, IR_FIX_DELAY_S, IR_FIX_MAX_S, IR_SEARCH_MAX_M,
-                                           Face, IrPoseFix)
+from mdp_bringup.tasks.ir_pose_fix import (IR_APPROACH_M, IR_APPROACH_YAW, IR_CREEP_MAX_M, IR_FIX_DELAY_S,
+                                           IR_FIX_MAX_S, IR_SEARCH_MAX_M, Face, IrPoseFix)
 from mdp_bringup.tasks.runner_base import RunnerBase
 from mdp_bringup.utils.run import run
-from mdp_bringup.utils import manual, markers, obstacle_layout
+from mdp_bringup.utils import manual, markers, obstacle_layout, targets
 
 # RESET turns DONE once odometry reports the start pose within these.
 RESET_POS_TOL_M = 0.03
@@ -145,6 +145,9 @@ class Task1Runner(RunnerBase):
         # Each scan stop's IR fix in the 3D view: an arrow old -> new pose + numbers.
         self.ir_fix_pub = self.create_publisher(MarkerArray, '/ir_fix_markers', 10)
         self._ir_fix_marks = []
+        self._results = {}              # obstacle index -> (text, found): the 3D view's answers
+        self._last_result = ''          # '#3 = Number 1 (11)': the run panel's scan result
+        self._yolo_seen = ('', -1.0)    # YOLO's latest id and when (yolo_sees)
         self._arrive_dir = 1.0          # +1 forward / -1 reverse: how the car drove into this stop
         self._laptop_ok = False                # the laptop answered this plan: replans go there too
         self._leg_waits = {}                   # gen -> a replan waiting for the laptop (remote_leg)
@@ -158,7 +161,7 @@ class Task1Runner(RunnerBase):
             self.create_subscription(Range, f'/{name}', lambda m, n=name: self.ir_callback(n, m), 10)
         self.ekf_set_pose = self.create_client(SetPose, '/set_pose')   # the service: no /set_pose topic -> no RESET
 
-        self.follower = PurePursuitController()
+        self.follower = PathFollower()
         self.current_pose = (0.0, 0.0, math.pi / 2)
         self.set_state(State.WAITING_FOR_SETUP)
 
@@ -463,6 +466,8 @@ class Task1Runner(RunnerBase):
 
     def yolo_callback(self, msg: String):
         target_id = msg.data.strip()
+        if target_id:
+            self._yolo_seen = (target_id, self.now())
         if self.state != State.PAUSE_FOR_SCAN or not target_id:
             return
         if self.now() - self.state_start < float(self.get_parameter('scan_settle_s').value):
@@ -498,6 +503,8 @@ class Task1Runner(RunnerBase):
             self.reset_done = False     # the car is leaving the start
             self.run_start, self.run_end = self.now(), None
             self._ir_fix_marks = []                  # a new run: last run's IR fixes off the 3D view
+            self._results, self._last_result = {}, ''
+            self.publish_map()
             self.ir_fix_pub.publish(MarkerArray(markers=[markers.Marker(action=markers.Marker.DELETEALL)]))
             self._replanned = set()
             self._heading_retried = set()
@@ -901,8 +908,10 @@ class Task1Runner(RunnerBase):
                 or idx in self._slid or not f.path or not f.on_last_segment()):
             return False
         self._arrive_dir = 1.0 if f.path[-1][3] >= 0 else -1.0
-        cx, cy, _ = self.checkpoints[idx]
-        if math.hypot(self.current_pose[0] - cx, self.current_pose[1] - cy) > IR_APPROACH_M:
+        cx, cy, ct = self.checkpoints[idx]
+        x, y, yaw = self.current_pose
+        if (math.hypot(x - cx, y - cy) > IR_APPROACH_M
+                or abs(math.atan2(math.sin(yaw - ct), math.cos(yaw - ct))) > IR_APPROACH_YAW):
             return False
         seen = self.ir_fix.seen()
         if seen == 'both':
@@ -1028,8 +1037,13 @@ class Task1Runner(RunnerBase):
         obs = self.tablet_id(self.visiting_order[self.current_target_idx])
         self.send_bt(f"TARGET,{obs},{target_id}")
         seen = ' '.join(f"{k}x{n}" for k, n in Counter(self.scan_detections).most_common()) or 'nothing'
-        self.get_logger().info(f"TARGET    #{obs} = {target_id}   (YOLO saw {seen}, "
+        self.get_logger().info(f"TARGET    #{obs} = {targets.label(target_id)}   (YOLO saw {seen}, "
                                f"{self.now() - self.state_start:.1f} s)")
+        found = self.detected_target_id is not None
+        self._last_result = f'#{obs} = {targets.label(target_id) if found else "UNKNOWN"}'
+        self._results[self.visiting_order[self.current_target_idx]] = (
+            targets.label(target_id) if found else 'UNKNOWN', found)
+        self.publish_map()
 
         self.current_target_idx += 1
         if self.current_target_idx >= len(self.visiting_order):
@@ -1047,7 +1061,8 @@ class Task1Runner(RunnerBase):
         self.grid_pub.publish(markers.costmap_grid(self.costmap, stamp))
         self.arena_pub.publish(markers.arena_markers(stamp))
         self.obstacle_pub.publish(markers.obstacle_markers(
-            self.obstacles, [self.tablet_id(i) for i in range(len(self.obstacles))], stamp))
+            self.obstacles, [self.tablet_id(i) for i in range(len(self.obstacles))], stamp,
+            results=self._results))
 
     def publish_checkpoints(self):
         if self.checkpoints:
@@ -1090,6 +1105,15 @@ class Task1Runner(RunnerBase):
             counts = Counter(self.scan_detections).most_common()
             msg.yolo_ids, msg.yolo_counts = [k for k, _ in counts], [n for _, n in counts]
             msg.detected_id = self.detected_target_id or ''
+        if self.in_run() and idx < len(self.visiting_order):
+            msg.target_label = f'#{self.current_label()}'
+        # Live while scanning, then the last answer until the next scan has one.
+        if self.state == State.PAUSE_FOR_SCAN and self.detected_target_id:
+            msg.scan_result = f'#{self.current_label()} = {targets.label(self.detected_target_id)}'
+        else:
+            msg.scan_result = self._last_result
+        if self.now() - self._yolo_seen[1] < 1.0:
+            msg.yolo_sees = targets.label(self._yolo_seen[0])
         self.run_status_pub.publish(msg)
 
 

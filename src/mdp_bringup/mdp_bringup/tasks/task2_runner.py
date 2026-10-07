@@ -47,7 +47,7 @@ from mdp_interfaces.msg import RunStatus
 from sensor_msgs.msg import Range
 from std_msgs.msg import String
 
-from mdp_algorithm.control.pure_pursuit_follower import PurePursuitController
+from mdp_algorithm.control.path_follower import PathFollower
 from mdp_algorithm.planning.costmap import Costmap, Obstacle
 from mdp_algorithm.planning.planner import plan_leg
 from mdp_algorithm.utils import params as planner_params
@@ -92,7 +92,7 @@ class Task2Runner(RunnerBase):
         # (/cmd_vel, /run_status, the Foxglove drawings, /start_run ...: RunnerBase)
         self.create_subscription(Range, '/ultrasonic', self.ultrasonic_callback, 10)
 
-        self.follower = PurePursuitController()
+        self.follower = PathFollower()
         # Task 2 sets the speed and lookahead itself (speed_ahead(), follower_step()).
         self.follower.regulate = self.follower.velocity_scaled_lookahead = False
         self.us_offset = None            # base_link -> ultrasonic_link, m ahead (TF, from the URDF)

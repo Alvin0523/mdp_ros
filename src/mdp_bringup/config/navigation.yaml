@@ -110,7 +110,7 @@ task1_runner:
                                       # "too close to its own block" - unreachable.
 
     # ------------------------------------------------------------- follower --
-    # Pure pursuit on the planned path (control/pure_pursuit_follower.py).
+    # Following the planned path (control/path_follower.py): path_tracking picks the steering.
     follower:
       lookahead_dist: 0.10            # m at 0.2 m/s (live)
       use_velocity_scaled_lookahead_dist: true   # above 0.2 m/s the lookahead

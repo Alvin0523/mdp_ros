@@ -3,7 +3,8 @@
 Pure message builders - task1_runner publishes what these return:
   /occupancy_grid       costmap_grid()        the planner's costmap
   /grid_markers         arena_markers()       10 cm cell lines, area and start-box outlines
-  /obstacle_markers     obstacle_markers()    blocks, image face, number, cell label, walls
+  /obstacle_markers     obstacle_markers()    blocks, image face, number, cell label, walls,
+                                              task 1's scan result above each block
   /checkpoint_markers   checkpoint_markers()  where the car stops (arrow), visit order, cell
   /path_markers         leg_markers()         the leg being driven + the point being chased
   /search_progress      search_progress()     poses Hybrid A* has explored so far
@@ -94,8 +95,12 @@ def arena_markers(stamp, size=(ARENA_M, ARENA_M), start_box=(0.0, 0.0, START_BOX
     ])
 
 
-def obstacle_markers(obstacles, labels, stamp, sizes=None, walls=()) -> MarkerArray:
+RESULT_RGBA = {True: (0.2, 1.0, 0.4, 1.0), False: (1.0, 0.3, 0.3, 1.0)}   # found / UNKNOWN
+
+
+def obstacle_markers(obstacles, labels, stamp, sizes=None, walls=(), results=None) -> MarkerArray:
     """obstacles: (x_m, y_m, facing) block centres; labels: tablet number of each;
+    results: index -> (text, found) - the scan's answer above the block (green / red);
     sizes: (x, y) of each block (default 10 x 10 cm); walls: grey rectangles
     (x0, y0, x1, y1). Starts with DELETEALL so a smaller new set leaves no stale
     blocks behind."""
@@ -116,6 +121,10 @@ def obstacle_markers(obstacles, labels, stamp, sizes=None, walls=()) -> MarkerAr
             marker(stamp, 'obstacle_labels', 100 + i, Marker.TEXT_VIEW_FACING, LABEL_RGBA,
                    x, y, LABEL_Z, scale=(1, 1, 0.07), text=f'({cell(x)},{cell(y)})'),
         ]
+    for i, (text, found) in (results or {}).items():
+        x, y, _ = obstacles[i]
+        markers.append(marker(stamp, 'scan_results', 400 + i, Marker.TEXT_VIEW_FACING, RESULT_RGBA[found],
+                              x, y, LABEL_Z + 0.10, scale=(1, 1, 0.08), text=text))
     for i, (x0, y0, x1, y1) in enumerate(walls):
         markers.append(marker(stamp, 'walls', i, Marker.CUBE, (0.35, 0.35, 0.35, 0.9),
                               (x0 + x1) / 2.0, (y0 + y1) / 2.0, 0.05, scale=(x1 - x0, y1 - y0, 0.10)))

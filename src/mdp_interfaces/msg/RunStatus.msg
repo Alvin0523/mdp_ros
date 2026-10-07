@@ -38,3 +38,8 @@ float64 scan_duration
 string[] yolo_ids     # every id YOLO reported during this scan...
 uint16[] yolo_counts  # ...and how often
 string detected_id    # the most frequent - what TARGET will report
+
+# Readable copies for Foxglove's run panel (task 1)
+string target_label   # '#3' - the obstacle being visited
+string scan_result    # '#3 = Number 1 (11)' - what TARGET reports / reported for it
+string yolo_sees      # 'Number 1 (11)' - YOLO's latest report (last second), '' when none

@@ -202,7 +202,7 @@
           "label": "state"
         },
         {
-          "value": "/run_status.obstacle",
+          "value": "/run_status.target_label",
           "timestampMethod": "receiveTime",
           "customStates": {
             "type": "discrete",
@@ -211,7 +211,7 @@
           "label": "target obstacle"
         },
         {
-          "value": "/run_status.detected_id",
+          "value": "/run_status.scan_result",
           "timestampMethod": "receiveTime",
           "customStates": {
             "type": "discrete",
@@ -220,7 +220,7 @@
           "label": "scan result"
         },
         {
-          "value": "/yolo_result.data",
+          "value": "/run_status.yolo_sees",
           "timestampMethod": "receiveTime",
           "customStates": {
             "type": "discrete",
