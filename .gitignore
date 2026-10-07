@@ -25,3 +25,6 @@ src/mdp_vision/camera_ros/
 
 # recorded rosbags (pixi run bag) - large, keep local
 bags/
+
+# camera recordings for labelling (pixi run capture) - large, keep local
+datasets/

@@ -15,7 +15,8 @@ NODES = {
     'sim_helpers': 'sim.sim_helpers',
 }
 TOOLS = {'trigger': 'tools.trigger', 'publish_obstacles': 'tools.publish_obstacles',
-         'around_obstacle': 'tools.around_obstacle', 'calib': 'tools.calib.cli'}
+         'around_obstacle': 'tools.around_obstacle', 'calib': 'tools.calib.cli',
+         'capture': 'tools.capture'}
 
 setup(
     name=package_name,
