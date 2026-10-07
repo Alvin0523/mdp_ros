@@ -98,9 +98,9 @@ RESULT_RGBA = {True: (0.2, 1.0, 0.4, 1.0), False: (1.0, 0.3, 0.3, 1.0)}   # foun
 
 def obstacle_markers(obstacles, labels, stamp, sizes=None, walls=(), results=None) -> MarkerArray:
     """obstacles: (x_m, y_m, facing) block centres; labels: tablet number of each;
-    results: index -> (text, found) - the scan's answer ('W / 32') against the image
-    face, which turns green when found (red: UNKNOWN); the block's own number is on
-    its top. No cell labels: the grid shows the cells and they cluttered the view;
+    results: index -> (text, found) - the scan's answer ('W / 32') above the block;
+    its image face turns green when found (red: UNKNOWN); the block's own number is
+    on its top. No cell labels: the grid shows the cells and they cluttered the view;
     sizes: (x, y) of each block (default 10 x 10 cm); walls: grey rectangles
     (x0, y0, x1, y1). Starts with DELETEALL so a smaller new set leaves no stale
     blocks behind."""
@@ -122,13 +122,9 @@ def obstacle_markers(obstacles, labels, stamp, sizes=None, walls=(), results=Non
                    x, y, 0.102, scale=(1, 1, 0.07), text=labels[i]),
         ]
     for i, (text, found) in (results or {}).items():
-        # Against the image face, at its height: reads as written on it.
-        x, y, facing = obstacles[i]
-        fx, fy = FACING[facing]
-        sx, sy = sizes[i] if sizes else (OBSTACLE_M, OBSTACLE_M)
+        x, y, _ = obstacles[i]      # above the block (its number is on its top)
         markers.append(marker(stamp, 'scan_results', 400 + i, Marker.TEXT_VIEW_FACING, RESULT_RGBA[found],
-                              x + fx * (sx / 2.0 + 0.03), y + fy * (sy / 2.0 + 0.03), 0.06,
-                              scale=(1, 1, 0.05), text=text))
+                              x, y, 0.19, scale=(1, 1, 0.06), text=text))
     for i, (x0, y0, x1, y1) in enumerate(walls):
         markers.append(marker(stamp, 'walls', i, Marker.CUBE, (0.35, 0.35, 0.35, 0.9),
                               (x0 + x1) / 2.0, (y0 + y1) / 2.0, 0.05, scale=(x1 - x0, y1 - y0, 0.10)))
@@ -161,7 +157,7 @@ def run_timer(stamp, seconds, phase) -> Marker:
     """The run time as big text riding above the car, for the 3D panel (/run_timer).
     phase: 'idle' (grey), 'running' (white), 'done' (green, the final time)."""
     m = marker(stamp, 'run_timer', 0, Marker.TEXT_VIEW_FACING, TIMER_RGBA[phase], 0.08, 0.0, 0.45,
-               scale=(1, 1, TIMER_TEXT_M), text=f'{seconds:.1f}')
+               scale=(1, 1, TIMER_TEXT_M), text=f'{seconds:.1f} s')
     m.header.frame_id = 'base_link'
     return m
 
