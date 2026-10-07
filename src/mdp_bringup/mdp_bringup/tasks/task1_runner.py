@@ -718,6 +718,7 @@ class Task1Runner(RunnerBase):
     def plan(self):
         """Order + checkpoints now; every leg in a background thread."""
         self.configure_planner()
+        self._since_fix = 0            # from the start (reset pose): as good as an IR fix
         camera_yaw = self.camera_yaw()
         if camera_yaw is None:
             return   # tried again next tick
