@@ -89,6 +89,9 @@ public:
     ultrasonic_pub_ = create_publisher<sensor_msgs::msg::Range>("/ultrasonic", 10);
     ir_pub_ = create_publisher<sensor_msgs::msg::Range>("/ir", 10);
     ir2_pub_ = create_publisher<sensor_msgs::msg::Range>("/ir2", 10);
+    /* The raw ADC values (0-4095) the curves turn into cm - for `pixi run calib ir`. */
+    ir_raw_pub_ = create_publisher<std_msgs::msg::UInt16>("/ir/raw", 10);
+    ir2_raw_pub_ = create_publisher<std_msgs::msg::UInt16>("/ir2/raw", 10);
     steering_pwm_pub_ = create_publisher<std_msgs::msg::UInt16>(
       "/hardware_bridge/steering_pwm_us", 10);
 
@@ -522,6 +525,12 @@ private:
     ir2_range.range = static_cast<float>(ir_cm(pkt.ir2_raw, 1) / 100.0);
     ir2_pub_->publish(ir2_range);
 
+    std_msgs::msg::UInt16 raw_msg;
+    raw_msg.data = pkt.ir_raw;
+    ir_raw_pub_->publish(raw_msg);
+    raw_msg.data = pkt.ir2_raw;
+    ir2_raw_pub_->publish(raw_msg);
+
     std_msgs::msg::UInt16 pwm_msg;
     pwm_msg.data = pkt.servo_pwm_us;
     steering_pwm_pub_->publish(pwm_msg);
@@ -599,6 +608,8 @@ private:
   double ir_max_cm_ = 80.0;
   rclcpp::Publisher<sensor_msgs::msg::Range>::SharedPtr ir_pub_;
   rclcpp::Publisher<sensor_msgs::msg::Range>::SharedPtr ir2_pub_;
+  rclcpp::Publisher<std_msgs::msg::UInt16>::SharedPtr ir_raw_pub_;
+  rclcpp::Publisher<std_msgs::msg::UInt16>::SharedPtr ir2_raw_pub_;
   rclcpp::Publisher<std_msgs::msg::UInt16>::SharedPtr steering_pwm_pub_;
   rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr joint_command_sub_;
   rclcpp::TimerBase::SharedPtr link_watchdog_timer_;

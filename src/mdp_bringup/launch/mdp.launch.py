@@ -342,6 +342,8 @@ def generate_launch_description(argv=None):
                      '/camera/camera_info@sensor_msgs/msg/CameraInfo[gz.msgs.CameraInfo',
                      '/imu/data@sensor_msgs/msg/Imu[gz.msgs.IMU',
                      '/ultrasonic_scan@sensor_msgs/msg/LaserScan[gz.msgs.LaserScan',
+                     '/ir_scan@sensor_msgs/msg/LaserScan[gz.msgs.LaserScan',
+                     '/ir2_scan@sensor_msgs/msg/LaserScan[gz.msgs.LaserScan',
                      f'/world/{world_name}/dynamic_pose/info@tf2_msgs/msg/TFMessage[gz.msgs.Pose_V',
                  ]),
             # gz-sim stamps sensor messages with its own scoped frame names and
