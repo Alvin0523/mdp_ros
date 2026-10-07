@@ -147,7 +147,6 @@ class Task1Runner(RunnerBase):
         self._ir_fix_marks = []
         self._results = {}              # obstacle index -> (text, found): the 3D view's answers
         self._last_result = ''          # '#3 = Number 1 (11)': the run panel's scan result
-        self._yolo_seen = ('', -1.0)    # YOLO's latest id and when (yolo_sees)
         self._arrive_dir = 1.0          # +1 forward / -1 reverse: how the car drove into this stop
         self._laptop_ok = False                # the laptop answered this plan: replans go there too
         self._leg_waits = {}                   # gen -> a replan waiting for the laptop (remote_leg)
@@ -466,8 +465,6 @@ class Task1Runner(RunnerBase):
 
     def yolo_callback(self, msg: String):
         target_id = msg.data.strip()
-        if target_id:
-            self._yolo_seen = (target_id, self.now())
         if self.state != State.PAUSE_FOR_SCAN or not target_id:
             return
         if self.now() - self.state_start < float(self.get_parameter('scan_settle_s').value):
@@ -1112,8 +1109,6 @@ class Task1Runner(RunnerBase):
             msg.scan_result = f'#{self.current_label()} = {targets.label(self.detected_target_id)}'
         else:
             msg.scan_result = self._last_result
-        if self.now() - self._yolo_seen[1] < 1.0:
-            msg.yolo_sees = targets.label(self._yolo_seen[0])
         self.run_status_pub.publish(msg)
 
 

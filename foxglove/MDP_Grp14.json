@@ -220,15 +220,6 @@
           "label": "scan result"
         },
         {
-          "value": "/run_status.yolo_sees",
-          "timestampMethod": "receiveTime",
-          "customStates": {
-            "type": "discrete",
-            "states": []
-          },
-          "label": "YOLO sees"
-        },
-        {
           "value": "/run_status.reverse",
           "timestampMethod": "receiveTime",
           "customStates": {
