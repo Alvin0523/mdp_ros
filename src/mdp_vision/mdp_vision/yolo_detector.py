@@ -142,8 +142,8 @@ class YoloDetector(Node):
 
         self.bridge = CvBridge()
         self.result_pub = self.create_publisher(String, result_topic, 10)
-        # Every box of every frame with the frame's own time, for task 1's reads while
-        # driving past (drive_past.py): {"stamp", "w", "h", "boxes": [[id, conf, x1, y1, x2, y2]]}.
+        # Every box of every frame with the frame's own time, for analysing runs from a bag:
+        # {"stamp", "w", "h", "boxes": [[id, conf, x1, y1, x2, y2]]}.
         self.boxes_pub = self.create_publisher(String, '/yolo_detections', 10)
         # Full camera frame with YOLO's own boxes/labels/confidences drawn on
         # it (via Ultralytics Results.plot()) - for visual confirmation in

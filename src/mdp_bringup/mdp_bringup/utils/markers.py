@@ -96,14 +96,11 @@ def arena_markers(stamp, size=(ARENA_M, ARENA_M), start_box=(0.0, 0.0, START_BOX
 RESULT_RGBA = {True: (0.2, 1.0, 0.4, 1.0), False: (1.0, 0.3, 0.3, 1.0)}   # found / UNKNOWN
 
 
-SEEN_RGBA = (0.3, 0.85, 1.0, 1.0)       # read while driving past (task 1, log only)
-
-
-def obstacle_markers(obstacles, labels, stamp, sizes=None, walls=(), results=None, seen=None) -> MarkerArray:
+def obstacle_markers(obstacles, labels, stamp, sizes=None, walls=(), results=None) -> MarkerArray:
     """obstacles: (x_m, y_m, facing) block centres; labels: tablet number of each;
     results: index -> (text, found) - the scan's answer ('W / 32') above the block;
     its image face turns green when found (red: UNKNOWN); the block's own number is
-    on its top; seen: index -> text read while driving past, cyan at the face. No cell labels: the grid shows the cells and they cluttered the view;
+    on its top. No cell labels: the grid shows the cells and they cluttered the view;
     sizes: (x, y) of each block (default 10 x 10 cm); walls: grey rectangles
     (x0, y0, x1, y1). Starts with DELETEALL so a smaller new set leaves no stale
     blocks behind."""
@@ -128,13 +125,6 @@ def obstacle_markers(obstacles, labels, stamp, sizes=None, walls=(), results=Non
         x, y, _ = obstacles[i]      # above the block (its number is on its top)
         markers.append(marker(stamp, 'scan_results', 400 + i, Marker.TEXT_VIEW_FACING, RESULT_RGBA[found],
                               x, y, 0.19, scale=(1, 1, 0.06), text=text))
-    for i, text in (seen or {}).items():
-        # Read on the way: cyan, against the image face.
-        x, y, facing = obstacles[i]
-        fx, fy = FACING[facing]
-        markers.append(marker(stamp, 'drive_past', 500 + i, Marker.TEXT_VIEW_FACING, SEEN_RGBA,
-                              x + fx * (OBSTACLE_M / 2.0 + 0.04), y + fy * (OBSTACLE_M / 2.0 + 0.04), 0.06,
-                              scale=(1, 1, 0.045), text=text))
     for i, (x0, y0, x1, y1) in enumerate(walls):
         markers.append(marker(stamp, 'walls', i, Marker.CUBE, (0.35, 0.35, 0.35, 0.9),
                               (x0 + x1) / 2.0, (y0 + y1) / 2.0, 0.05, scale=(x1 - x0, y1 - y0, 0.10)))
