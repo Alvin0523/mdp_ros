@@ -127,3 +127,15 @@ def test_one_stray_reading_does_not_count_as_on_the_face():
     for _ in range(STEADY_READINGS):              # really on the face now
         fix.on_reading('ir', 0.20, pose)
     assert fix.seen() == 'both'
+
+
+def test_error_over_half_the_block():
+    """The pose 6-7 cm off along: the beam crosses an edge the pose puts on the
+    other side of the centre - the edge must come from the way it crossed."""
+    for error in [(0.07, 0.0), (-0.07, 0.0), (0.06, 0.01)]:
+        for stop_off in (-0.03, 0.03):
+            fix = IrPoseFix(SENSORS)
+            fix.reset(FACE)
+            drive(fix, error, stop_x=BLOCK[0] + stop_off)
+            dx, dy, note = fix.correction()
+            assert abs(dx + error[0]) < 0.005, (error, stop_off, note)

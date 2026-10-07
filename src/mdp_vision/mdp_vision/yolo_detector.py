@@ -21,6 +21,7 @@ import cv2
 from cv_bridge import CvBridge
 
 try:
+    from ultralytics.utils.plotting import colors
     from ultralytics import YOLO
     ULTRALYTICS_AVAILABLE = True
 except ImportError:
@@ -240,20 +241,25 @@ class YoloDetector(Node):
         if self.annotated_pub.get_subscription_count() == 0:
             return
 
-        # result.plot() returns a BGR numpy array (same convention as the
-        # cv_image this all started from) with boxes/labels/confidences
-        # already drawn by Ultralytics - no manual cv2.rectangle/putText
-        # needed. Reuses the original frame's header/timestamp so this
-        # topic stays sync'able with /image_raw in Foxglove/rviz.
-        annotated = result.plot()
-        if chosen is not None:                 # the box sent on /yolo_result: thick green frame
-            x1, y1, x2, y2 = (int(v) for v in chosen.xyxy[0])
-            cv2.rectangle(annotated, (x1, y1), (x2, y2), (0, 255, 0), 4)
-            # Below the box: YOLO's own label (class + confidence) sits above it.
-            # A box at the bottom of the frame gets it just inside its bottom edge.
-            h = annotated.shape[0]
-            ty = y2 + 20 if y2 + 20 < h else y2 - 8
-            cv2.putText(annotated, 'SENT', (x1 + 2, ty), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+        # Every box labelled 'Number 1 (11) 0.90' - class, MDP target id,
+        # confidence - in YOLO's own class colour; the one sent on /yolo_result
+        # thick and green. Same frame and header as the image YOLO read.
+        annotated = result.orig_img.copy()
+        h = annotated.shape[0]
+        # (A new object per box on every pass over result.boxes: match by coordinates.)
+        is_sent = lambda b: chosen is not None and bool((b.xyxy == chosen.xyxy).all())
+        boxes = sorted(result.boxes, key=is_sent)   # the sent box drawn last, on top
+        for box in boxes:
+            sent = is_sent(box)
+            x1, y1, x2, y2 = (int(v) for v in box.xyxy[0])
+            colour = (0, 200, 0) if sent else colors(int(box.cls[0]), True)
+            cv2.rectangle(annotated, (x1, y1), (x2, y2), colour, 4 if sent else 2)
+            label = self.box_label(box)
+            (tw, th), base = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
+            ty = y1 - 6 if y1 - th - 10 >= 0 else min(h - 4, y2 + th + 8)   # above the box, else below
+            lx = max(0, min(x1, annotated.shape[1] - tw - 8))                 # kept inside the frame
+            cv2.rectangle(annotated, (lx, ty - th - 5), (lx + tw + 8, ty + base), colour, -1)
+            cv2.putText(annotated, label, (lx + 4, ty), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
         ok, jpeg = cv2.imencode('.jpg', annotated, [cv2.IMWRITE_JPEG_QUALITY, self.jpeg_quality])
         if not ok:
             return
@@ -262,6 +268,12 @@ class YoloDetector(Node):
         out_msg.format = 'jpeg'
         out_msg.data = jpeg.tobytes()
         self.annotated_pub.publish(out_msg)
+
+    def box_label(self, box) -> str:
+        """'Number 1 (11) 0.90': class name, MDP target id, confidence."""
+        name = self.model.names[int(box.cls[0])]
+        tid = label_to_target_id(name)
+        return f"{name}{f' ({tid})' if tid is not None else ''} {float(box.conf[0]):.2f}"
 
     def publish_detection(self, target_id: str, class_name: str = None):
         # /yolo_result carries the official MDP Target ID string (e.g. "20"),

@@ -49,10 +49,26 @@ class Task1Planner(Node):
 
     def on_request(self, msg: String):
         req = json.loads(msg.data)
-        self.gen = req['gen']
         self.send({'gen': req['gen'], 'ack': True})
+        if req.get('single'):
+            # One leg planned again mid-run (task1_runner.replan_leg): beside any
+            # full plan, which it must not stop.
+            self.get_logger().info("PLANNER   1 leg requested (replan)")
+            threading.Thread(target=self.plan_one, args=(req,), daemon=True).start()
+            return
+        self.gen = req['gen']
         self.get_logger().info(f"PLANNER   {len(req['checkpoints'])} legs requested")
         threading.Thread(target=self.plan, args=(req,), daemon=True).start()
+
+    def plan_one(self, req: dict):
+        try:
+            costmap = build_costmap([tuple(o) for o in req['obstacles_cm']])
+            path = plan_leg(costmap, tuple(req['start']), tuple(req['checkpoints'][0])) or []
+            self.send({'gen': req['gen'], 'idx': 0, 'start': req['start'],
+                       'path': [list(map(float, p[:3])) + [int(p[3])] for p in path]})
+            self.get_logger().info(f"PLANNER   replan {'sent' if path else 'NO PATH'}")
+        except Exception:
+            self.get_logger().error(f"replanning crashed:\n{traceback.format_exc()}")
 
     def plan(self, req: dict):
         with self.lock:                  # one plan at a time; a newer gen stops this one
