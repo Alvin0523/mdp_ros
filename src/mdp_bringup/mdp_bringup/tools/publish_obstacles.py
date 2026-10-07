@@ -33,11 +33,11 @@ class ObstaclePublisher(Node):
         super().__init__('publish_obstacles')
 
         if block is not None:
-            # One block from the command line (pixi run block COL ROW FACE): task 1
-            # with a single checkpoint - e.g. testing the IR position fix there.
-            col, row, facing = block
+            # Blocks from the command line (pixi run block COL ROW FACE [COL ROW FACE ...]):
+            # a short task 1 - e.g. testing the IR position fix at one or two checkpoints.
             obstacles = [obstacle_layout.LayoutObstacle(
-                1, (col + 0.5) * obstacle_layout.CELL_M, (row + 0.5) * obstacle_layout.CELL_M, facing)]
+                i + 1, (col + 0.5) * obstacle_layout.CELL_M, (row + 0.5) * obstacle_layout.CELL_M, facing)
+                for i, (col, row, facing) in enumerate(block)]
             config_path = 'the command line'
         else:
             obstacles = obstacle_layout.load(config_path)
@@ -87,13 +87,21 @@ def main(args=None):
         argv = argv[:argv.index('--ros-args')]
     block = None
     if argv and argv[0] == '--block':
-        # --block COL ROW N|E|S|W : one block, in tablet cells
-        if len(argv) != 4 or argv[3].upper() not in 'NESW' or len(argv[3]) != 1:
-            sys.exit('usage: pixi run block COL ROW N|E|S|W   (cells 0..19, the image side)')
-        col, row = int(argv[1]), int(argv[2])
-        if not (0 <= col < 20 and 0 <= row < 20):
-            sys.exit('cells are 0..19')
-        block, argv = (col, row, argv[3].upper()), []
+        # --block COL ROW N|E|S|W [COL ROW N|E|S|W ...] : blocks in tablet cells
+        usage = 'usage: pixi run block COL ROW N|E|S|W [COL ROW N|E|S|W ...]   (cells 0..19, the image side)'
+        args = argv[1:]
+        if not args or len(args) % 3:
+            sys.exit(usage)
+        block = []
+        for i in range(0, len(args), 3):
+            try:
+                col, row, facing = int(args[i]), int(args[i + 1]), args[i + 2].upper()
+            except ValueError:
+                sys.exit(usage)
+            if facing not in ('N', 'E', 'S', 'W') or not (0 <= col < 20 and 0 <= row < 20):
+                sys.exit(usage)
+            block.append((col, row, facing))
+        argv = []
     config_path = argv[0] if argv else DEFAULT_CONFIG
     node = ObstaclePublisher(config_path, block)
     try:
