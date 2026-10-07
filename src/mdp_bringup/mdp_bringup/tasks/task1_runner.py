@@ -21,6 +21,7 @@ Topics:
        /odometry/filtered  EKF pose, converted to the `map` (arena) frame via TF
        /manual_drive    f/b/fl/fr/bl/br bursts from the tablet
        /set_pose        the EKF being reset (-> RESET confirmation)
+       /ir, /ir2        the left IRs - the position fix at each scan stop (ir_pose_fix.py)
   out  /cmd_vel         the only /cmd_vel publisher; streams zeros when idle
        /bluetooth_tx    PLAN / RESET / STATUS / TARGET lines to the tablet
        /rosout          one log line per run event (launch terminal, Foxglove Log panel)
@@ -44,6 +45,8 @@ import tf2_ros
 from geometry_msgs.msg import PoseWithCovarianceStamped
 from mdp_interfaces.msg import RunStatus
 from rclpy.qos import QoSProfile, ReliabilityPolicy
+from robot_localization.srv import SetPose
+from sensor_msgs.msg import Range
 from std_msgs.msg import String
 from std_srvs.srv import Trigger
 
@@ -51,6 +54,7 @@ from mdp_algorithm.control.pure_pursuit_follower import PurePursuitController, y
 from mdp_algorithm.planning.costmap import Costmap, Obstacle
 from mdp_algorithm.planning.planner import plan_leg, plan_visiting_order
 from mdp_algorithm.utils import params as planner_params
+from mdp_bringup.tasks.ir_pose_fix import IR_CREEP_MAX_M, IR_FIX_DELAY_S, IR_FIX_MAX_S, Face, IrPoseFix
 from mdp_bringup.tasks.runner_base import RunnerBase
 from mdp_bringup.utils.run import run
 from mdp_bringup.utils import manual, markers, obstacle_layout
@@ -69,6 +73,10 @@ REPLAN_POS_M = 0.05     # was 0.08 - kept under follower.max_path_error, or a le
 OFF_PATH_RETRIES = 2    # plans per leg after leaving the path; then scan from where it stopped
 REPLAN_YAW_RAD = math.radians(30.0)
 REPLAN_FALLBACK_M = 0.15   # car inside the safety margin this close to the leg's start: plan from there
+# After an IR fix the next leg is planned again (while the scan runs: no wait)
+# if the car is this far off its start. 5 cm was not enough: 2-3 cm off, a leg
+# starting in reverse left its path and replanned from the old start (sim 2026-10-03).
+IR_REPLAN_POS_M = 0.02
 
 
 class State(Enum):
@@ -107,6 +115,9 @@ class Task1Runner(RunnerBase):
         self.declare_parameter('remote_planner', False)
         self.declare_parameter('remote_plan_timeout', 2.0)
         self.declare_parameter('layout', '')   # tasks.yaml for /setup_obstacles (launch's layout:=)
+        # At each scan stop: fix the pose against the block with the two left
+        # IRs, creeping and centring on it first if needed (ir_stop_step).
+        self.declare_parameter('ir_pose_fix', True)
         manual.declare_params(self)   # the tablet's movement buttons, see utils/manual.py
         # robot.wheelbase / steering_limit_* (URDF) + navigation.yaml, passed
         # by the launch; the same files are the defaults for a bare `ros2 run`.
@@ -128,6 +139,14 @@ class Task1Runner(RunnerBase):
         self.create_subscription(String, '/plan_legs/result', self.plan_result_callback, plan_qos)
         self._session = uuid.uuid4().hex[:8]   # tells this runner's requests from an earlier one's
         self._remote = None                    # the request the laptop is planning, see plan()
+
+        self.ir_fix = None             # IrPoseFix once the IR positions are known (plan)
+        self._ir_fix_pending = False   # at a scan stop, the fix not yet applied
+        self._crept = False            # this stop already crept towards the block
+        self._creep = None             # a straight creep in progress, see creep()
+        for name in ('ir', 'ir2'):
+            self.create_subscription(Range, f'/{name}', lambda m, n=name: self.ir_callback(n, m), 10)
+        self.ekf_set_pose = self.create_client(SetPose, '/set_pose')   # the service: no /set_pose topic -> no RESET
 
         self.follower = PurePursuitController()
         self.current_pose = (0.0, 0.0, math.pi / 2)
@@ -183,6 +202,19 @@ class Task1Runner(RunnerBase):
             return None
         return yaw_from_quaternion(tf.transform.rotation)
 
+    def ir_sensors(self):
+        """Where the IRs are on the car (x, y, yaw on base_link), from the URDF;
+        None while robot_state_publisher's transforms are missing."""
+        sensors = {}
+        for name in ('ir', 'ir2'):
+            try:
+                tf = self.tf_buffer.lookup_transform('base_link', f'{name}_link', rclpy.time.Time())
+            except tf2_ros.TransformException:
+                return None
+            t = tf.transform
+            sensors[name] = (t.translation.x, t.translation.y, yaw_from_quaternion(t.rotation))
+        return sensors
+
     def in_run(self) -> bool:
         return self.state in (State.NAVIGATING_TO_TARGET, State.PAUSE_FOR_SCAN)
 
@@ -211,6 +243,112 @@ class Task1Runner(RunnerBase):
                 self.get_logger().warn(
                     f"RESET     not confirmed after {RESET_CONFIRM_TIMEOUT_S:.0f} s - pose {self.fmt(self.current_pose)} "
                     f"is not the start {self.fmt(self.start_pose())} (EKF running? did it take /set_pose?)")
+
+    def ir_callback(self, name, msg: Range):
+        if self.ir_fix is not None and self.in_run():
+            self.ir_fix.on_reading(name, msg.range, self.current_pose)
+
+    def ir_stop_step(self, waited) -> bool:
+        """A control tick at a scan stop with the IR fix due (ir_pose_fix.py):
+        wait for readings; only one IR on the face - creep towards it until
+        both are; fix the pose; drive straight to level the car with the
+        block. True while it holds the scan back."""
+        if self._creep is not None:
+            self.creep()
+            return True
+        if not self._ir_fix_pending:
+            return False
+        if waited < IR_FIX_DELAY_S or not (self.ir_fix.ready() or waited >= IR_FIX_MAX_S):
+            return True
+        seen = self.ir_fix.seen()
+        if seen in ('front', 'rear') and not self._crept:
+            self._crept = True
+            self.start_creep('find', 1.0 if seen == 'front' else -1.0, IR_CREEP_MAX_M)
+            self.get_logger().info(f"IR CREEP  #{self.current_label()} only the {seen} IR sees the block - "
+                                   f"creeping {'forward' if seen == 'front' else 'back'}")
+            return True
+        self._ir_fix_pending = False
+        fixed = self.apply_ir_fix()
+        along, per_m = self.ir_fix.along_offset(fixed)
+        self.ir_fix.reset(None)
+        dist = abs(along / per_m) if abs(per_m) > 0.8 else math.inf   # driving across the face: no
+        if 0.01 <= abs(along) and dist <= IR_CREEP_MAX_M:
+            self.start_creep('centre', -math.copysign(1.0, along / per_m), dist, after=0.2)
+            self.get_logger().info(f"IR CREEP  #{self.current_label()} {along * 100:+.1f} cm off the block "
+                                   f"centre - {'forward' if along / per_m < 0 else 'back'} {dist * 100:.1f} cm")
+            return True
+        self.check_next_leg(fixed)
+        return False
+
+    def start_creep(self, mode, direction, dist, after=0.0):
+        # 'centre' starts once the EKF has taken the fix (its pose jumps by it).
+        self._creep = {'mode': mode, 'dir': direction, 'dist': dist, 'from': None, 'after': self.now() + after}
+
+    def creep(self):
+        """Straight at follower.creep_linear_vel: 'find' until both
+        IRs see the face, 'centre' for its distance; then the scan starts over."""
+        c = self._creep
+        if self.now() < c['after']:
+            self.send_cmd(0.0, 0.0)
+            return
+        if c['from'] is None:
+            c['from'] = self.current_pose
+        done = math.hypot(self.current_pose[0] - c['from'][0], self.current_pose[1] - c['from'][1])
+        found = c['mode'] == 'find' and self.ir_fix.seen() == 'both'
+        if not found and done < c['dist']:
+            self.send_cmd(c['dir'] * float(self.get_parameter('follower.creep_linear_vel').value), 0.0)
+            return
+        self.send_cmd(0.0, 0.0)
+        self._creep = None
+        if c['mode'] == 'find':
+            self.get_logger().info(f"IR CREEP  #{self.current_label()} {done * 100:.1f} cm"
+                                   f"{'' if found else ' - the other IR never saw the block'}")
+            self.ir_fix.at_stop()                 # the gaps: from standing still again
+        else:
+            self.check_next_leg(self.current_pose)
+        self.scan_detections, self.detected_target_id = [], None
+        self.set_state(State.PAUSE_FOR_SCAN)      # the scan starts over
+
+    def apply_ir_fix(self):
+        """Shift the EKF pose by what the IRs say (heading kept); returns the
+        pose the car is now at in the map."""
+        dx, dy, note = self.ir_fix.correction()
+        if math.hypot(dx, dy) < 0.005 or self.last_odom is None:
+            self.get_logger().info(f"IR FIX    #{self.current_label()} none ({note})")
+            return self.current_pose
+        try:   # the shift is in the map frame; the EKF wants odom
+            tf = self.tf_buffer.lookup_transform('odom', 'map', rclpy.time.Time())
+        except tf2_ros.TransformException as exc:
+            self.get_logger().warn(f"IR FIX    no odom <- map transform ({exc}) - not applied")
+            return self.current_pose
+        a = yaw_from_quaternion(tf.transform.rotation)
+        odom = self.last_odom.pose.pose
+        req = SetPose.Request()
+        req.pose.header.frame_id = self.last_odom.header.frame_id
+        req.pose.header.stamp = self.last_odom.header.stamp   # the EKF's own time base
+        p = req.pose.pose.pose
+        p.position.x = odom.position.x + math.cos(a) * dx - math.sin(a) * dy
+        p.position.y = odom.position.y + math.sin(a) * dx + math.cos(a) * dy
+        p.orientation = odom.orientation
+        req.pose.pose.covariance = list(self.last_odom.pose.covariance)
+        self.ekf_set_pose.call_async(req)
+        x, y, yaw = self.current_pose
+        fixed = (x + dx, y + dy, yaw)
+        self.get_logger().info(f"IR FIX    #{self.current_label()} moved {dx * 100:+.1f}, {dy * 100:+.1f} cm "
+                               f"({note}) -> {self.fmt(fixed)}")
+        return fixed
+
+    def check_next_leg(self, pose):
+        """Where the scan leaves the car: off the next leg's start, that leg is
+        planned again now, while YOLO is still looking."""
+        nxt = self.current_target_idx + 1
+        if (nxt < len(self.leg_paths) and nxt not in self._replanned and self.leg_paths[nxt]
+                and self.off_leg_start(nxt, pose, IR_REPLAN_POS_M)):
+            self._replanned.add(nxt)
+            self.leg_paths[nxt] = None
+            self.get_logger().warn(f"REPLAN    leg {nxt + 1}/{len(self.visiting_order)} from {self.fmt(pose)} "
+                                   f"(IR fix: off its start) - while scanning")
+            threading.Thread(target=self.replan_leg, daemon=True, args=(nxt, pose, self._plan_gen)).start()
 
     def setup_callback(self, msg: String):
         """`id:x,y,facing|...` (metres). Replaces the previous set and plan, but
@@ -321,6 +459,8 @@ class Task1Runner(RunnerBase):
         self.reset_done = False
         self._reset_pending = False
         self._manual_until = 0.0
+        self._ir_fix_pending = False
+        self._creep = None
         self.follower.set_path([])
         if self.plan_state == 'PLANNING':
             self.plan_state = 'WAITING'   # a pose reset replans from the kept obstacles
@@ -426,6 +566,8 @@ class Task1Runner(RunnerBase):
             self.navigate()
         elif self.state == State.PAUSE_FOR_SCAN:
             self.send_cmd(0.0, 0.0)
+            if self.ir_stop_step(now - self.state_start):
+                return
             confirmed = (self.detected_target_id is not None
                          and Counter(self.scan_detections)[self.detected_target_id]
                          >= int(self.get_parameter('scan_confirm_count').value))
@@ -462,6 +604,10 @@ class Task1Runner(RunnerBase):
                 f"PLAN      no scan checkpoint for {' '.join('#' + self.tablet_id(i) for i in self.unreachable)} - skipped")
         self.get_logger().info(f"PLAN      order {' -> '.join(self.tablet_id(i) for i in self.visiting_order)}")
 
+        sensors = self.ir_sensors()
+        self.ir_fix = IrPoseFix(sensors) if sensors else None
+        if sensors is None:
+            self.get_logger().warn("PLAN      no ir_link / ir2_link in the URDF - no IR position fix")
         self.leg_paths = [None] * len(self.visiting_order)
         self.leg_starts = [None] * len(self.visiting_order)   # pose each leg was planned from
         self._replanned = set()
@@ -604,6 +750,9 @@ class Task1Runner(RunnerBase):
                 return
             self.detected_target_id, self.scan_detections = None, []
             self.set_state(State.PAUSE_FOR_SCAN)
+            if self.ir_fix is not None and self.get_parameter('ir_pose_fix').value:
+                self.ir_fix.at_stop()
+                self._ir_fix_pending, self._crept = True, False
             self.get_logger().info(f"ARRIVED   #{self.current_label()} at {self.fmt(self.current_pose)} "
                                    f"(target {self.fmt((cx, cy, ct))}, heading {dyaw:+.0f}deg) - scanning")
         elif self.left_path():
@@ -669,6 +818,9 @@ class Task1Runner(RunnerBase):
             self.scan_detections, self.detected_target_id = [], None
             self.set_state(State.PAUSE_FOR_SCAN)
             return True
+        if self.ir_fix is not None:
+            bx, by, facing = self.obstacles[self.visiting_order[idx]]
+            self.ir_fix.reset(Face(bx, by, *markers.FACING[facing]))
         gears = [p[3] for p in path]
         cuts = [i for i in range(1, len(gears)) if gears[i] != gears[i - 1]]
         moves = ' '.join('fwd' if gears[a] >= 0 else 'REV' for a in [0] + cuts)
@@ -676,15 +828,15 @@ class Task1Runner(RunnerBase):
                                f"{self.fmt(self.checkpoints[idx])}  {moves}")
         return True
 
-    def off_leg_start(self, idx) -> bool:
+    def off_leg_start(self, idx, pose=None, pos_tol=REPLAN_POS_M) -> bool:
         """Is the car further than REPLAN_POS_M / REPLAN_YAW_RAD from where leg idx
         was planned from? That pose, not the path's first point: the planner's
         path starts one step (5 cm) ahead of it, so every leg looked 5 cm off and
         was replanned for nothing (2026-10-01, up to 19 s per leg)."""
-        x, y, yaw = self.current_pose
+        x, y, yaw = pose or self.current_pose
         px, py, ptheta = self.leg_starts[idx][:3]
         dyaw = abs(math.atan2(math.sin(yaw - ptheta), math.cos(yaw - ptheta)))
-        return math.hypot(x - px, y - py) > REPLAN_POS_M or dyaw > REPLAN_YAW_RAD
+        return math.hypot(x - px, y - py) > pos_tol or dyaw > REPLAN_YAW_RAD
 
     def replan_leg(self, idx, start, gen):
         """Background thread: one leg from the car's real pose (current settings)."""

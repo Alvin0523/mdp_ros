@@ -160,11 +160,38 @@
     <child link="ultrasonic_link"/>
   </joint>
 
+  <!-- Two Sharp GP2Y0A21YK IRs on the LEFT side, looking left (+y), one ahead of
+       and one behind the rear axle: a scan checkpoint puts base_link (the rear
+       axle) square in front of the block's centre, so at the stop both see
+       its 10 cm face, and task1_runner corrects the car's position against
+       the block (tasks/ir_pose_fix.py). /ir = ir_link (front), /ir2 = ir2_link
+       (rear). Their ranges are measured from here. TODO measure on the car:
+       placed 40 mm either side of the rear axle, at the left edge of the body,
+       90 mm above the table (clear of the wheels; the blocks are 15 cm tall). -->
+  <xacro:macro name="sharp_ir" params="name x">
+    <link name="${name}_link">
+      <visual>
+        <origin xyz="-0.0065 0 0" rpy="0 0 0"/>
+        <geometry><box size="0.013 0.0295 0.0135"/></geometry>
+        <material name="lens_black"/>
+      </visual>
+    </link>
+    <joint name="${name}_joint" type="fixed">
+      <origin xyz="${x} 0.085 ${0.09 - wheel_radius}" rpy="0 0 ${pi / 2}"/>
+      <parent link="base_link"/>
+      <child link="${name}_link"/>
+    </joint>
+  </xacro:macro>
+  <xacro:sharp_ir name="ir" x="0.04"/>
+  <xacro:sharp_ir name="ir2" x="-0.04"/>
+
   <!-- Raspberry Pi Camera v2 (25 x 24 mm board, 9 mm deep). Looks along this
-       link's +x; camera_yaw turns it (task 1: left). Placed 2026-09-28 at the
-       middle of the chassis on the centre line, 84 mm ahead of the rear axle
-       (the body runs 31 mm behind to 199 mm ahead), at the CAD mount's height
-       (60 mm above the axle). TODO measure once mounted (sheet rows H1-H5). -->
+       link's +x; camera_yaw turns it (task 1: left). On the 3D-printed mount
+       above the right rear wheel (2026-10-03): in line with the rear axle,
+       so base_link - which a scan checkpoint puts square in front of the
+       block's centre - and the camera face the image together. Height still
+       the CAD mount's (60 mm above the axle); the print puts the lens ~80 mm
+       above the STM32. TODO measure once mounted (sheet rows H1-H5). -->
   <link name="camera_link">
     <visual>
       <geometry><box size="0.009 0.025 0.024"/></geometry>
@@ -185,7 +212,7 @@
     </xacro:if>
   </link>
   <joint name="camera_joint" type="fixed">
-    <origin xyz="0.084 0 ${cad_z + 0.076204}" rpy="0 0 $(arg camera_yaw)"/>
+    <origin xyz="0 ${-rear_track / 2} ${cad_z + 0.076204}" rpy="0 0 $(arg camera_yaw)"/>
     <parent link="base_link"/>
     <child link="camera_link"/>
   </joint>
@@ -366,6 +393,26 @@
         <visualize>false</visualize>
       </sensor>
     </gazebo>
+    <!-- The IRs: a 3-beam lidar each (the Sharp's beam is narrow, ~2 deg).
+         sim_helpers turns them into /ir and /ir2 (sim/ir.py), as the bridge.
+         25 Hz: what the Sharp gives (one reading per ~38 ms). -->
+    <xacro:macro name="sharp_ir_sensor" params="name">
+      <gazebo reference="${name}_link">
+        <sensor name="${name}" type="gpu_lidar">
+          <topic>${name}_scan</topic>
+          <update_rate>25</update_rate>
+          <lidar>
+            <scan><horizontal><samples>3</samples><resolution>1</resolution>
+              <min_angle>-0.017</min_angle><max_angle>0.017</max_angle></horizontal></scan>
+            <range><min>0.02</min><max>1.0</max><resolution>0.001</resolution></range>
+          </lidar>
+          <always_on>true</always_on>
+          <visualize>false</visualize>
+        </sensor>
+      </gazebo>
+    </xacro:macro>
+    <xacro:sharp_ir_sensor name="ir"/>
+    <xacro:sharp_ir_sensor name="ir2"/>
     <gazebo reference="camera_link">
       <sensor name="camera" type="camera">
         <camera>
