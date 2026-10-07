@@ -164,10 +164,12 @@
        and one behind the rear axle: a scan checkpoint puts base_link (the rear
        axle) square in front of the block's centre, so at the stop both see
        its 10 cm face, and task1_runner corrects the car's position against
-       the block (tasks/ir_pose_fix.py). /ir = ir_link (front), /ir2 = ir2_link
-       (rear). Their ranges are measured from here. TODO measure on the car:
-       placed 40 mm either side of the rear axle, at the left edge of the body,
-       90 mm above the table (clear of the wheels; the blocks are 15 cm tall). -->
+       the block (tasks/ir_pose_fix.py; it takes whichever is further forward as
+       the front one). Their ranges are measured from here.
+       Measured on the car 2026-10-07: IR2 (/ir2, ir2_link) 42 mm AHEAD of the rear
+       axle, IR1 (/ir, ir_link) 72 mm behind it = 30 mm BEHIND the rear axle.
+       Both faces 62 mm left of the centre line (base_link y). Height 90 mm above
+       the table (not measured; only needs to clear the left rear tyre, top ~66 mm). -->
   <xacro:macro name="sharp_ir" params="name x">
     <link name="${name}_link">
       <visual>
@@ -177,13 +179,13 @@
       </visual>
     </link>
     <joint name="${name}_joint" type="fixed">
-      <origin xyz="${x} 0.085 ${0.09 - wheel_radius}" rpy="0 0 ${pi / 2}"/>
+      <origin xyz="${x} 0.062 ${0.09 - wheel_radius}" rpy="0 0 ${pi / 2}"/>
       <parent link="base_link"/>
       <child link="${name}_link"/>
     </joint>
   </xacro:macro>
-  <xacro:sharp_ir name="ir" x="0.04"/>
-  <xacro:sharp_ir name="ir2" x="-0.04"/>
+  <xacro:sharp_ir name="ir" x="-0.030"/>    <!-- IR1, /ir: the rear one -->
+  <xacro:sharp_ir name="ir2" x="0.042"/>    <!-- IR2, /ir2: the front one -->
 
   <!-- Raspberry Pi Camera v2 (25 x 24 mm board, 9 mm deep). Looks along this
        link's +x; camera_yaw turns it (task 1: left). On the 3D-printed mount
