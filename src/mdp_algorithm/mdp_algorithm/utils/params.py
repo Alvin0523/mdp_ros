@@ -38,7 +38,7 @@ SECTIONS = {
                  'xy_goal_tolerance', 'cusp_tolerance', 'max_path_error',
                  'use_regulated_linear_velocity_scaling', 'max_lateral_accel',
                  'regulated_linear_scaling_min_speed', 'max_reverse_linear_vel',
-                 'approach_velocity_scaling_dist', 'min_approach_linear_velocity',
+                 'approach_velocity_scaling_dist', 'min_approach_linear_velocity', 'creep_linear_vel',
                  'path_tracking', 'feedback_k_e', 'feedback_k_theta', 'feedforward_preview_time',
                  'lqr_q_lateral', 'lqr_q_heading', 'lqr_q_steer', 'lqr_r', 'steering_time_constant',
                  'pose_latency'),
@@ -91,6 +91,7 @@ class PlannerParams:
     max_reverse_linear_vel: float
     approach_velocity_scaling_dist: float
     min_approach_linear_velocity: float
+    creep_linear_vel: float
     path_tracking: str
     feedback_k_e: float
     feedback_k_theta: float
