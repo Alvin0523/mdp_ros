@@ -884,6 +884,8 @@ class Task1Runner(RunnerBase):
             self.follower.set_path([])            # both IRs on the block: this is the stop
         cmd = None if ir_stop else self.follower.compute_cmd()
         if cmd is None or self.follower.is_done():
+            if self._pass is not None:
+                self.pass_step()                  # the path ended before it was decided
             idx = self.current_target_idx
             # Only the IR that meets the block first is on it: creep on, no stop in between.
             creep_on = not ir_stop and self.ir_active(idx) and self.ir_fix.seen() == self.leading_ir()
@@ -1058,14 +1060,20 @@ class Task1Runner(RunnerBase):
                 and abs(math.atan2(math.sin(yaw - ct), math.cos(yaw - ct))) < PASS_YAW)
 
     def pass_step(self):
-        """Driving through a pass: slow near its view spot; once past it (the follower
-        is on the next leg's part of the path), report it - or, not read, come back to it
-        after the last block - and go on with the next block, without stopping."""
+        """Driving through a pass: slow near its view spot; once the car has been near
+        it and is PASS_NEAR_M away again, report it - or, not read, come back to it after
+        the last block - and go on with the next block, without stopping. (Decided when
+        the follower's look-ahead crossed the spot, it was 10-15 cm early: before YOLO's
+        clear view - car, 2026-10-08.)"""
         p, f = self._pass, self.follower
-        if f._search_idx < p['junction']:
+        cx, cy, _ = self.checkpoints[p['idx']]
+        near = math.hypot(self.current_pose[0] - cx, self.current_pose[1] - cy) < PASS_NEAR_M
+        if near or not p.get('was_near'):
+            p['was_near'] = p.get('was_near') or near
             if self.pass_in_view():
                 f.speed_cap = min(f.speed_cap, PASS_SPEED)
-            return
+            if f.active:
+                return
         self._pass = None
         idx, oi = p['idx'], self.visiting_order[p['idx']]
         counts = Counter(p['reads']).most_common(1)
