@@ -27,8 +27,6 @@ OBSTACLE_M = 0.10
 GRID_LINE = (0.003, (0.3, 0.4, 0.5, 0.5))          # width, rgba
 OUTLINE = (0.015, (0.3, 0.75, 1.0, 0.95))
 OBSTACLE_RGBA = (0.9, 0.5, 0.1, 0.9)
-LABEL_RGBA = (1.0, 1.0, 1.0, 1.0)
-LABEL_Z = 0.20
 PATH = (0.02, (0.1, 0.6, 1.0, 0.9))
 CHECKPOINT_RGBA = (0.2, 1.0, 0.4, 0.95)
 CHECKPOINT_ARROW_M = 0.15
@@ -100,7 +98,9 @@ RESULT_RGBA = {True: (0.2, 1.0, 0.4, 1.0), False: (1.0, 0.3, 0.3, 1.0)}   # foun
 
 def obstacle_markers(obstacles, labels, stamp, sizes=None, walls=(), results=None) -> MarkerArray:
     """obstacles: (x_m, y_m, facing) block centres; labels: tablet number of each;
-    results: index -> (text, found) - the scan's answer above the block (green / red);
+    results: index -> (text, found) - the scan's answer (target ID) just above the
+    block, green / red; the block's own number is on its top. No cell labels: the
+    grid shows the cells and they cluttered the view;
     sizes: (x, y) of each block (default 10 x 10 cm); walls: grey rectangles
     (x0, y0, x1, y1). Starts with DELETEALL so a smaller new set leaves no stale
     blocks behind."""
@@ -118,13 +118,11 @@ def obstacle_markers(obstacles, labels, stamp, sizes=None, walls=(), results=Non
                    scale=(thick if fx else sx, thick if fy else sy, 0.10)),
             marker(stamp, 'obstacle_ids', 200 + i, Marker.TEXT_VIEW_FACING, (0.0, 0.0, 0.0, 1.0),
                    x, y, 0.102, scale=(1, 1, 0.07), text=labels[i]),
-            marker(stamp, 'obstacle_labels', 100 + i, Marker.TEXT_VIEW_FACING, LABEL_RGBA,
-                   x, y, LABEL_Z, scale=(1, 1, 0.07), text=f'({cell(x)},{cell(y)})'),
         ]
     for i, (text, found) in (results or {}).items():
         x, y, _ = obstacles[i]
         markers.append(marker(stamp, 'scan_results', 400 + i, Marker.TEXT_VIEW_FACING, RESULT_RGBA[found],
-                              x, y, LABEL_Z + 0.10, scale=(1, 1, 0.08), text=text))
+                              x, y, 0.17, scale=(1, 1, 0.06), text=text))
     for i, (x0, y0, x1, y1) in enumerate(walls):
         markers.append(marker(stamp, 'walls', i, Marker.CUBE, (0.35, 0.35, 0.35, 0.9),
                               (x0 + x1) / 2.0, (y0 + y1) / 2.0, 0.05, scale=(x1 - x0, y1 - y0, 0.10)))
@@ -132,7 +130,7 @@ def obstacle_markers(obstacles, labels, stamp, sizes=None, walls=(), results=Non
 
 
 def checkpoint_markers(checkpoints, current, stamp) -> MarkerArray:
-    """An arrow (pose) per checkpoint, its visit order and cell. `current`: the
+    """An arrow (pose) per checkpoint and its visit order. `current`: the
     index being driven to / scanned (drawn bigger and green), or None."""
     markers = []
     for i, (x, y, theta) in enumerate(checkpoints):
@@ -142,9 +140,7 @@ def checkpoint_markers(checkpoints, current, stamp) -> MarkerArray:
         markers += [
             marker(stamp, 'checkpoints', i, Marker.ARROW, rgba, x, y, 0.05, scale=scale, yaw=theta),
             marker(stamp, 'checkpoint_ids', 200 + i, Marker.TEXT_VIEW_FACING, CHECKPOINT_RGBA,
-                   x, y, 0.102, scale=(1, 1, 0.07), text=str(i + 1)),
-            marker(stamp, 'checkpoint_labels', 100 + i, Marker.TEXT_VIEW_FACING, CHECKPOINT_RGBA,
-                   x, y, LABEL_Z, scale=(1, 1, 0.07), text=f'({cell(x)},{cell(y)})'),
+                   x, y, 0.06, scale=(1, 1, 0.045), text=str(i + 1)),
         ]
     return MarkerArray(markers=markers)
 
@@ -159,7 +155,7 @@ def run_timer(stamp, seconds, phase) -> Marker:
     """The run time as big text riding above the car, for the 3D panel (/run_timer).
     phase: 'idle' (grey), 'running' (white), 'done' (green, the final time)."""
     m = marker(stamp, 'run_timer', 0, Marker.TEXT_VIEW_FACING, TIMER_RGBA[phase], 0.08, 0.0, 0.45,
-               scale=(1, 1, TIMER_TEXT_M), text=f'{seconds:.1f} s')
+               scale=(1, 1, TIMER_TEXT_M), text=f'{seconds:.1f}')
     m.header.frame_id = 'base_link'
     return m
 
@@ -171,7 +167,7 @@ def ir_fix_markers(stamp, n, before, after, text) -> list:
     """One IR position fix (task 1 scan stop) for the 3D view: an arrow from the
     pose before to the pose after (none when nothing moved) and how far, beside it."""
     out = [marker(stamp, 'ir_fix_text', n, Marker.TEXT_VIEW_FACING, IR_FIX_RGBA,
-                  after[0], after[1], 0.12, scale=(1, 1, 0.04), text=text)]
+                  after[0], after[1], 0.10, scale=(1, 1, 0.035), text=text)]
     if math.hypot(after[0] - before[0], after[1] - before[1]) >= 0.005:
         out.append(marker(stamp, 'ir_fix_arrow', n, Marker.ARROW, IR_FIX_RGBA, scale=(0.008, 0.02, 0.02),
                           points=[(before[0], before[1], 0.05), (after[0], after[1], 0.05)]))

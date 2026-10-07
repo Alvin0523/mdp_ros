@@ -406,7 +406,7 @@ class Task1Runner(RunnerBase):
         self.ekf_set_pose.call_async(req)
         x, y, yaw = self.current_pose
         fixed = (x + dx, y + dy, yaw)
-        self.show_ir_fix(self.current_pose, fixed, f"{math.hypot(dx, dy) * 100:.1f} cm")
+        self.show_ir_fix(self.current_pose, fixed, f"{dx:+.3f} {dy:+.3f}")   # map x, y shift, m
         self.get_logger().info(f"IR FIX    #{self.current_label()} {note} -> {self.fmt(fixed)}")
         return fixed
 
@@ -1062,8 +1062,7 @@ class Task1Runner(RunnerBase):
                                f"{self.now() - self.state_start:.1f} s)")
         found = self.detected_target_id is not None
         self._last_result = f'#{obs} = {targets.label(target_id) if found else "UNKNOWN"}'
-        self._results[self.visiting_order[self.current_target_idx]] = (
-            targets.label(target_id) if found else 'UNKNOWN', found)
+        self._results[self.visiting_order[self.current_target_idx]] = (target_id if found else '?', found)
         self.publish_map()
 
         self.current_target_idx += 1
