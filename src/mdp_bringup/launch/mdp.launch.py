@@ -266,6 +266,9 @@ def generate_launch_description(argv=None):
         actions.append(Node(package='mdp_bringup', executable='task1_planner', output='screen',
                             parameters=[sim_time]))
         actions += monitors('/camera/image_raw' if sim else '/image_raw')
+        # Foxglove's REC records here: bags land on the laptop, not the Pi's SD card.
+        actions.append(Node(package='mdp_bringup', executable='bag_recorder', output='screen',
+                            parameters=[sim_time]))
         return LaunchDescription(declared + actions)
 
     # ------------------------------------------------------------ robot ----
@@ -447,11 +450,12 @@ def generate_launch_description(argv=None):
         Node(package='mdp_bringup', executable='robot_pose_feedback', output='screen',
              parameters=[{'gz_world': world_name if sim else '', 'start_x': start_x, 'start_y': start_y,
                           'start_yaw': start_yaw}, sim_time]),
-        # /bag/toggle - record a bag from the Foxglove REC button (pixi run bag); /bag/recording.
-        Node(package='mdp_bringup', executable='bag_recorder', output='screen', parameters=[sim_time]),
     ]
     if role == 'solo':     # role:=pi - the laptop runs them (`pixi run laptop`)
         actions += monitors(camera_topic if vision else '')
+        # /bag/toggle - record a bag from the Foxglove REC button (pixi run bag); /bag/recording.
+        actions.append(Node(package='mdp_bringup', executable='bag_recorder', output='screen',
+                            parameters=[sim_time]))
 
     if task == '0':
         # Bare car: the tablet's manual drive buttons, no runner.

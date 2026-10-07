@@ -139,3 +139,15 @@ def test_error_over_half_the_block():
             drive(fix, error, stop_x=BLOCK[0] + stop_off)
             dx, dy, note = fix.correction()
             assert abs(dx + error[0]) < 0.005, (error, stop_off, note)
+
+
+def test_edge_while_rolling_not_used():
+    """An edge crossed while the car still rolls fast (after ARRIVED) is not used."""
+    fix = IrPoseFix(SENSORS)
+    fix.reset(FACE)
+    fix.at_stop()
+    for k in range(40):
+        x = 0.94 + 0.004 * k
+        for name, sensor in SENSORS.items():
+            fix.on_reading(name, true_reading(sensor, (x, CAR_Y, YAW)), (x + 0.03, CAR_Y, YAW), speed=0.10)
+    assert fix.edges == []

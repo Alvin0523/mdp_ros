@@ -172,6 +172,7 @@ class Task1Runner(RunnerBase):
         self._off_path = {}            # leg -> times it left its path (left_path)
         self._on_path = False          # car has reached its leg's path (left_path)
         self.unreachable = []
+        self._slid = {}                # checkpoint index -> m slid from the table's edge (plan)
         self.current_target_idx = 0
         self.costmap = None
         # Bumped whenever a plan is abandoned (new setup, stop): a planning thread
@@ -256,13 +257,14 @@ class Task1Runner(RunnerBase):
 
     def ir_callback(self, name, msg: Range):
         if self.ir_fix is not None and self.in_run():
-            self.ir_fix.on_reading(name, msg.range, self.current_pose)
+            speed = abs(self.last_odom.twist.twist.linear.x) if self.last_odom is not None else 0.0
+            self.ir_fix.on_reading(name, msg.range, self.current_pose, speed)
 
     def ir_stop_step(self, waited) -> bool:
         """A control tick at a scan stop with the IR fix due (ir_pose_fix.py):
         wait for readings; until both IRs see the face, creep the way it must be
-        (start_find); fix the pose; drive straight to put the IR pair's middle
-        level with the block centre. True while it holds the scan back."""
+        (start_find), stop there; fix the pose estimate. True while it holds
+        the scan back."""
         if self._creep is not None:
             self.creep()
             return True
@@ -270,23 +272,16 @@ class Task1Runner(RunnerBase):
             return False
         if waited < IR_FIX_DELAY_S or not (self.ir_fix.ready() or waited >= IR_FIX_MAX_S):
             return True
-        if self.ir_fix.seen() != 'both' and not self._crept:
+        slid = self.current_target_idx in self._slid
+        if self.ir_fix.seen() != 'both' and not self._crept and not slid:
             self._crept = True
             if self.start_find():
                 return True
         self._ir_fix_pending = False
+        # Both IRs on the block (or as close as the search got): the car stays where
+        # it is - the fix only puts the pose estimate where the car really is.
         fixed = self.apply_ir_fix()
-        along, per_m = self.ir_fix.along_offset(fixed)
-        along += self.ir_mid_x() * per_m          # the IR pair's middle, not base_link
         self.ir_fix.reset(None)
-        dist = abs(along / per_m) if abs(per_m) > 0.8 else math.inf   # driving across the face: no
-        # Lined up on the pair's middle (the stop plans it there) both IRs are
-        # 1.4 cm inside the block's edges, so this never takes one off it.
-        if 0.01 <= abs(along) and dist <= IR_CREEP_MAX_M:
-            self.start_creep('centre', -math.copysign(1.0, along / per_m), dist, after=0.2)
-            self.get_logger().info(f"IR ALIGN  #{self.current_label()} "
-                                   f"{'forward' if along / per_m < 0 else 'back'} {dist * 100:.1f} cm")
-            return True
         self.check_next_leg(fixed)
         return False
 
@@ -318,13 +313,9 @@ class Task1Runner(RunnerBase):
                                f"{'forward' if direction > 0 else 'back'} <={dist * 100:.0f} cm")
         return True
 
-    def start_creep(self, mode, direction, dist, after=0.0):
-        # 'centre' starts once the EKF has taken the fix (its pose jumps by it).
-        self._creep = {'mode': mode, 'dir': direction, 'dist': dist, 'from': None, 'after': self.now() + after}
-
     def creep(self):
         """Straight at follower.creep_linear_vel: 'find' until both
-        IRs see the face, 'centre' for its distance; then the scan starts over."""
+        IRs see the face, 'return' back to where it started; then the scan starts over."""
         c = self._creep
         if self.now() < c['after']:
             self.send_cmd(0.0, 0.0)
@@ -366,11 +357,7 @@ class Task1Runner(RunnerBase):
         if c['mode'] == 'find':
             self.get_logger().info(f"IR CREEP  #{self.current_label()} {'both on' if found else 'not both'} "
                                    f"after {done * 100:.1f} cm")
-            self.ir_fix.at_stop()                 # the gaps: from standing still again
-        elif c['mode'] == 'return':
-            self.ir_fix.at_stop()
-        else:
-            self.check_next_leg(self.current_pose)
+        self.ir_fix.at_stop()                     # the gaps: from standing still again
         self.scan_detections, self.detected_target_id = [], None
         self.set_state(State.PAUSE_FOR_SCAN)      # the scan starts over
 
@@ -671,6 +658,15 @@ class Task1Runner(RunnerBase):
         start = self.start_pose()
         self.visiting_order, self.checkpoints, self.unreachable, self.costmap = plan_visiting_order(
             obstacles_cm, start, theta_offset=camera_yaw)
+        # Stops the planner slid along the face to keep the car on the table (visiting_order):
+        # index -> how far. Their IRs are not centred on the block; creeping would drive off.
+        self._slid = {}
+        for i, (x, y, t) in enumerate(self.checkpoints):
+            bx, by, facing = self.obstacles[self.visiting_order[i]]
+            nx, ny = markers.FACING[facing]
+            along = (x - bx) * -ny + (y - by) * nx
+            if abs(along) > 0.005:
+                self._slid[i] = abs(along)
         sensors = self.ir_sensors()
         self.ir_fix = IrPoseFix(sensors) if sensors else None
         if sensors is None:
@@ -680,10 +676,15 @@ class Task1Runner(RunnerBase):
             # base_link: they are not centred on it (URDF), and lined up on base_link the
             # front one sat 0.9 cm from the block's edge and flickered off it (car,
             # 2026-10-07). Centred on their middle, both are as far inside as can be.
+            # A stop the planner slid back from the table's edge stays where it is.
             mid = self.ir_mid_x()
-            self.checkpoints = [(x - mid * math.cos(t), y - mid * math.sin(t), t) for x, y, t in self.checkpoints]
+            self.checkpoints = [(x, y, t) if i in self._slid else (x - mid * math.cos(t), y - mid * math.sin(t), t)
+                                for i, (x, y, t) in enumerate(self.checkpoints)]
             self.get_logger().info(f"PLAN      stops moved {-mid * 100:+.1f} cm along: the IR pair's middle "
                                    f"level with each block")
+        for i, d in self._slid.items():
+            self.get_logger().info(f"PLAN      #{self.tablet_id(self.visiting_order[i])} stop slid {d * 100:.0f} cm "
+                                   f"back from the table's edge - no IR creep there")
         self.publish_map()
         self.publish_checkpoints()
         if self.unreachable:
