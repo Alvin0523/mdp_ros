@@ -1,7 +1,8 @@
 """Record a bag with one button - Foxglove's REC, the tablet-free way to record a run.
 
     /bag/toggle     (std_srvs/Trigger, `pixi run bag`)  not recording: start a new bag,
-                    <bag_dir>/rosbag2_<date>_<time>, every topic except camera images;
+                    <bag_dir>/rosbag2_<date>_<time>, every topic except raw camera frames
+                    (the JPEG camera and YOLO images are in);
                     recording: stop and close it
     /bag/recording  (std_msgs/Bool, latched)  true while recording - Foxglove's REC light
 
@@ -21,7 +22,9 @@ from std_srvs.srv import Trigger
 
 from mdp_bringup.utils.run import run
 
-EXCLUDE = '/image_raw.*|/camera/image_raw|/yolo_result/image_annotated'   # large; not needed to replay a run
+# Raw frames only (~0.9 MB each). The JPEG copies stay in: /image_raw/compressed (what YOLO
+# reads) and /yolo_result/image_annotated (its boxes) - ~35 MB a minute, fine on the laptop.
+EXCLUDE = '/image_raw|/camera/image_raw'
 
 
 class BagRecorder(Node):

@@ -154,6 +154,8 @@ class Task1Runner(RunnerBase):
         # Images read while driving past a block (drive_past.py) - LOG ONLY for now.
         self.drive_past = None
         self._pose_hist = deque(maxlen=250)   # (stamp s, pose): the pose at a camera frame's time
+        self._dp_frames = Counter()     # YOLO frames with boxes per stop index, and of them...
+        self._dp_used = Counter()       # ...those with a pose from their moment (drive-past diagnostics)
         self.create_subscription(String, '/yolo_detections', self.detections_callback, 10)
         self._arrive_dir = 1.0          # +1 forward / -1 reverse: how the car drove into this stop
         self._laptop_ok = False                # the laptop answered this plan: replans go there too
@@ -503,9 +505,13 @@ class Task1Runner(RunnerBase):
             self.drive_past.reset([(x, y) for x, y, _ in self.obstacles],
                                   [markers.FACING[f] for _, _, f in self.obstacles])
         d = json.loads(msg.data)
+        self._dp_frames[self.current_target_idx] += 1
         stamp, pose = min(self._pose_hist, key=lambda h: abs(h[0] - d['stamp']))
         if abs(stamp - d['stamp']) > 0.1:
+            self.get_logger().warn(f"SEEN      frame {d['stamp'] - stamp:+.2f} s from the nearest pose - not used",
+                                   throttle_duration_sec=2.0)
             return                               # no pose from that moment
+        self._dp_used[self.current_target_idx] += 1
         unread = [i for i in range(len(self.obstacles)) if i not in self._results]
         for i, tid in self.drive_past.on_frame(pose, [tuple(b) for b in d['boxes']], d['w'], d['h'], unread):
             self.get_logger().info(f"SEEN      #{self.tablet_id(i)} = {targets.label(tid)} while driving past "
@@ -919,6 +925,16 @@ class Task1Runner(RunnerBase):
             if self.pass_ok(idx) and self.visiting_order[idx] in self.drive_past.read:
                 self.pass_block(idx)              # read on the way in: no stop
                 return
+            if self.pass_ok(idx):
+                oi = self.visiting_order[idx]
+                hits = self.drive_past.seen.get(oi, [])
+                self.get_logger().info(
+                    f"NOT READ  #{self.current_label()} on the way in: {self._dp_frames[idx]} YOLO frames with boxes, "
+                    f"{self._dp_used[idx]} with a pose, {len(hits)} matched its face"
+                    f"{' (2 IDs - conflict)' if oi in self.drive_past.conflict else ''} - stopping")
+            elif self.drive_past is None and self.in_run():
+                self.get_logger().warn("NOT READ  no drive-past matching: the camera's place (TF) was not found",
+                                       throttle_duration_sec=30.0)
             # Only the IR that meets the block first is on it: creep on, no stop in between.
             creep_on = not ir_stop and self.ir_active(idx) and self.ir_fix.seen() == self.leading_ir()
             if not (creep_on or ir_stop):
