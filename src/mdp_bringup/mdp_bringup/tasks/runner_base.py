@@ -61,6 +61,7 @@ class RunnerBase(Node):
         self.follower = None             # the runner's PurePursuitController
         self.current_pose = (0.0, 0.0, 0.0)   # map frame, from odom_callback
         self.have_pose = False
+        self.last_odom = None
         self.state = None
         self.state_start = self.now()
         self.run_start = self.run_end = None  # GO and FINISHED/STOP times, for run_time
@@ -117,6 +118,7 @@ class RunnerBase(Node):
             self.get_logger().warn(f"POSE      no map <- {msg.header.frame_id} transform yet ({exc})",
                                    throttle_duration_sec=2.0)
             return
+        self.last_odom = msg              # odom frame, for a pose correction (task1 IR fix)
         pose = tf2_geometry_msgs.do_transform_pose(msg.pose.pose, tf)
         self.current_pose = (pose.position.x, pose.position.y, yaw_from_quaternion(pose.orientation))
         self.have_pose = True
