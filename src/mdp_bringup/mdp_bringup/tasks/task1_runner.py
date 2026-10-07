@@ -1062,7 +1062,8 @@ class Task1Runner(RunnerBase):
                                f"{self.now() - self.state_start:.1f} s)")
         found = self.detected_target_id is not None
         self._last_result = f'#{obs} = {targets.label(target_id) if found else "UNKNOWN"}'
-        self._results[self.visiting_order[self.current_target_idx]] = (target_id if found else '?', found)
+        self._results[self.visiting_order[self.current_target_idx]] = (targets.short(target_id) if found else '?',
+                                                                       found)
         self.publish_map()
 
         self.current_target_idx += 1

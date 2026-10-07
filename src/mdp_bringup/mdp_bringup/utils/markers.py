@@ -98,9 +98,9 @@ RESULT_RGBA = {True: (0.2, 1.0, 0.4, 1.0), False: (1.0, 0.3, 0.3, 1.0)}   # foun
 
 def obstacle_markers(obstacles, labels, stamp, sizes=None, walls=(), results=None) -> MarkerArray:
     """obstacles: (x_m, y_m, facing) block centres; labels: tablet number of each;
-    results: index -> (text, found) - the scan's answer (target ID) just above the
-    block, green / red; the block's own number is on its top. No cell labels: the
-    grid shows the cells and they cluttered the view;
+    results: index -> (text, found) - the scan's answer ('W / 32') against the image
+    face, which turns green when found (red: UNKNOWN); the block's own number is on
+    its top. No cell labels: the grid shows the cells and they cluttered the view;
     sizes: (x, y) of each block (default 10 x 10 cm); walls: grey rectangles
     (x0, y0, x1, y1). Starts with DELETEALL so a smaller new set leaves no stale
     blocks behind."""
@@ -112,17 +112,23 @@ def obstacle_markers(obstacles, labels, stamp, sizes=None, walls=(), results=Non
         markers += [
             marker(stamp, 'obstacles', i, Marker.CUBE, OBSTACLE_RGBA, x, y, 0.05,
                    scale=(sx, sy, 0.10)),
-            # The image face: a thin red slab on that side of the block.
-            marker(stamp, 'obstacle_facing', 300 + i, Marker.CUBE, (1.0, 0.0, 0.0, 1.0),
+            # The image face: a thin slab on that side of the block - red, green once
+            # its image was read (results).
+            marker(stamp, 'obstacle_facing', 300 + i, Marker.CUBE,
+                   RESULT_RGBA[True] if (results or {}).get(i, ('', False))[1] else (1.0, 0.0, 0.0, 1.0),
                    x + fx * (sx / 2.0 + thick / 2.0), y + fy * (sy / 2.0 + thick / 2.0), 0.05,
                    scale=(thick if fx else sx, thick if fy else sy, 0.10)),
             marker(stamp, 'obstacle_ids', 200 + i, Marker.TEXT_VIEW_FACING, (0.0, 0.0, 0.0, 1.0),
                    x, y, 0.102, scale=(1, 1, 0.07), text=labels[i]),
         ]
     for i, (text, found) in (results or {}).items():
-        x, y, _ = obstacles[i]
+        # Against the image face, at its height: reads as written on it.
+        x, y, facing = obstacles[i]
+        fx, fy = FACING[facing]
+        sx, sy = sizes[i] if sizes else (OBSTACLE_M, OBSTACLE_M)
         markers.append(marker(stamp, 'scan_results', 400 + i, Marker.TEXT_VIEW_FACING, RESULT_RGBA[found],
-                              x, y, 0.17, scale=(1, 1, 0.06), text=text))
+                              x + fx * (sx / 2.0 + 0.03), y + fy * (sy / 2.0 + 0.03), 0.06,
+                              scale=(1, 1, 0.05), text=text))
     for i, (x0, y0, x1, y1) in enumerate(walls):
         markers.append(marker(stamp, 'walls', i, Marker.CUBE, (0.35, 0.35, 0.35, 0.9),
                               (x0 + x1) / 2.0, (y0 + y1) / 2.0, 0.05, scale=(x1 - x0, y1 - y0, 0.10)))
