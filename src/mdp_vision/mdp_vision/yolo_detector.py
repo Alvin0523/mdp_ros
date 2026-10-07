@@ -6,6 +6,7 @@ Subscribes to camera feed (/image_raw), runs YOLO inference,
 and publishes detected target/arrow string to /yolo_result.
 """
 
+import json
 import os
 
 import signal
@@ -141,6 +142,9 @@ class YoloDetector(Node):
 
         self.bridge = CvBridge()
         self.result_pub = self.create_publisher(String, result_topic, 10)
+        # Every box of every frame with the frame's own time, for task 1's reads while
+        # driving past (drive_past.py): {"stamp", "w", "h", "boxes": [[id, conf, x1, y1, x2, y2]]}.
+        self.boxes_pub = self.create_publisher(String, '/yolo_detections', 10)
         # Full camera frame with YOLO's own boxes/labels/confidences drawn on
         # it (via Ultralytics Results.plot()) - for visual confirmation in
         # Foxglove/RViz, since /yolo_result alone is just a bare label
@@ -198,6 +202,7 @@ class YoloDetector(Node):
         if self.model is not None:
             results = self.model(cv_image, verbose=False, device=self.device, conf=self.min_conf)
             for r in results:
+                self.publish_boxes(r, msg.header, cv_image.shape)
                 box = self.pick_box(r, cv_image.shape)
                 self.publish_annotated(r, msg.header, box)
                 if box is None:
@@ -209,6 +214,19 @@ class YoloDetector(Node):
                     target_id = class_name.upper()
                 self.publish_detection(str(target_id), class_name)
                 return
+
+    def publish_boxes(self, result, header, shape):
+        if not len(result.boxes):
+            return
+        boxes = []
+        for box in result.boxes:
+            name = self.model.names[int(box.cls[0])]
+            tid = label_to_target_id(name)
+            boxes.append([str(tid if tid is not None else name.upper()), round(float(box.conf[0]), 3)]
+                         + [round(float(v), 1) for v in box.xyxy[0]])
+        stamp = header.stamp.sec + header.stamp.nanosec * 1e-9
+        self.boxes_pub.publish(String(data=json.dumps(
+            {'stamp': stamp, 'w': shape[1], 'h': shape[0], 'boxes': boxes})))
 
     def pick_box(self, result, shape):
         """The box to report (see min_confidence / edge_margin_px): the biggest

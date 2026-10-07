@@ -37,7 +37,7 @@ import math
 import threading
 import uuid
 import traceback
-from collections import Counter
+from collections import Counter, deque
 from enum import Enum, auto
 
 import rclpy.time
@@ -57,6 +57,7 @@ from mdp_algorithm.planning.planner import plan_leg, plan_visiting_order
 from mdp_algorithm.utils import params as planner_params
 from mdp_bringup.tasks.ir_pose_fix import (IR_APPROACH_M, IR_APPROACH_YAW, IR_CREEP_MAX_M, IR_FIX_DELAY_S,
                                            IR_FIX_MAX_S, IR_PAST_EDGE_M, IR_SEARCH_MAX_M, Face, IrPoseFix)
+from mdp_bringup.tasks.drive_past import Camera, DrivePast
 from mdp_bringup.tasks.runner_base import RunnerBase
 from mdp_bringup.utils.run import run
 from mdp_bringup.utils import manual, markers, obstacle_layout, targets
@@ -150,6 +151,10 @@ class Task1Runner(RunnerBase):
         self._ir_fix_marks = []
         self._results = {}              # obstacle index -> (text, found): the 3D view's answers
         self._last_result = ''          # '#3 = Number 1 (11)': the run panel's scan result
+        # Images read while driving past a block (drive_past.py) - LOG ONLY for now.
+        self.drive_past = None
+        self._pose_hist = deque(maxlen=250)   # (stamp s, pose): the pose at a camera frame's time
+        self.create_subscription(String, '/yolo_detections', self.detections_callback, 10)
         self._arrive_dir = 1.0          # +1 forward / -1 reverse: how the car drove into this stop
         self._laptop_ok = False                # the laptop answered this plan: replans go there too
         self._leg_waits = {}                   # gen -> a replan waiting for the laptop (remote_leg)
@@ -247,6 +252,8 @@ class Task1Runner(RunnerBase):
     def on_pose(self):
         """A pose reset turns DONE once the EKF reports the start pose."""
         x, y, yaw = self.current_pose
+        st = self.last_odom.header.stamp
+        self._pose_hist.append((st.sec + st.nanosec * 1e-9, self.current_pose))
         if self._reset_pending:
             sx, sy, syaw = self.start_pose()
             if (math.hypot(x - sx, y - sy) < RESET_POS_TOL_M
@@ -480,6 +487,37 @@ class Task1Runner(RunnerBase):
         response.success, response.message = True, f'{len(obstacles)} obstacles from {path}'
         return response
 
+    def detections_callback(self, msg: String):
+        """Every YOLO frame's boxes while driving: a block's image read on the way
+        (drive_past.py) is logged and shown - LOG ONLY, the car still stops there."""
+        if self.state != State.NAVIGATING_TO_TARGET or not self.obstacles or not self._pose_hist:
+            return
+        if self.drive_past is None:
+            camera = self.camera_on_car()
+            if camera is None:
+                return
+            self.drive_past = DrivePast(camera)
+            self.drive_past.reset([(x, y) for x, y, _ in self.obstacles],
+                                  [markers.FACING[f] for _, _, f in self.obstacles])
+        d = json.loads(msg.data)
+        stamp, pose = min(self._pose_hist, key=lambda h: abs(h[0] - d['stamp']))
+        if abs(stamp - d['stamp']) > 0.1:
+            return                               # no pose from that moment
+        unread = [i for i in range(len(self.obstacles)) if i not in self._results]
+        for i, tid in self.drive_past.on_frame(pose, [tuple(b) for b in d['boxes']], d['w'], d['h'], unread):
+            self.get_logger().info(f"SEEN      #{self.tablet_id(i)} = {targets.label(tid)} while driving past "
+                                   f"(log only - still stopping there)")
+            self.publish_map()
+
+    def camera_on_car(self):
+        """The camera on base_link (URDF), or None before TF has it."""
+        try:
+            tf = self.tf_buffer.lookup_transform('base_link', 'camera_link', rclpy.time.Time())
+        except tf2_ros.TransformException:
+            return None
+        t = tf.transform.translation
+        return Camera(t.x, t.y, t.z, yaw_from_quaternion(tf.transform.rotation))
+
     def yolo_callback(self, msg: String):
         target_id = msg.data.strip()
         if self.state != State.PAUSE_FOR_SCAN or not target_id:
@@ -518,6 +556,9 @@ class Task1Runner(RunnerBase):
             self.run_start, self.run_end = self.now(), None
             self._ir_fix_marks = []                  # a new run: last run's IR fixes off the 3D view
             self._results, self._last_result = {}, ''
+            if self.drive_past is not None:
+                self.drive_past.reset([(x, y) for x, y, _ in self.obstacles],
+                                      [markers.FACING[f] for _, _, f in self.obstacles])
             self.publish_map()
             self.ir_fix_pub.publish(MarkerArray(markers=[markers.Marker(action=markers.Marker.DELETEALL)]))
             self._replanned = set()
@@ -1058,8 +1099,11 @@ class Task1Runner(RunnerBase):
         obs = self.tablet_id(self.visiting_order[self.current_target_idx])
         self.send_bt(f"TARGET,{obs},{target_id}")
         seen = ' '.join(f"{k}x{n}" for k, n in Counter(self.scan_detections).most_common()) or 'nothing'
+        on_way = self.drive_past.read.get(self.visiting_order[self.current_target_idx]) if self.drive_past else None
+        check = '' if on_way is None else (', on the way: same' if on_way == target_id else
+                                           f', on the way: DIFFERENT - {targets.label(on_way)}')
         self.get_logger().info(f"TARGET    #{obs} = {targets.label(target_id)}   (YOLO saw {seen}, "
-                               f"{self.now() - self.state_start:.1f} s)")
+                               f"{self.now() - self.state_start:.1f} s{check})")
         found = self.detected_target_id is not None
         self._last_result = f'#{obs} = {targets.label(target_id) if found else "UNKNOWN"}'
         self._results[self.visiting_order[self.current_target_idx]] = (targets.short(target_id) if found else '?',
@@ -1083,7 +1127,8 @@ class Task1Runner(RunnerBase):
         self.arena_pub.publish(markers.arena_markers(stamp))
         self.obstacle_pub.publish(markers.obstacle_markers(
             self.obstacles, [self.tablet_id(i) for i in range(len(self.obstacles))], stamp,
-            results=self._results))
+            results=self._results,
+            seen={i: targets.short(t) for i, t in self.drive_past.read.items()} if self.drive_past else None))
 
     def publish_checkpoints(self):
         if self.checkpoints:
