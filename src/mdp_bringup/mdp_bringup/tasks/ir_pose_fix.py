@@ -29,7 +29,9 @@ HIT_TOL = 0.10           # m, a reading this close to the expected gap is "the f
 FAR_M = 0.15             # m, a reading this much past the expected gap is "past the block";
                          # in between: neither, no edge from it
 MAX_INCIDENCE = math.radians(25.0)   # beam this far off square to the face: ignored
-MAX_FIX_M = 0.08         # m, a bigger correction is a misreading - not used
+MAX_FIX_M = 0.12         # m, a bigger correction is a misreading - not used. Was 0.08: on the car
+                         # (2026-10-07, 0.3 m/s) one leg drifted 9 cm, both IRs agreed, the fix was
+                         # refused and two stops later the car hit a block
 EDGE_SPREAD_M = 0.025    # m, edge crossings disagreeing by more: not used
 CROSS_MAD_M = 0.01       # m, the gaps' median absolute deviation above this: not used
 CROSS_MIN_READINGS = 5   # gap readings needed (the Sharp is noisy: median of many)

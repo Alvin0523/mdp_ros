@@ -11,6 +11,20 @@ NAMES = {
 }
 
 
+SYMBOLS = {**{10 + n: str(n) for n in range(1, 10)},
+           **{20 + i: c for i, c in enumerate('ABCDEFGH')},
+           **{28 + i: c for i, c in enumerate('STUVWXYZ')},
+           36: '\u2191', 37: '\u2193', 38: '\u2192', 39: '\u2190', 40: 'Stop', 99: 'Bullseye'}
+
+
+def short(target_id) -> str:
+    """'32' -> 'W / 32', '36' -> '↑ / 36' (the 3D view); unknown ids as they are."""
+    try:
+        return f'{SYMBOLS[int(target_id)]} / {int(target_id)}'
+    except (KeyError, TypeError, ValueError):
+        return str(target_id or '')
+
+
 def label(target_id) -> str:
     """'11' -> 'Number 1 (11)'; an unknown or empty id as it is ('' -> '')."""
     try:
