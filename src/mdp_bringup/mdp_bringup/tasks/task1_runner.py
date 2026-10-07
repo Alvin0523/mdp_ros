@@ -268,17 +268,27 @@ class Task1Runner(RunnerBase):
                                    f"creeping {'forward' if seen == 'front' else 'back'}")
             return True
         self._ir_fix_pending = False
+        both_on = self.ir_fix.seen() == 'both'
         fixed = self.apply_ir_fix()
         along, per_m = self.ir_fix.along_offset(fixed)
+        along += self.ir_mid_x() * per_m          # the IR pair's middle, not base_link
         self.ir_fix.reset(None)
         dist = abs(along / per_m) if abs(per_m) > 0.8 else math.inf   # driving across the face: no
-        if 0.01 <= abs(along) and dist <= IR_CREEP_MAX_M:
+        # Both IRs steadily on the block: within +-1.4 cm of centred already - no
+        # creep (on the car 2026-10-07 a 1.1 cm 'centring' creep took the front IR
+        # back off the block).
+        if not both_on and 0.01 <= abs(along) and dist <= IR_CREEP_MAX_M:
             self.start_creep('centre', -math.copysign(1.0, along / per_m), dist, after=0.2)
-            self.get_logger().info(f"IR CREEP  #{self.current_label()} {along * 100:+.1f} cm off the block "
-                                   f"centre - {'forward' if along / per_m < 0 else 'back'} {dist * 100:.1f} cm")
+            self.get_logger().info(f"IR CREEP  #{self.current_label()} IR pair {along * 100:+.1f} cm off the "
+                                   f"block centre - {'forward' if along / per_m < 0 else 'back'} {dist * 100:.1f} cm")
             return True
         self.check_next_leg(fixed)
         return False
+
+    def ir_mid_x(self) -> float:
+        """How far the middle of the two IRs is ahead of base_link (m, URDF)."""
+        xs = [s[0] for s in self.ir_fix.sensors.values()]
+        return sum(xs) / len(xs)
 
     def start_creep(self, mode, direction, dist, after=0.0):
         # 'centre' starts once the EKF has taken the fix (its pose jumps by it).
@@ -597,17 +607,25 @@ class Task1Runner(RunnerBase):
         start = self.start_pose()
         self.visiting_order, self.checkpoints, self.unreachable, self.costmap = plan_visiting_order(
             obstacles_cm, start, theta_offset=camera_yaw)
+        sensors = self.ir_sensors()
+        self.ir_fix = IrPoseFix(sensors) if sensors else None
+        if sensors is None:
+            self.get_logger().warn("PLAN      no ir_link / ir2_link in the URDF - no IR position fix")
+        else:
+            # Each stop puts the MIDDLE of the two IRs level with the block centre, not
+            # base_link: they are not centred on it (URDF), and lined up on base_link the
+            # front one sat 0.9 cm from the block's edge and flickered off it (car,
+            # 2026-10-07). Centred on their middle, both are as far inside as can be.
+            mid = self.ir_mid_x()
+            self.checkpoints = [(x - mid * math.cos(t), y - mid * math.sin(t), t) for x, y, t in self.checkpoints]
+            self.get_logger().info(f"PLAN      stops moved {-mid * 100:+.1f} cm along: the IR pair's middle "
+                                   f"level with each block")
         self.publish_map()
         self.publish_checkpoints()
         if self.unreachable:
             self.get_logger().warn(
                 f"PLAN      no scan checkpoint for {' '.join('#' + self.tablet_id(i) for i in self.unreachable)} - skipped")
         self.get_logger().info(f"PLAN      order {' -> '.join(self.tablet_id(i) for i in self.visiting_order)}")
-
-        sensors = self.ir_sensors()
-        self.ir_fix = IrPoseFix(sensors) if sensors else None
-        if sensors is None:
-            self.get_logger().warn("PLAN      no ir_link / ir2_link in the URDF - no IR position fix")
         self.leg_paths = [None] * len(self.visiting_order)
         self.leg_starts = [None] * len(self.visiting_order)   # pose each leg was planned from
         self._replanned = set()
