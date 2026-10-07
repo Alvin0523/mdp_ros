@@ -32,8 +32,12 @@ MAX_FIX_M = 0.08         # m, a bigger correction is a misreading - not used
 EDGE_SPREAD_M = 0.025    # m, edge crossings disagreeing by more: not used
 CROSS_MAD_M = 0.01       # m, the gaps' median absolute deviation above this: not used
 CROSS_MIN_READINGS = 5   # gap readings needed (the Sharp is noisy: median of many)
+STEADY_READINGS = 5      # seen() changes an IR's 'on the face' only after this many readings
+                         # in a row agree: on the car 2026-10-07 the front IR, just past the
+                         # block's edge, read a background jumping 23-80 cm, and ONE reading
+                         # inside HIT_TOL counted it on the face - the creep stopped after 0 cm
 # The runner (task1_runner.ir_stop_step): the fix waits IR_FIX_DELAY_S after
-# stopping (the car settled), then for 3 readings per IR - at most IR_FIX_MAX_S
+# stopping (the car settled), then for STEADY_READINGS per IR - at most IR_FIX_MAX_S
 # (the STM32 reads the IRs at 5 Hz for now). A creep goes at most IR_CREEP_MAX_M.
 IR_FIX_DELAY_S = 0.4
 IR_FIX_MAX_S = 1.5
@@ -81,6 +85,8 @@ class IrPoseFix:
         self.gaps = []                    # across errors from readings at the stop
         self.stopped = False
         self.count = {}                   # name -> readings since at_stop()
+        self.steady = {}                  # name -> on the face, after STEADY_READINGS in a row
+        self.streak = {}                  # name -> (on the face?, readings in a row)
 
     def along_offset(self, pose):
         """How far base_link at `pose` is along the face from its centre (m),
@@ -92,7 +98,7 @@ class IrPoseFix:
     def seen(self):
         """Which IRs see the face now: 'both', 'none', or 'front' / 'rear'
         (only that one - the car is off towards it)."""
-        on = [name for name in self.sensors if self.last.get(name, (False,))[0]]
+        on = [name for name in self.sensors if self.steady.get(name, False)]
         if len(on) == len(self.sensors):
             return 'both'
         if not on:
@@ -104,7 +110,7 @@ class IrPoseFix:
         """The car has stopped at the checkpoint: gaps from now on."""
         self.stopped, self.gaps, self.count = True, [], {}
 
-    def ready(self, per_sensor=3) -> bool:
+    def ready(self, per_sensor=STEADY_READINGS) -> bool:
         """Every IR has given per_sensor readings since at_stop() - the
         Sharp gives ~26 a second, but the STM32 reads it at 5 Hz for now."""
         return all(self.count.get(name, 0) >= per_sensor for name in self.sensors)
@@ -137,6 +143,11 @@ class IrPoseFix:
         elif prev is not None and prev[0] != on_face:
             self.pending[name] = (on_face, prev[1], along)
         self.last[name] = (on_face, along)
+        state, n = self.streak.get(name, (None, 0))
+        n = n + 1 if state == on_face else 1
+        self.streak[name] = (on_face, n)
+        if n >= STEADY_READINGS:
+            self.steady[name] = on_face
         if self.stopped and on_face and abs(along) < BLOCK_HALF:
             # Across: really `reading` along the beam, the pose says `expected`.
             self.gaps.append((reading - expected) * cos_inc)
@@ -150,7 +161,7 @@ class IrPoseFix:
             along = -sum(self.edges) / len(self.edges)
             notes.append(f'along {along * 100:+.1f} cm ({len(self.edges)} edges)')
         elif not self.edges and self.seen() == 'both':
-            # No edge, but both beams are on the face: keep them there.
+            # No edge, but both beams are steadily on the face: keep them there.
             hits = [self.last[name][1] for name in self.sensors]
             if max(hits) > BLOCK_HALF:
                 along = -(max(hits) - BLOCK_HALF)
