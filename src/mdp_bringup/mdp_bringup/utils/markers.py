@@ -119,7 +119,7 @@ def obstacle_markers(obstacles, labels, stamp, sizes=None, walls=(), results=Non
                    x + fx * (sx / 2.0 + thick / 2.0), y + fy * (sy / 2.0 + thick / 2.0), 0.05,
                    scale=(thick if fx else sx, thick if fy else sy, 0.10)),
             marker(stamp, 'obstacle_ids', 200 + i, Marker.TEXT_VIEW_FACING, (0.0, 0.0, 0.0, 1.0),
-                   x, y, 0.102, scale=(1, 1, 0.07), text=labels[i]),
+                   x, y, 0.102, scale=(1, 1, 0.06), text=f'{labels[i]} ({cell(x)},{cell(y)})'),
         ]
     for i, (text, found) in (results or {}).items():
         x, y, _ = obstacles[i]      # above the block (its number is on its top)
