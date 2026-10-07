@@ -45,7 +45,7 @@ STEADY_READINGS = 5      # seen() changes an IR's 'on the face' only after this 
 EDGE_MAX_SPEED = 0.07    # m/s, an edge crossed faster is not used: the Sharp's reading lags, and
                          # rolling on after ARRIVED (~0.1 m/s) the edge landed ~1.5 cm off (car,
                          # 2026-10-07). The search creep goes 0.05.
-IR_FIX_DELAY_S = 0.4
+IR_FIX_DELAY_S = 0.2     # s, was 0.4 - the car stops from creep speed (2026-10-08)
 IR_FIX_MAX_S = 1.5
 IR_CREEP_MAX_M = 0.10    # one IR on the block: creep at most this far for the other
 IR_APPROACH_M = 0.15     # this close to the stop (last stretch of the leg): the IR that meets the
