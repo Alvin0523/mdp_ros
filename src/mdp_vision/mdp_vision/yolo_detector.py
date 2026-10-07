@@ -249,7 +249,11 @@ class YoloDetector(Node):
         if chosen is not None:                 # the box sent on /yolo_result: thick green frame
             x1, y1, x2, y2 = (int(v) for v in chosen.xyxy[0])
             cv2.rectangle(annotated, (x1, y1), (x2, y2), (0, 255, 0), 4)
-            cv2.putText(annotated, 'SENT', (x1, max(15, y1 - 8)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+            # Below the box: YOLO's own label (class + confidence) sits above it.
+            # A box at the bottom of the frame gets it just inside its bottom edge.
+            h = annotated.shape[0]
+            ty = y2 + 20 if y2 + 20 < h else y2 - 8
+            cv2.putText(annotated, 'SENT', (x1 + 2, ty), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
         ok, jpeg = cv2.imencode('.jpg', annotated, [cv2.IMWRITE_JPEG_QUALITY, self.jpeg_quality])
         if not ok:
             return
