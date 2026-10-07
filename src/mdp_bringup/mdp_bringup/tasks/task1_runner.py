@@ -1162,7 +1162,22 @@ class Task1Runner(RunnerBase):
     def publish_checkpoints(self):
         if self.checkpoints:
             current = self.current_target_idx if self.in_run() else None
-            self.checkpoint_pub.publish(markers.checkpoint_markers(self.checkpoints, current, self.stamp()))
+            self.checkpoint_pub.publish(markers.checkpoint_markers(self.checkpoints, current, self.stamp(),
+                                                                   passes=self.planned_passes()))
+
+    def planned_passes(self) -> set:
+        """The checkpoints from here on that the IR rule (pass_ok) lets the car pass,
+        if each is read on the way in: for the 3D view ('3*'). A pass that is not read
+        becomes a stop - published again then, so this follows the run."""
+        out, since = set(), self._since_fix
+        start = self.current_target_idx if self.in_run() else 0
+        for idx in range(start, len(self.visiting_order)):
+            if since == 0 and (idx == len(self.visiting_order) - 1 or self.ir_active(idx + 1)):
+                out.add(idx)
+                since = 1
+            else:
+                since = 0 if self.ir_active(idx) else since + 1
+        return out
 
     def publish_leg(self):
         stamp = self.stamp()
