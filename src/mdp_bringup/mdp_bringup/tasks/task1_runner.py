@@ -79,14 +79,6 @@ REPLAN_FALLBACK_M = 0.15   # car inside the safety margin this close to the leg'
 # if the car is this far off its start. 5 cm was not enough: 2-3 cm off, a leg
 # starting in reverse left its path and replanned from the old start (sim 2026-10-03).
 IR_REPLAN_POS_M = 0.02
-# A pass (pass_ok): the leg to the block and the next leg are driven as one path - no
-# stop, no IR fix, no replan there. Near its view spot (PASS_NEAR_M, heading within
-# PASS_YAW of the spot's) the car goes at most PASS_SPEED and YOLO's reports count as at a
-# scan stop (scan_confirm_count the same). Not read once past it: visited again as a
-# normal stop after the last block.
-PASS_SPEED = 0.15       # m/s
-PASS_NEAR_M = 0.20
-PASS_YAW = math.radians(15.0)
 
 
 class State(Enum):
@@ -158,7 +150,6 @@ class Task1Runner(RunnerBase):
         self._ir_fix_marks = []
         self._results = {}              # obstacle index -> (text, found): the 3D view's answers
         self._last_result = ''          # '#3 = Number 1 (11)': the run panel's scan result
-        self._pass = None               # {'idx', 'junction', 'reads'}: the pass being driven through
         self._arrive_dir = 1.0          # +1 forward / -1 reverse: how the car drove into this stop
         self._laptop_ok = False                # the laptop answered this plan: replans go there too
         self._leg_waits = {}                   # gen -> a replan waiting for the laptop (remote_leg)
@@ -167,8 +158,6 @@ class Task1Runner(RunnerBase):
         self.ir_fix = None             # IrPoseFix once the IR positions are known (plan)
         self._ir_fix_pending = False   # at a scan stop, the fix not yet applied
         self._finds = 0                # searches (start_find) at this stop - at most 2
-        self._since_fix = 0            # blocks visited since the last IR fix (pass_ok)
-        self._fixed_here = False       # this stop had its IR fix
         self._creep = None             # a straight creep in progress, see creep()
         for name in ('ir', 'ir2'):
             self.create_subscription(Range, f'/{name}', lambda m, n=name: self.ir_callback(n, m), 10)
@@ -297,7 +286,6 @@ class Task1Runner(RunnerBase):
         # Both IRs on the block (or as close as the search got): the car stays where
         # it is - the fix only puts the pose estimate where the car really is.
         fixed = self.apply_ir_fix()
-        self._fixed_here = True
         self.ir_fix.reset(None)
         self.check_next_leg(fixed)
         return False
@@ -494,8 +482,6 @@ class Task1Runner(RunnerBase):
 
     def yolo_callback(self, msg: String):
         target_id = msg.data.strip()
-        if self._pass is not None and target_id and self.pass_in_view():
-            self._pass['reads'].append(target_id)   # passing: counts as at a scan stop
         if self.state != State.PAUSE_FOR_SCAN or not target_id:
             return
         if self.now() - self.state_start < float(self.get_parameter('scan_settle_s').value):
@@ -532,7 +518,6 @@ class Task1Runner(RunnerBase):
             self.run_start, self.run_end = self.now(), None
             self._ir_fix_marks = []                  # a new run: last run's IR fixes off the 3D view
             self._results, self._last_result = {}, ''
-            self._since_fix, self._fixed_here = 0, False
             self.publish_map()
             self.ir_fix_pub.publish(MarkerArray(markers=[markers.Marker(action=markers.Marker.DELETEALL)]))
             self._replanned = set()
@@ -685,7 +670,6 @@ class Task1Runner(RunnerBase):
     def plan(self):
         """Order + checkpoints now; every leg in a background thread."""
         self.configure_planner()
-        self._since_fix = 0            # from the start (reset pose): as good as an IR fix
         camera_yaw = self.camera_yaw()
         if camera_yaw is None:
             return   # tried again next tick
@@ -878,14 +862,10 @@ class Task1Runner(RunnerBase):
         f.steer_tau = float(p('steering_time_constant'))
         f.pose_latency = float(p('pose_latency'))
         ir_stop = self.ir_approach()
-        if self._pass is not None:
-            self.pass_step()
         if ir_stop:
             self.follower.set_path([])            # both IRs on the block: this is the stop
         cmd = None if ir_stop else self.follower.compute_cmd()
         if cmd is None or self.follower.is_done():
-            if self._pass is not None:
-                self.pass_step()                  # the path ended before it was decided
             idx = self.current_target_idx
             # Only the IR that meets the block first is on it: creep on, no stop in between.
             creep_on = not ir_stop and self.ir_active(idx) and self.ir_fix.seen() == self.leading_ir()
@@ -928,21 +908,6 @@ class Task1Runner(RunnerBase):
         else:
             self.send_cmd(*cmd)
 
-    def pass_ok(self, idx) -> bool:
-        """May block `idx` be passed (read without stopping)? Only with the last block's
-        IR fix done and the next block an IR stop: the car is never more than one block
-        without an IR fix. Never the last block (nothing to drive on to)."""
-        return (self._since_fix == 0 and idx + 1 < len(self.visiting_order) and self.ir_active(idx + 1))
-
-    def pass_block(self, idx, tid, reads):
-        """Read while passing: report it and go on to the next block."""
-        self.get_logger().info(f"PASSED    #{self.current_label()} = {targets.label(tid)} read while passing - "
-                               f"no stop")
-        self.detected_target_id, self.scan_detections = tid, list(reads)
-        self.state_start = self.now()
-        self._fixed_here = False
-        self.finish_scan()
-
     def ir_active(self, idx) -> bool:
         """The IR approach, creep and fix at stop `idx`: not at the last one (nothing
         is driven after it, a better pose is no use) nor at one slid clear of the table's
@@ -961,7 +926,7 @@ class Task1Runner(RunnerBase):
         f = self.follower
         f.speed_cap = math.inf
         idx = self.current_target_idx
-        if self._pass is not None or not self.ir_active(idx) or self.ir_fix.face is None or not f.path or not f.on_last_segment():
+        if not self.ir_active(idx) or self.ir_fix.face is None or not f.path or not f.on_last_segment():
             return False
         self._arrive_dir = 1.0 if f.path[-1][3] >= 0 else -1.0
         cx, cy, ct = self.checkpoints[idx]
@@ -1015,7 +980,6 @@ class Task1Runner(RunnerBase):
         is still planning; an empty leg (no path) is skipped straight to scanning."""
         idx = self.current_target_idx
         path = self.leg_paths[idx]
-        self._pass = None
         if path is None:
             return False
         if idx not in self._replanned and (not path or self.off_leg_start(idx)):
@@ -1027,14 +991,7 @@ class Task1Runner(RunnerBase):
             threading.Thread(target=self.replan_leg, daemon=True,
                              args=(idx, tuple(self.current_pose), self._plan_gen)).start()
             return False
-        nxt = idx + 1
-        through = path and self.pass_ok(idx) and nxt < len(self.leg_paths) and bool(self.leg_paths[nxt])
-        if through:
-            # A pass: this leg and the next as one path - no arriving at the view spot.
-            self._pass = {'idx': idx, 'junction': len(path), 'reads': []}
-            self.follower.set_path(path + self.leg_paths[nxt])
-        else:
-            self.follower.set_path(path)
+        self.follower.set_path(path)
         self._on_path = False          # left_path() arms once the car is on it
         if not path:
             self.get_logger().warn(f"LEG {idx + 1}/{len(self.visiting_order)}   #{self.current_label()}: NO PATH - "
@@ -1049,59 +1006,8 @@ class Task1Runner(RunnerBase):
         cuts = [i for i in range(1, len(gears)) if gears[i] != gears[i - 1]]
         moves = ' '.join('fwd' if gears[a] >= 0 else 'REV' for a in [0] + cuts)
         self.get_logger().info(f"LEG {idx + 1}/{len(self.visiting_order)}   -> #{self.current_label()} "
-                               f"{self.fmt(self.checkpoints[idx])}  {moves}{'  - passing it' if through else ''}")
+                               f"{self.fmt(self.checkpoints[idx])}  {moves}")
         return True
-
-    def pass_in_view(self) -> bool:
-        """Near the pass's view spot, heading about its heading: the camera on its face."""
-        cx, cy, ct = self.checkpoints[self._pass['idx']]
-        x, y, yaw = self.current_pose
-        return (math.hypot(x - cx, y - cy) < PASS_NEAR_M
-                and abs(math.atan2(math.sin(yaw - ct), math.cos(yaw - ct))) < PASS_YAW)
-
-    def pass_step(self):
-        """Driving through a pass: slow near its view spot; once the car has been near
-        it and is PASS_NEAR_M away again, report it - or, not read, come back to it after
-        the last block - and go on with the next block, without stopping. (Decided when
-        the follower's look-ahead crossed the spot, it was 10-15 cm early: before YOLO's
-        clear view - car, 2026-10-08.)"""
-        p, f = self._pass, self.follower
-        cx, cy, _ = self.checkpoints[p['idx']]
-        near = math.hypot(self.current_pose[0] - cx, self.current_pose[1] - cy) < PASS_NEAR_M
-        if near or not p.get('was_near'):
-            p['was_near'] = p.get('was_near') or near
-            if self.pass_in_view():
-                f.speed_cap = min(f.speed_cap, PASS_SPEED)
-            if f.active:
-                return
-        self._pass = None
-        idx, oi = p['idx'], self.visiting_order[p['idx']]
-        counts = Counter(p['reads']).most_common(1)
-        if counts and counts[0][1] >= int(self.get_parameter('scan_confirm_count').value):
-            self.pass_block(idx, counts[0][0], p['reads'])   # TARGET, on to the next block
-        else:
-            seen = ' '.join(f"{k}x{n}" for k, n in Counter(p['reads']).most_common()) or 'nothing'
-            self.get_logger().warn(f"MISSED    #{self.current_label()} not read on the pass (YOLO saw {seen}) - "
-                                   f"back to it after the last block")
-            new = len(self.visiting_order)
-            self.visiting_order.append(oi)
-            self.checkpoints.append(self.checkpoints[idx])
-            self.leg_paths.append(None)
-            self.leg_starts.append(None)
-            if idx in self._slid:
-                self._slid[new] = self._slid[idx]
-            threading.Thread(target=self.replan_leg, daemon=True,
-                             args=(new, tuple(self.checkpoints[new - 1]), self._plan_gen)).start()
-            self.current_target_idx += 1
-            self._since_fix += 1
-            self.publish_checkpoints()
-        idx = self.current_target_idx
-        if idx < len(self.visiting_order) and self.ir_fix is not None:
-            bx, by, facing = self.obstacles[self.visiting_order[idx]]
-            self.ir_fix.reset(Face(bx, by, *markers.FACING[facing]))
-        if idx < len(self.visiting_order):
-            self.get_logger().info(f"LEG {idx + 1}/{len(self.visiting_order)}   -> #{self.current_label()} "
-                                   f"{self.fmt(self.checkpoints[idx])}  (on from the pass)")
 
     def off_leg_start(self, idx, pose=None, pos_tol=REPLAN_POS_M) -> bool:
         """Is the car further than REPLAN_POS_M / REPLAN_YAW_RAD from where leg idx
@@ -1155,8 +1061,6 @@ class Task1Runner(RunnerBase):
         self.get_logger().info(f"TARGET    #{obs} = {targets.label(target_id)}   (YOLO saw {seen}, "
                                f"{self.now() - self.state_start:.1f} s)")
         found = self.detected_target_id is not None
-        self._since_fix = 0 if self._fixed_here else self._since_fix + 1
-        self._fixed_here = False
         self._last_result = f'#{obs} = {targets.label(target_id) if found else "UNKNOWN"}'
         self._results[self.visiting_order[self.current_target_idx]] = (targets.short(target_id) if found else '?',
                                                                        found)
@@ -1184,22 +1088,7 @@ class Task1Runner(RunnerBase):
     def publish_checkpoints(self):
         if self.checkpoints:
             current = self.current_target_idx if self.in_run() else None
-            self.checkpoint_pub.publish(markers.checkpoint_markers(self.checkpoints, current, self.stamp(),
-                                                                   passes=self.planned_passes()))
-
-    def planned_passes(self) -> set:
-        """The checkpoints from here on that the IR rule (pass_ok) lets the car pass,
-        if each is read on the way in: for the 3D view ('3*'). A pass that is not read
-        becomes a stop - published again then, so this follows the run."""
-        out, since = set(), self._since_fix
-        start = self.current_target_idx if self.in_run() else 0
-        for idx in range(start, len(self.visiting_order)):
-            if since == 0 and idx + 1 < len(self.visiting_order) and self.ir_active(idx + 1):
-                out.add(idx)
-                since = 1
-            else:
-                since = 0 if self.ir_active(idx) else since + 1
-        return out
+            self.checkpoint_pub.publish(markers.checkpoint_markers(self.checkpoints, current, self.stamp()))
 
     def publish_leg(self):
         stamp = self.stamp()

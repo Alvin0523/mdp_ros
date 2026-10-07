@@ -131,24 +131,18 @@ def obstacle_markers(obstacles, labels, stamp, sizes=None, walls=(), results=Non
     return MarkerArray(markers=markers)
 
 
-PASS_RGBA = (0.3, 0.85, 1.0, 0.95)    # a checkpoint planned as a pass (task 1)
-
-
-def checkpoint_markers(checkpoints, current, stamp, passes=()) -> MarkerArray:
+def checkpoint_markers(checkpoints, current, stamp) -> MarkerArray:
     """An arrow (pose) per checkpoint and its visit order. `current`: the
-    index being driven to / scanned (drawn bigger), or None. `passes`: indices
-    planned to be driven through without stopping - cyan, '3*'."""
+    index being driven to / scanned (drawn bigger and green), or None."""
     markers = []
     for i, (x, y, theta) in enumerate(checkpoints):
-        rgba = PASS_RGBA if i in passes else CHECKPOINT_RGBA
-        scale = (CHECKPOINT_ARROW_M, 0.02, 0.02)
+        rgba, scale = CHECKPOINT_RGBA, (CHECKPOINT_ARROW_M, 0.02, 0.02)
         if i == current:
-            rgba = (0.1, 1.0, 1.0, 1.0) if i in passes else (0.1, 1.0, 0.1, 1.0)
-            scale = (CHECKPOINT_ARROW_M * 1.5, 0.04, 0.04)
+            rgba, scale = (0.1, 1.0, 0.1, 1.0), (CHECKPOINT_ARROW_M * 1.5, 0.04, 0.04)
         markers += [
             marker(stamp, 'checkpoints', i, Marker.ARROW, rgba, x, y, 0.05, scale=scale, yaw=theta),
-            marker(stamp, 'checkpoint_ids', 200 + i, Marker.TEXT_VIEW_FACING, rgba,
-                   x, y, 0.06, scale=(1, 1, 0.045), text=f"{i + 1}{'*' if i in passes else ''}"),
+            marker(stamp, 'checkpoint_ids', 200 + i, Marker.TEXT_VIEW_FACING, CHECKPOINT_RGBA,
+                   x, y, 0.06, scale=(1, 1, 0.045), text=str(i + 1)),
         ]
     return MarkerArray(markers=markers)
 
