@@ -182,8 +182,8 @@ task1_runner:
                                       # full lock - 9 cm of drift on one leg (2026-10-07)
       regulated_linear_scaling_min_speed: 0.15   # m/s, never slower in a curve
       max_reverse_linear_vel: 0.3     # m/s
-      approach_velocity_scaling_dist: 0.20   # m
-      min_approach_linear_velocity: 0.10     # m/s
+      approach_velocity_scaling_dist: 0.12   # m - was 0.20 / 0.10 m/s: 9.7 s of a 55 s
+      min_approach_linear_velocity: 0.15     # m/s   run under 0.12 m/s (car, 2026-10-08)
       # Task 1 scan stop: the straight creep to the block for the IR fix
       # (task1_runner.creep). At 0.10 m/s it stopped 2-3 cm off its target
       # (sim 2026-10-04); 0.05 within ~1 cm. TODO: does the real car move this slow?
