@@ -8,8 +8,11 @@ CHECKPOINT: one per obstacle, straight out from its image face:
     position = obstacle centre + planner.checkpoint_standoff * facing direction
     heading  = facing back at the obstacle, turned by theta_offset for the
                camera's mounting angle (task 1: the camera looks LEFT)
-snapped to the centre of its 10 cm cell. An obstacle whose checkpoint lies
-too close to another obstacle, or where the car's footprint would not fit, is
+snapped to the centre of its 10 cm cell. Next to the table's edge the car's
+nose (or tail) can stick out over it, e.g. block (1,18) facing E: the stop
+then slides back along the car's heading, 1 cm at a time up to
+MAX_EDGE_SLIDE_CM, until the car is on the table. An obstacle whose checkpoint
+lies too close to another obstacle, or where the car does not fit even so, is
 unreachable and skipped.
 
 ORDER: every permutation of the reachable obstacles, scored by the sum of
@@ -32,6 +35,8 @@ from . import reeds_shepp as rs
 from .costmap import Costmap, Obstacle, snap_to_cell_centre
 
 Checkpoint = Tuple[float, float, float, int]  # (x_cm, y_cm, theta_rad, obstacle_id)
+
+MAX_EDGE_SLIDE_CM = 10.0   # a stop slid further than this: the camera and IRs miss the block
 
 
 def _blocked_by_any_obstacle(costmap: Costmap, x: float, y: float) -> bool:
@@ -61,9 +66,29 @@ def obstacle_to_checkpoint(costmap: Costmap, obstacle: Obstacle,
     # The car must fit there: on the table and clear of every block. This is
     # what makes an obstacle facing off the table, or one boxed in by another,
     # unreachable instead of planned to an impossible pose.
-    if costmap.in_collision(x, y, theta):
+    if not costmap.in_collision(x, y, theta):
+        return (x, y, theta, obstacle.id)
+    if not _over_edge(costmap, x, y, theta):
         return None
-    return (x, y, theta, obstacle.id)
+    # Over the table's edge: slide along the heading, away from it (2026-10-07).
+    c, s = np.cos(theta), np.sin(theta)
+    for d in np.arange(1.0, MAX_EDGE_SLIDE_CM + 0.5):
+        for sx, sy in ((x - d * c, y - d * s), (x + d * c, y + d * s)):
+            if (not _over_edge(costmap, sx, sy, theta) and not costmap.in_collision(sx, sy, theta)
+                    and not _blocked_by_any_obstacle(costmap, sx, sy)):
+                return (float(sx), float(sy), theta, obstacle.id)
+    return None
+
+
+def _over_edge(costmap: Costmap, x: float, y: float, theta: float) -> bool:
+    """Does the car's padded footprint at (x, y, theta) stick out over the table's edge?"""
+    f, c, s = costmap.footprint, np.cos(theta), np.sin(theta)
+    for px in (f.front, -f.rear):
+        for py in (f.half_w, -f.half_w):
+            cx, cy = x + c * px - s * py, y + s * px + c * py
+            if not (0.0 <= cx <= costmap.width_cm and 0.0 <= cy <= costmap.height_cm):
+                return True
+    return False
 
 
 def find_visiting_order(costmap: Costmap, start: Tuple[float, float, float],

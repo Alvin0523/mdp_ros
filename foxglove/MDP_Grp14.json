@@ -154,6 +154,9 @@
         },
         "/run_timer": {
           "visible": true
+        },
+        "/ir_fix_markers": {
+          "visible": true
         }
       },
       "layers": {

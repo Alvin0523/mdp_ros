@@ -23,8 +23,9 @@ from statistics import median
 
 BLOCK_HALF = 0.05        # m, the task 1 block is 10 x 10 cm
 IR_MIN, IR_MAX = 0.10, 0.40   # m, readings used: the Sharp is good from 10 to ~40 cm
-HIT_TOL = 0.08           # m, a reading this close to the expected gap is "the face" - wide:
-                         # the pose may be 5 cm off across and the Sharp's scale 10% (sim 2026-10-03)
+HIT_TOL = 0.10           # m, a reading this close to the expected gap is "the face" - the car may
+                         # stop that far off it (2026-10-07: 7 cm closer, IR2 read 11.5 cm for
+                         # 18.8, outside 5 cm - "not the block"). The floor / a wall reads 33 cm+
 FAR_M = 0.15             # m, a reading this much past the expected gap is "past the block";
                          # in between: neither, no edge from it
 MAX_INCIDENCE = math.radians(25.0)   # beam this far off square to the face: ignored
@@ -39,9 +40,13 @@ STEADY_READINGS = 5      # seen() changes an IR's 'on the face' only after this 
 # The runner (task1_runner.ir_stop_step): the fix waits IR_FIX_DELAY_S after
 # stopping (the car settled), then for STEADY_READINGS per IR - at most IR_FIX_MAX_S
 # (the STM32 reads the IRs at 5 Hz for now). A creep goes at most IR_CREEP_MAX_M.
+EDGE_MAX_SPEED = 0.07    # m/s, an edge crossed faster is not used: the Sharp's reading lags, and
+                         # rolling on after ARRIVED (~0.1 m/s) the edge landed ~1.5 cm off (car,
+                         # 2026-10-07). The search creep goes 0.05.
 IR_FIX_DELAY_S = 0.4
 IR_FIX_MAX_S = 1.5
-IR_CREEP_MAX_M = 0.10
+IR_CREEP_MAX_M = 0.10    # one IR on the block: creep at most this far for the other
+IR_SEARCH_MAX_M = 0.15   # neither on it: search at most this far
 
 
 class Face:
@@ -86,6 +91,7 @@ class IrPoseFix:
         self.stopped = False
         self.count = {}                   # name -> readings since at_stop()
         self.steady = {}                  # name -> on the face, after STEADY_READINGS in a row
+        self.seen_any = False             # an IR was steadily on the face since reset (the approach)
         self.streak = {}                  # name -> (on the face?, readings in a row)
 
     def along_offset(self, pose):
@@ -115,8 +121,8 @@ class IrPoseFix:
         Sharp gives ~26 a second, but the STM32 reads it at 5 Hz for now."""
         return all(self.count.get(name, 0) >= per_sensor for name in self.sensors)
 
-    def on_reading(self, name, reading, pose):
-        """One IR reading (m) with the pose estimate at that moment."""
+    def on_reading(self, name, reading, pose, speed=0.0):
+        """One IR reading (m) with the pose estimate and the car's speed (m/s) at that moment."""
         if self.face is None or name not in self.sensors:
             return
         if self.stopped:
@@ -135,9 +141,14 @@ class IrPoseFix:
         prev, pend = self.last.get(name), self.pending.get(name)
         if pend is not None:
             self.pending.pop(name)
-            if on_face == pend[0] and self.stopped:
+            moved = pend[2] - pend[1]
+            if on_face == pend[0] and self.stopped and abs(moved) > 1e-4 and speed <= EDGE_MAX_SPEED:
                 crossing = 0.5 * (pend[1] + pend[2])
-                edge = math.copysign(BLOCK_HALF, crossing)
+                # Which edge: the way the beam crossed it, not which side of the
+                # centre the pose puts it - with the pose over 5 cm off that is
+                # the wrong edge (sim 2026-10-07: 7 cm off, "fixed" 4 cm further
+                # off). Coming on moving -along: in over the + edge; going off: out over the - edge.
+                edge = math.copysign(BLOCK_HALF, -moved if on_face else moved)
                 if abs(crossing - edge) < MAX_FIX_M:
                     self.edges.append(crossing - edge)
         elif prev is not None and prev[0] != on_face:
@@ -148,6 +159,7 @@ class IrPoseFix:
         self.streak[name] = (on_face, n)
         if n >= STEADY_READINGS:
             self.steady[name] = on_face
+            self.seen_any = self.seen_any or on_face
         if self.stopped and on_face and abs(along) < BLOCK_HALF:
             # Across: really `reading` along the beam, the pose says `expected`.
             self.gaps.append((reading - expected) * cos_inc)
@@ -159,7 +171,7 @@ class IrPoseFix:
         notes, along, across = [], 0.0, 0.0
         if self.edges and max(self.edges) - min(self.edges) <= EDGE_SPREAD_M:
             along = -sum(self.edges) / len(self.edges)
-            notes.append(f'along {along * 100:+.1f} cm ({len(self.edges)} edges)')
+            notes.append(f'along {along * 100:+.1f} (edge)')
         elif not self.edges and self.seen() == 'both':
             # No edge, but both beams are steadily on the face: keep them there.
             hits = [self.last[name][1] for name in self.sensors]
@@ -167,9 +179,9 @@ class IrPoseFix:
                 along = -(max(hits) - BLOCK_HALF)
             elif min(hits) < -BLOCK_HALF:
                 along = -(min(hits) + BLOCK_HALF)
-            notes.append(f'along {along * 100:+.1f} cm (both on the face)')
+            notes.append(f'along {along * 100:+.1f} (both on)')
         else:
-            notes.append(f'along: {"edges disagree" if self.edges else "no edge"}')
+            notes.append(f'along ? ({"edges disagree" if self.edges else "no edge"})')
         # Across: the median gap error - a noisy or odd reading does not move it.
         mad = None
         if len(self.gaps) >= CROSS_MIN_READINGS:
@@ -177,11 +189,11 @@ class IrPoseFix:
             mad = median([abs(g - med) for g in self.gaps])
         if mad is not None and mad <= CROSS_MAD_M:
             across = med
-            notes.append(f'across {across * 100:+.1f} cm (median of {len(self.gaps)}, mad {mad * 100:.1f} cm)')
+            notes.append(f'across {across * 100:+.1f} cm')
         else:
-            notes.append(f'across: {"readings disagree" if mad is not None else "too few face readings"}')
+            notes.append(f'across ? ({"noisy" if mad is not None else "few readings"})')
         f = self.face
         dx, dy = along * f.tx + across * f.nx, along * f.ty + across * f.ny
         if math.hypot(dx, dy) > MAX_FIX_M:
-            return 0.0, 0.0, f'{math.hypot(dx, dy) * 100:.0f} cm - too big, not used ({", ".join(notes)})'
-        return dx, dy, ', '.join(notes)
+            return 0.0, 0.0, f'{math.hypot(dx, dy) * 100:.0f} cm too big ({" ".join(notes)})'
+        return dx, dy, ' '.join(notes)

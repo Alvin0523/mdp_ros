@@ -155,6 +155,20 @@ def run_timer(stamp, seconds, phase) -> Marker:
     return m
 
 
+IR_FIX_RGBA = (1.0, 0.55, 0.0, 1.0)
+
+
+def ir_fix_markers(stamp, n, before, after, text) -> list:
+    """One IR position fix (task 1 scan stop) for the 3D view: an arrow from the
+    pose before to the pose after (none when nothing moved) and its numbers."""
+    out = [marker(stamp, 'ir_fix_text', n, Marker.TEXT_VIEW_FACING, IR_FIX_RGBA,
+                  after[0], after[1], 0.30, scale=(1, 1, 0.05), text=text)]
+    if math.hypot(after[0] - before[0], after[1] - before[1]) >= 0.005:
+        out.append(marker(stamp, 'ir_fix_arrow', n, Marker.ARROW, IR_FIX_RGBA, scale=(0.008, 0.02, 0.02),
+                          points=[(before[0], before[1], 0.05), (after[0], after[1], 0.05)]))
+    return out
+
+
 def leg_markers(path, target, car_xy, stamp) -> MarkerArray:
     """The leg being driven (thick line), and the point the follower is chasing
     with a line from the car: magenta, orange when it is a reverse point."""

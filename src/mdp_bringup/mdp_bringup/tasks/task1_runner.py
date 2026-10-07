@@ -48,13 +48,15 @@ from rclpy.qos import QoSProfile, ReliabilityPolicy
 from robot_localization.srv import SetPose
 from sensor_msgs.msg import Range
 from std_msgs.msg import String
+from visualization_msgs.msg import MarkerArray
 from std_srvs.srv import Trigger
 
 from mdp_algorithm.control.pure_pursuit_follower import PurePursuitController, yaw_from_quaternion
 from mdp_algorithm.planning.costmap import Costmap, Obstacle
 from mdp_algorithm.planning.planner import plan_leg, plan_visiting_order
 from mdp_algorithm.utils import params as planner_params
-from mdp_bringup.tasks.ir_pose_fix import IR_CREEP_MAX_M, IR_FIX_DELAY_S, IR_FIX_MAX_S, Face, IrPoseFix
+from mdp_bringup.tasks.ir_pose_fix import (IR_CREEP_MAX_M, IR_FIX_DELAY_S, IR_FIX_MAX_S, IR_SEARCH_MAX_M,
+                                           Face, IrPoseFix)
 from mdp_bringup.tasks.runner_base import RunnerBase
 from mdp_bringup.utils.run import run
 from mdp_bringup.utils import manual, markers, obstacle_layout
@@ -139,6 +141,14 @@ class Task1Runner(RunnerBase):
         self.create_subscription(String, '/plan_legs/result', self.plan_result_callback, plan_qos)
         self._session = uuid.uuid4().hex[:8]   # tells this runner's requests from an earlier one's
         self._remote = None                    # the request the laptop is planning, see plan()
+        self._obstacles_cm = []
+        # Each scan stop's IR fix in the 3D view: an arrow old -> new pose + numbers.
+        self.ir_fix_pub = self.create_publisher(MarkerArray, '/ir_fix_markers', 10)
+        self._ir_fix_marks = []
+        self._arrive_dir = 1.0          # +1 forward / -1 reverse: how the car drove into this stop
+        self._laptop_ok = False                # the laptop answered this plan: replans go there too
+        self._leg_waits = {}                   # gen -> a replan waiting for the laptop (remote_leg)
+        self._replan_n = 0
 
         self.ir_fix = None             # IrPoseFix once the IR positions are known (plan)
         self._ir_fix_pending = False   # at a scan stop, the fix not yet applied
@@ -162,6 +172,7 @@ class Task1Runner(RunnerBase):
         self._off_path = {}            # leg -> times it left its path (left_path)
         self._on_path = False          # car has reached its leg's path (left_path)
         self.unreachable = []
+        self._slid = {}                # checkpoint index -> m slid from the table's edge (plan)
         self.current_target_idx = 0
         self.costmap = None
         # Bumped whenever a plan is abandoned (new setup, stop): a planning thread
@@ -246,13 +257,14 @@ class Task1Runner(RunnerBase):
 
     def ir_callback(self, name, msg: Range):
         if self.ir_fix is not None and self.in_run():
-            self.ir_fix.on_reading(name, msg.range, self.current_pose)
+            speed = abs(self.last_odom.twist.twist.linear.x) if self.last_odom is not None else 0.0
+            self.ir_fix.on_reading(name, msg.range, self.current_pose, speed)
 
     def ir_stop_step(self, waited) -> bool:
         """A control tick at a scan stop with the IR fix due (ir_pose_fix.py):
-        wait for readings; only one IR on the face - creep towards it until
-        both are; fix the pose; drive straight to level the car with the
-        block. True while it holds the scan back."""
+        wait for readings; until both IRs see the face, creep the way it must be
+        (start_find), stop there; fix the pose estimate. True while it holds
+        the scan back."""
         if self._creep is not None:
             self.creep()
             return True
@@ -260,28 +272,16 @@ class Task1Runner(RunnerBase):
             return False
         if waited < IR_FIX_DELAY_S or not (self.ir_fix.ready() or waited >= IR_FIX_MAX_S):
             return True
-        seen = self.ir_fix.seen()
-        if seen in ('front', 'rear') and not self._crept:
+        slid = self.current_target_idx in self._slid
+        if self.ir_fix.seen() != 'both' and not self._crept and not slid:
             self._crept = True
-            self.start_creep('find', 1.0 if seen == 'front' else -1.0, IR_CREEP_MAX_M)
-            self.get_logger().info(f"IR CREEP  #{self.current_label()} only the {seen} IR sees the block - "
-                                   f"creeping {'forward' if seen == 'front' else 'back'}")
-            return True
+            if self.start_find():
+                return True
         self._ir_fix_pending = False
-        both_on = self.ir_fix.seen() == 'both'
+        # Both IRs on the block (or as close as the search got): the car stays where
+        # it is - the fix only puts the pose estimate where the car really is.
         fixed = self.apply_ir_fix()
-        along, per_m = self.ir_fix.along_offset(fixed)
-        along += self.ir_mid_x() * per_m          # the IR pair's middle, not base_link
         self.ir_fix.reset(None)
-        dist = abs(along / per_m) if abs(per_m) > 0.8 else math.inf   # driving across the face: no
-        # Both IRs steadily on the block: within +-1.4 cm of centred already - no
-        # creep (on the car 2026-10-07 a 1.1 cm 'centring' creep took the front IR
-        # back off the block).
-        if not both_on and 0.01 <= abs(along) and dist <= IR_CREEP_MAX_M:
-            self.start_creep('centre', -math.copysign(1.0, along / per_m), dist, after=0.2)
-            self.get_logger().info(f"IR CREEP  #{self.current_label()} IR pair {along * 100:+.1f} cm off the "
-                                   f"block centre - {'forward' if along / per_m < 0 else 'back'} {dist * 100:.1f} cm")
-            return True
         self.check_next_leg(fixed)
         return False
 
@@ -290,13 +290,32 @@ class Task1Runner(RunnerBase):
         xs = [s[0] for s in self.ir_fix.sensors.values()]
         return sum(xs) / len(xs)
 
-    def start_creep(self, mode, direction, dist, after=0.0):
-        # 'centre' starts once the EKF has taken the fix (its pose jumps by it).
-        self._creep = {'mode': mode, 'dir': direction, 'dist': dist, 'from': None, 'after': self.now() + after}
+    def start_find(self) -> bool:
+        """Not both IRs on the face: creep the way that brings the other on.
+        Only the rear one sees it - the car is past the block, back; only the
+        front one - short of it, forward; neither - back the way it came if an
+        IR saw the block on the way in (drove past it), else on. True: creeping."""
+        seen = self.ir_fix.seen()
+        if seen in ('front', 'rear'):
+            direction, dist = (1.0 if seen == 'front' else -1.0), IR_CREEP_MAX_M
+            why = f"{seen} only"
+        else:
+            # Neither: what the IRs saw on the way in, not the pose (it is the pose
+            # that is wrong). One saw the block, so the car drove past it - search
+            # back the way it came; none did - it stopped short, search on.
+            # (Sim 2026-10-07, car 7 cm off: asking the pose found nothing to do.)
+            passed = self.ir_fix.seen_any
+            direction, dist = (-self._arrive_dir if passed else self._arrive_dir), IR_SEARCH_MAX_M
+            why = f"none, {'passed it' if passed else 'short of it'}"
+        self._creep = {'mode': 'find', 'dir': direction, 'dist': dist, 'from': None, 'after': self.now(),
+                       'seen': seen}
+        self.get_logger().info(f"IR CREEP  #{self.current_label()} {why} - "
+                               f"{'forward' if direction > 0 else 'back'} <={dist * 100:.0f} cm")
+        return True
 
     def creep(self):
         """Straight at follower.creep_linear_vel: 'find' until both
-        IRs see the face, 'centre' for its distance; then the scan starts over."""
+        IRs see the face, 'return' back to where it started; then the scan starts over."""
         c = self._creep
         if self.now() < c['after']:
             self.send_cmd(0.0, 0.0)
@@ -304,18 +323,41 @@ class Task1Runner(RunnerBase):
         if c['from'] is None:
             c['from'] = self.current_pose
         done = math.hypot(self.current_pose[0] - c['from'][0], self.current_pose[1] - c['from'][1])
-        found = c['mode'] == 'find' and self.ir_fix.seen() == 'both'
-        if not found and done < c['dist']:
+        seen = self.ir_fix.seen() if c['mode'] == 'find' else None
+        found = seen == 'both'
+        # The IR that saw the block lost it before the other found it: wrong way, or
+        # the other cannot see it - go back to where it started (car, 2026-10-07: it
+        # crept the full 10 cm off the block).
+        lost = c['mode'] == 'find' and c['seen'] in ('front', 'rear') and seen == 'none'
+        if not found and not lost and done < c['dist']:
             self.send_cmd(c['dir'] * float(self.get_parameter('follower.creep_linear_vel').value), 0.0)
             return
         self.send_cmd(0.0, 0.0)
         self._creep = None
+        if lost:
+            self.get_logger().warn(f"IR CREEP  #{self.current_label()} {c['seen']} lost it after "
+                                   f"{done * 100:.1f} cm - back to start")
+            self.ir_fix.edges = []                # along: not to be trusted from this pass
+            self._creep = {'mode': 'return', 'dir': -c['dir'], 'dist': done, 'from': None, 'after': self.now() + 0.2}
+            return
+        if c['mode'] == 'find' and not found and c['seen'] == 'none':
+            # A search that found nothing: the other way (through where it started,
+            # as far again), then - nothing that way either - back to the start; it
+            # must never leave the car further off than it stopped (sim 2026-10-07).
+            if not c.get('second'):
+                self.get_logger().warn(f"IR CREEP  #{self.current_label()} nothing in {done * 100:.0f} cm - "
+                                       f"other way")
+                self._creep = {'mode': 'find', 'dir': -c['dir'], 'dist': done + c['dist'], 'from': None,
+                               'after': self.now() + 0.2, 'seen': 'none', 'second': done}
+            else:
+                self.get_logger().warn(f"IR CREEP  #{self.current_label()} nothing either way - back to the stop")
+                self._creep = {'mode': 'return', 'dir': -c['dir'], 'dist': done - c['second'], 'from': None,
+                               'after': self.now() + 0.2}
+            return
         if c['mode'] == 'find':
-            self.get_logger().info(f"IR CREEP  #{self.current_label()} {done * 100:.1f} cm"
-                                   f"{'' if found else ' - the other IR never saw the block'}")
-            self.ir_fix.at_stop()                 # the gaps: from standing still again
-        else:
-            self.check_next_leg(self.current_pose)
+            self.get_logger().info(f"IR CREEP  #{self.current_label()} {'both on' if found else 'not both'} "
+                                   f"after {done * 100:.1f} cm")
+        self.ir_fix.at_stop()                     # the gaps: from standing still again
         self.scan_detections, self.detected_target_id = [], None
         self.set_state(State.PAUSE_FOR_SCAN)      # the scan starts over
 
@@ -324,7 +366,8 @@ class Task1Runner(RunnerBase):
         pose the car is now at in the map."""
         dx, dy, note = self.ir_fix.correction()
         if math.hypot(dx, dy) < 0.005 or self.last_odom is None:
-            self.get_logger().info(f"IR FIX    #{self.current_label()} none ({note})")
+            self.get_logger().info(f"IR FIX    #{self.current_label()} none: {note}")
+            self.show_ir_fix(self.current_pose, self.current_pose, f"IR #{self.current_label()} none")
             return self.current_pose
         try:   # the shift is in the map frame; the EKF wants odom
             tf = self.tf_buffer.lookup_transform('odom', 'map', rclpy.time.Time())
@@ -344,9 +387,15 @@ class Task1Runner(RunnerBase):
         self.ekf_set_pose.call_async(req)
         x, y, yaw = self.current_pose
         fixed = (x + dx, y + dy, yaw)
-        self.get_logger().info(f"IR FIX    #{self.current_label()} moved {dx * 100:+.1f}, {dy * 100:+.1f} cm "
-                               f"({note}) -> {self.fmt(fixed)}")
+        self.show_ir_fix(self.current_pose, fixed,
+                         f"IR #{self.current_label()} {dx * 100:+.1f}, {dy * 100:+.1f} cm")
+        self.get_logger().info(f"IR FIX    #{self.current_label()} {note} -> {self.fmt(fixed)}")
         return fixed
+
+    def show_ir_fix(self, before, after, text):
+        """This run's IR fixes in the 3D view (/ir_fix_markers), one per scan stop."""
+        self._ir_fix_marks += markers.ir_fix_markers(self.stamp(), len(self._ir_fix_marks), before, after, text)
+        self.ir_fix_pub.publish(MarkerArray(markers=self._ir_fix_marks))
 
     def check_next_leg(self, pose):
         """Where the scan leaves the car: off the next leg's start, that leg is
@@ -356,8 +405,8 @@ class Task1Runner(RunnerBase):
                 and self.off_leg_start(nxt, pose, IR_REPLAN_POS_M)):
             self._replanned.add(nxt)
             self.leg_paths[nxt] = None
-            self.get_logger().warn(f"REPLAN    leg {nxt + 1}/{len(self.visiting_order)} from {self.fmt(pose)} "
-                                   f"(IR fix: off its start) - while scanning")
+            self.get_logger().info(f"REPLAN    leg {nxt + 1}/{len(self.visiting_order)} from {self.fmt(pose)} "
+                                   f"(IR fix)")
             threading.Thread(target=self.replan_leg, daemon=True, args=(nxt, pose, self._plan_gen)).start()
 
     def setup_callback(self, msg: String):
@@ -448,6 +497,8 @@ class Task1Runner(RunnerBase):
             self._manual_until = 0.0
             self.reset_done = False     # the car is leaving the start
             self.run_start, self.run_end = self.now(), None
+            self._ir_fix_marks = []                  # a new run: last run's IR fixes off the 3D view
+            self.ir_fix_pub.publish(MarkerArray(markers=[markers.Marker(action=markers.Marker.DELETEALL)]))
             self._replanned = set()
             self._heading_retried = set()
             self._off_path = {}
@@ -607,6 +658,15 @@ class Task1Runner(RunnerBase):
         start = self.start_pose()
         self.visiting_order, self.checkpoints, self.unreachable, self.costmap = plan_visiting_order(
             obstacles_cm, start, theta_offset=camera_yaw)
+        # Stops the planner slid along the face to keep the car on the table (visiting_order):
+        # index -> how far. Their IRs are not centred on the block; creeping would drive off.
+        self._slid = {}
+        for i, (x, y, t) in enumerate(self.checkpoints):
+            bx, by, facing = self.obstacles[self.visiting_order[i]]
+            nx, ny = markers.FACING[facing]
+            along = (x - bx) * -ny + (y - by) * nx
+            if abs(along) > 0.005:
+                self._slid[i] = abs(along)
         sensors = self.ir_sensors()
         self.ir_fix = IrPoseFix(sensors) if sensors else None
         if sensors is None:
@@ -616,10 +676,15 @@ class Task1Runner(RunnerBase):
             # base_link: they are not centred on it (URDF), and lined up on base_link the
             # front one sat 0.9 cm from the block's edge and flickered off it (car,
             # 2026-10-07). Centred on their middle, both are as far inside as can be.
+            # A stop the planner slid back from the table's edge stays where it is.
             mid = self.ir_mid_x()
-            self.checkpoints = [(x - mid * math.cos(t), y - mid * math.sin(t), t) for x, y, t in self.checkpoints]
+            self.checkpoints = [(x, y, t) if i in self._slid else (x - mid * math.cos(t), y - mid * math.sin(t), t)
+                                for i, (x, y, t) in enumerate(self.checkpoints)]
             self.get_logger().info(f"PLAN      stops moved {-mid * 100:+.1f} cm along: the IR pair's middle "
                                    f"level with each block")
+        for i, d in self._slid.items():
+            self.get_logger().info(f"PLAN      #{self.tablet_id(self.visiting_order[i])} stop slid {d * 100:.0f} cm "
+                                   f"back from the table's edge - no IR creep there")
         self.publish_map()
         self.publish_checkpoints()
         if self.unreachable:
@@ -633,6 +698,8 @@ class Task1Runner(RunnerBase):
         self._off_path = {}
         self.current_target_idx = 0
         self.set_state(State.WAITING_FOR_GO)
+        self._obstacles_cm = obstacles_cm
+        self._laptop_ok = False
         if self.get_parameter('remote_planner').value:
             self.request_remote_plan(obstacles_cm, start)
         else:
@@ -642,6 +709,27 @@ class Task1Runner(RunnerBase):
         self._remote = None
         threading.Thread(target=self.plan_legs, daemon=True,
                          args=(start, self._plan_gen, self.leg_paths, self.checkpoints, self.costmap)).start()
+
+    def remote_leg(self, idx, start):
+        """One leg planned on the laptop (task1_planner): the path, [] for no path,
+        or None when it does not answer - then the caller plans it here."""
+        self._replan_n += 1
+        gen = f'{self._session}:{self._plan_gen}:leg{idx}:{self._replan_n}'
+        wait = {'ack': threading.Event(), 'done': threading.Event(), 'path': None}
+        self._leg_waits[gen] = wait
+        self.plan_request_pub.publish(String(data=json.dumps({
+            'gen': gen, 'single': True, 'obstacles_cm': [list(o) for o in self._obstacles_cm],
+            'start': list(start), 'checkpoints': [list(self.checkpoints[idx])],
+            'params': {name: self.get_parameter(name).value for name, _ in self.planner_settings}})))
+        timeout = float(self.get_parameter('remote_plan_timeout').value)
+        try:
+            if not wait['ack'].wait(timeout):
+                return None
+            if not wait['done'].wait(timeout + float(self.get_parameter('planner.max_planning_time').value)):
+                return None
+            return wait['path']
+        finally:
+            self._leg_waits.pop(gen, None)
 
     def request_remote_plan(self, obstacles_cm, start):
         """Ask task1_planner (laptop) for every leg; answers in plan_result_callback."""
@@ -653,14 +741,23 @@ class Task1Runner(RunnerBase):
             'params': {name: self.get_parameter(name).value for name, _ in self.planner_settings}})))
 
     def plan_result_callback(self, msg: String):
-        r = self._remote
         data = json.loads(msg.data)
+        wait = self._leg_waits.get(data.get('gen'))
+        if wait is not None:             # a mid-run replan (remote_leg)
+            if data.get('ack'):
+                wait['ack'].set()
+            else:
+                wait['path'] = [tuple(p) for p in data['path']]
+                wait['done'].set()
+            return
+        r = self._remote
         if r is None or data.get('gen') != r['gen']:
             return                       # an old request's answer
         r['last'] = self.now()
         if data.get('ack'):
             if not r['acked']:
                 r['acked'] = True
+                self._laptop_ok = True
                 self.get_logger().info("PLAN      legs planned on the laptop")
             return
         idx = data['idx']
@@ -771,6 +868,10 @@ class Task1Runner(RunnerBase):
             if self.ir_fix is not None and self.get_parameter('ir_pose_fix').value:
                 self.ir_fix.at_stop()
                 self._ir_fix_pending, self._crept = True, False
+                # Which way it drove in (the leg's last gear): a block no IR sees now is
+                # behind if one saw it on the way in, ahead if none did (start_find).
+                path = self.follower.path
+                self._arrive_dir = 1.0 if not path or path[-1][3] >= 0 else -1.0
             self.get_logger().info(f"ARRIVED   #{self.current_label()} at {self.fmt(self.current_pose)} "
                                    f"(target {self.fmt((cx, cy, ct))}, heading {dyaw:+.0f}deg) - scanning")
         elif self.left_path():
@@ -869,8 +970,17 @@ class Task1Runner(RunnerBase):
                     self.get_logger().warn(f"REPLAN    leg {idx + 1}: the car is inside the safety margin - "
                                            f"planning from {self.fmt(planned)} instead")
                     start = planned
-            path = plan_leg(self.costmap, start, self.checkpoints[idx],
-                            progress_callback=self.publish_search_progress)
+            path = None
+            if self._laptop_ok and self.get_parameter('remote_planner').value:
+                t0 = self.now()
+                path = self.remote_leg(idx, start)
+                if path is None:
+                    self.get_logger().warn(f"REPLAN    leg {idx + 1}: laptop no answer - planning here")
+                else:
+                    self.get_logger().info(f"REPLAN    leg {idx + 1}: laptop {self.now() - t0:.1f} s")
+            if path is None:
+                path = plan_leg(self.costmap, start, self.checkpoints[idx],
+                                progress_callback=self.publish_search_progress)
             if gen != self._plan_gen:
                 return
             self.leg_starts[idx] = start
