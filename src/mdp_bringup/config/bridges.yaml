@@ -17,13 +17,14 @@ serial_bridge_node:            # STM32 (real robot only)
     # over a 90 s run.
     gyro_zero_s: 5.0
     # IR distance per sensor: cm = a / (raw/4095)^b on the raw ADC value, [a, b].
-    # pixi run calib ir --sample 10, 2026-10-07 (3rd run), on the car at 10-40 cm:
-    #   IR2 within 0.5 cm at 10-30 cm (1 cm at 40), the same as the 2nd run;
-    #   IR1 1-2 cm off at 15 and 25-40 cm even with this fit, and its readings
-    #   changed between runs (raw 1510 -> 1271 at 20 cm) with 2-3x IR2's spread:
-    #   check IR1's lens is clear of the mount, its wiring, a 10 uF capacitor.
-    ir1_curve: [7.47, 0.844]   # IR1, /ir, PC2 (rear)
-    ir2_curve: [6.77, 1.123]   # IR2, /ir2, PC1 (front)
+    # pixi run calib ir --sensors N --distances 10 13 16 19 22 25 30 40 --sample 10,
+    # 2026-10-07, after the IR mounts were fixed: each sensor twice, the two runs
+    # repeatable (IR1 [6.21, 1.210] / [6.25, 1.210]), fitted on both together.
+    #   IR1 within 1.0 cm at 13-25 cm, 0.0 at 19 (the scan-stop gap); 2.9 at 40.
+    #   IR2 within 0.4 cm at 13-25 cm; 1.4 at 40.
+    # (The STM32's own 6.30 / x^1.226 is 0.5-1.6 / 1.0-1.1 cm off at 13-25 cm.)
+    ir1_curve: [6.23, 1.210]   # IR1, /ir, PC2 (rear)
+    ir2_curve: [6.53, 1.157]   # IR2, /ir2, PC1 (front)
     ir_min_cm: 4.0             # clamp (Sharp readings are unreliable below ~7 cm)
     ir_max_cm: 80.0
 
