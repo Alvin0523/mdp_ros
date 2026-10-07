@@ -46,6 +46,8 @@ EDGE_MAX_SPEED = 0.07    # m/s, an edge crossed faster is not used: the Sharp's 
 IR_FIX_DELAY_S = 0.4
 IR_FIX_MAX_S = 1.5
 IR_CREEP_MAX_M = 0.10    # one IR on the block: creep at most this far for the other
+IR_APPROACH_M = 0.15     # this close to the stop (last stretch of the leg): the IR that meets the
+                         # block first on it - creep speed; both on - stop there
 IR_SEARCH_MAX_M = 0.15   # neither on it: search at most this far
 
 
@@ -142,7 +144,7 @@ class IrPoseFix:
         if pend is not None:
             self.pending.pop(name)
             moved = pend[2] - pend[1]
-            if on_face == pend[0] and self.stopped and abs(moved) > 1e-4 and speed <= EDGE_MAX_SPEED:
+            if on_face == pend[0] and abs(moved) > 1e-4 and speed <= EDGE_MAX_SPEED:
                 crossing = 0.5 * (pend[1] + pend[2])
                 # Which edge: the way the beam crossed it, not which side of the
                 # centre the pose puts it - with the pose over 5 cm off that is

@@ -122,6 +122,11 @@ class PurePursuitController:
         self._seg_ends: List[int] = []  # last path index of each same-gear segment
         self._seg = 0                  # segment being driven
         self._near_idx = 0             # path point nearest the car (only moves forward)
+        self.speed_cap = math.inf      # m/s, set by the caller (task 1: creep onto the block)
+
+    def on_last_segment(self) -> bool:
+        """Driving the path's last same-gear stretch (the one into the goal)."""
+        return self.active and self._seg == len(self._seg_ends) - 1
 
     def set_path(self, path_waypoints: List[DensePose]) -> None:
         """(x, y, theta, gear) points; a point without gear is driven forward."""
@@ -405,7 +410,7 @@ class PurePursuitController:
             gear = 1
         self.last_target = (tx, ty, gear)
 
-        self.speed = self.regulated_speed(gear)
+        self.speed = min(self.regulated_speed(gear), self.speed_cap)
         speed = self.speed if gear >= 0 else -self.speed
         if self.tracking == 'lqr' and abs(speed) > 1e-3:
             steering = self.lqr_steering(speed)
