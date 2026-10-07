@@ -263,8 +263,9 @@ def generate_launch_description(argv=None):
                               'log_level': 'info'}.items()))   # one startup line each: model + GPU/CPU, camera mode
         # Task 1's paths between checkpoints, for task1_runner on the car
         # (remote_planner) - it plans them itself if this does not answer.
+        # It also serves /setup_obstacles (pixi run setup) from THIS machine's layout file.
         actions.append(Node(package='mdp_bringup', executable='task1_planner', output='screen',
-                            parameters=[sim_time]))
+                            parameters=[{'layout': layout}, sim_time]))
         actions += monitors('/camera/image_raw' if sim else '/image_raw')
         # Foxglove's REC records here: bags land on the laptop, not the Pi's SD card.
         actions.append(Node(package='mdp_bringup', executable='bag_recorder', output='screen',
