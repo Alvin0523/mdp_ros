@@ -48,6 +48,10 @@ IR_FIX_MAX_S = 1.5
 IR_CREEP_MAX_M = 0.10    # one IR on the block: creep at most this far for the other
 IR_APPROACH_M = 0.15     # this close to the stop (last stretch of the leg): the IR that meets the
                          # block first on it - creep speed; both on - stop there
+IR_PAST_EDGE_M = 0.014   # both on: stop this far past where the second IR came onto the face -
+                         # the face is 10 cm, the IRs 7.25 cm apart, so both 1.4 cm inside its
+                         # edges. Stopped right at the edge, that IR read 20-23 cm for 17 and
+                         # its fix was thrown out (car, 2026-10-07)
 IR_APPROACH_YAW = math.radians(8.0)   # ...only this square to the stop's heading: still turning
                          # in, the IRs saw the block and it stopped 19 deg off - the camera
                          # looked past it (sim 2026-10-07)
@@ -98,6 +102,8 @@ class IrPoseFix:
         self.steady = {}                  # name -> on the face, after STEADY_READINGS in a row
         self.seen_any = False             # an IR was steadily on the face since reset (the approach)
         self.streak = {}                  # name -> (on the face?, readings in a row)
+        self.readings = 0                 # readings so far (orders the streaks)
+        self.on_from = {}                 # name -> (reading number, pose) its run on the face started
 
     def along_offset(self, pose):
         """How far base_link at `pose` is along the face from its centre (m),
@@ -117,6 +123,13 @@ class IrPoseFix:
         front = max(self.sensors, key=lambda n: self.sensors[n][0])
         return 'front' if front in on else 'rear'
 
+    def second_on_pose(self):
+        """Both IRs on the face: the pose where the one that came on last
+        started its run on it (where it crossed the edge); else None."""
+        if self.seen() != 'both' or len(self.on_from) < len(self.sensors):
+            return None
+        return max(self.on_from[name] for name in self.sensors)[1]
+
     def at_stop(self):
         """The car has stopped at the checkpoint: gaps from now on."""
         self.stopped, self.gaps, self.count = True, [], {}
@@ -133,13 +146,26 @@ class IrPoseFix:
         if self.stopped:
             self.count[name] = self.count.get(name, 0) + 1
         beam = self.face.beam(self.sensors[name], pose)
+        on_face = beam is not None and IR_MIN < reading < IR_MAX and abs(reading - beam[0]) < HIT_TOL
+        # On the face for STEADY_READINGS in a row: steady (seen()). Any other reading -
+        # past it, in between, or the beam too far off square - breaks the run, so
+        # on_from is where the IR really came on (sim 2026-10-07: a run from before
+        # the car turned in survived, and "past the edge" measured 10 cm).
+        state, n = self.streak.get(name, (None, 0))
+        n = n + 1 if state == on_face else 1
+        self.streak[name] = (on_face, n)
+        self.readings += 1
+        if on_face and n == 1:
+            self.on_from[name] = (self.readings, pose)
+        if n >= STEADY_READINGS:
+            self.steady[name] = on_face
+            self.seen_any = self.seen_any or on_face
         if beam is None:
             self.last.pop(name, None)
             return
         expected, along, cos_inc = beam
-        on_face = IR_MIN < reading < IR_MAX and abs(reading - expected) < HIT_TOL
         if not on_face and reading < expected + FAR_M:
-            return                        # neither the face nor clearly past it
+            return                        # neither the face nor clearly past it: no edge
         # An edge: the beam's on/off-the-face changes AND stays changed for
         # the next reading too - a single noisy reading is not an edge. It
         # lies between the last reading before and the first one after.
@@ -159,12 +185,6 @@ class IrPoseFix:
         elif prev is not None and prev[0] != on_face:
             self.pending[name] = (on_face, prev[1], along)
         self.last[name] = (on_face, along)
-        state, n = self.streak.get(name, (None, 0))
-        n = n + 1 if state == on_face else 1
-        self.streak[name] = (on_face, n)
-        if n >= STEADY_READINGS:
-            self.steady[name] = on_face
-            self.seen_any = self.seen_any or on_face
         if self.stopped and on_face and abs(along) < BLOCK_HALF:
             # Across: really `reading` along the beam, the pose says `expected`.
             self.gaps.append((reading - expected) * cos_inc)
