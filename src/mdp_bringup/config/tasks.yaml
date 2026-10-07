@@ -18,14 +18,16 @@ task1:
   # start box = cells 0..3 x 0..3.
   # facing: N/E/S/W - the side of the block with the image.
   # symbol: sim only - models/symbols/<symbol>.obj printed on that side.
-  # Test layout 2026-10-07 (tablet JSON, d: 0 N, 2 E, 4 S, 6 W).
+  # Test layout 2026-10-07, tight spaces (tablet JSON, d: 0 N, 2 E, 4 S, 6 W).
   obstacles:
-    - {id: 1, cell_x: 1,  cell_y: 18, facing: E, symbol: 20_AlphabetA}
-    - {id: 2, cell_x: 5,  cell_y: 14, facing: N, symbol: 11_One}
-    - {id: 3, cell_x: 15, cell_y: 17, facing: W, symbol: 36_ArrowUp}
-    - {id: 4, cell_x: 19, cell_y: 10, facing: W, symbol: 12_Two}
-    - {id: 5, cell_x: 10, cell_y: 9,  facing: E, symbol: 13_Three}
-    - {id: 6, cell_x: 13, cell_y: 2,  facing: N, symbol: 11_One}
+    - {id: 1, cell_x: 13, cell_y: 6,  facing: S, symbol: 20_AlphabetA}
+    - {id: 2, cell_x: 5,  cell_y: 4,  facing: N, symbol: 11_One}
+    - {id: 3, cell_x: 10, cell_y: 9,  facing: S, symbol: 36_ArrowUp}
+    - {id: 4, cell_x: 6,  cell_y: 10, facing: N, symbol: 12_Two}
+    - {id: 5, cell_x: 10, cell_y: 13, facing: N, symbol: 13_Three}
+    - {id: 6, cell_x: 13, cell_y: 11, facing: E, symbol: 11_One}
+    - {id: 7, cell_x: 8,  cell_y: 2,  facing: N, symbol: 12_Two}
+    - {id: 8, cell_x: 16, cell_y: 13, facing: W, symbol: 13_Three}
 
 task2:
   # KNOWN IN ADVANCE (the course rules) - task2_runner uses these.

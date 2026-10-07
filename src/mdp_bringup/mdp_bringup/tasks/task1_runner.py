@@ -133,7 +133,10 @@ class Task1Runner(RunnerBase):
         # Published like the tablet's set, so everything that follows it (sim's
         # blocks) sees the same message.
         self.setup_pub = self.create_publisher(String, '/obstacle_setup', 10)
-        self.create_service(Trigger, '/setup_obstacles', self.setup_obstacles_callback)
+        # With a laptop (remote_planner) the laptop's task1_planner serves it from
+        # the laptop's tasks.yaml - edited there, no need to touch the Pi.
+        if not self.get_parameter('remote_planner').value:
+            self.create_service(Trigger, '/setup_obstacles', self.setup_obstacles_callback)
         # Manual drive lives here, not in the bridge: this node already owns /cmd_vel.
         self.create_subscription(String, '/manual_drive', self.manual_drive_callback, 10)
         plan_qos = QoSProfile(depth=20, reliability=ReliabilityPolicy.RELIABLE)

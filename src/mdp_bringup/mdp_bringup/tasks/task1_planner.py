@@ -16,6 +16,10 @@ no path). The runner's own planner settings come with the request, so a live
 one being planned. Nothing is sent while the car drives: it follows the paths
 on its own, and plans small re-plans itself. Without an ack within
 remote_plan_timeout the runner plans every leg itself (the Pi alone).
+
+It also serves /setup_obstacles (`pixi run setup`, Foxglove SETUP): the layout
+file HERE (config/tasks.yaml on the laptop) published on /obstacle_setup, as the
+tablet's DONE would. The runner on the Pi then serves none.
 """
 import json
 import threading
@@ -24,9 +28,11 @@ import traceback
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy
 from std_msgs.msg import String
+from std_srvs.srv import Trigger
 
 from mdp_algorithm.planning.planner import build_costmap, plan_leg
 from mdp_algorithm.utils import params as planner_params
+from mdp_bringup.utils import obstacle_layout
 from mdp_bringup.utils.run import run
 
 REQUEST, RESULT = '/plan_legs/request', '/plan_legs/result'
@@ -42,7 +48,25 @@ class Task1Planner(Node):
         self.create_subscription(String, REQUEST, self.on_request, qos)
         self.gen = None                  # the request being planned
         self.lock = threading.Lock()
+        self.layout = self.declare_parameter('layout', '').value
+        self.setup_pub = self.create_publisher(String, '/obstacle_setup', 10)
+        self.create_service(Trigger, '/setup_obstacles', self.setup_obstacles)
         self.get_logger().info('PLANNER   ready - planning task 1 legs for the car')
+
+    def setup_obstacles(self, request, response):
+        """/setup_obstacles: this machine's layout file, as if the tablet sent it."""
+        try:
+            obstacles = obstacle_layout.load(self.layout) if self.layout else []
+        except (OSError, ValueError, KeyError) as exc:
+            obstacles = []
+            self.get_logger().warn(f"SETUP     {self.layout}: {exc}")
+        if not obstacles:
+            response.success, response.message = False, f'no task 1 obstacles in {self.layout or "(no layout)"}'
+            return response
+        self.setup_pub.publish(String(data=obstacle_layout.setup_string(obstacles)))
+        self.get_logger().info(f"SETUP     sent {obstacle_layout.describe(obstacles)}")
+        response.success, response.message = True, f'{len(obstacles)} obstacles from {self.layout} (laptop)'
+        return response
 
     def send(self, data: dict):
         self.pub.publish(String(data=json.dumps(data)))
