@@ -125,7 +125,8 @@ task1_runner:
                                       # Real car 2026-10-01: 0.2 - goto landed 0.7-1.5 cm
                                       # there; task 1 at 0.4 rolled ~20 cm past
                                       # checkpoints and arrived up to 61 deg off.
-      xy_goal_tolerance: 0.05         # m, arrived at a checkpoint (Nav2 goal checker)
+      xy_goal_tolerance: 0.03         # m, arrived at a checkpoint (Nav2 goal checker). Was 0.05:
+                                      # car 2026-10-09, #1 "arrived" 4.5 cm short and crept 10 cm
       pose_latency: 0.09              # s - the EKF pose is this late. Gazebo
                                       # 2026-09-30: 0.06 (~2 cm behind the car at 0.3 m/s);
                                       # real car 2026-10-01: EKF yaw rate 80-96 ms behind
