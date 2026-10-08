@@ -12,16 +12,8 @@ setup(
         ('share/ament_index/resource_index/packages',
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
-        # Install every exported model dir under models/ (mdp_v2_ncnn_model =
-        # default, mdp_v1_ncnn_model = older), each
-        # to its own share/mdp_vision/models/<name>/ so the detector's
-        # model_path=<name> switch can resolve any of them.
-        *[
-            (os.path.join('share', package_name, 'models', os.path.basename(d)),
-                [f for f in glob(os.path.join(d, '*')) if os.path.isfile(f)])
-            for d in glob('models/*') if os.path.isdir(d)
-        ],
-        # PyTorch weights (best.pt), a single file each: share/mdp_vision/models/best.pt.
+        # PyTorch weights (best_v4.pt, best.pt), one file each:
+        # share/mdp_vision/models/<name>.pt - the detector's model_path=<name> switch.
         (os.path.join('share', package_name, 'models'), glob('models/*.pt')),
     ],
     install_requires=['setuptools'],

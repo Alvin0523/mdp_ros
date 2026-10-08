@@ -43,8 +43,7 @@ Arguments
   start_dir  N / E / S / W, the way the car faces at start   (default N)
              Task 2 without start_cell: in the carpark, facing out (+x).
   gui        sim only - Gazebo window                                 (default true)
-  model      YOLO model under mdp_vision/models/ (a .pt file or an NCNN dir)
-             (default best_v4.pt; mdp_v2_ncnn_model when YOLO runs on the Pi, role:=solo real)
+  model      YOLO model file under mdp_vision/models/ (default best_v4.pt)
   serial_port, bluetooth_device  device paths    (default: config/bridges.yaml)
   log        quiet -> this terminal shows warnings/errors from everything, plus
                       the task runners and the tablet/STM32 bridges; Gazebo's
@@ -180,10 +179,10 @@ def generate_launch_description(argv=None):
         raise ValueError(f"obstacles:={obstacles} - expected yaml or tablet")
     layout = arg('layout', os.path.join(pkg_bringup, 'config', 'tasks.yaml'))
     gui = _true(arg('gui', 'true'))
-    # YOLO model: best_v4.pt (PyTorch) wherever YOLO runs on a laptop (sim, role:=laptop);
-    # NCNN only when it runs on the Pi itself (role:=solo on the car) - PyTorch
-    # crashed there (SIGILL on the Pi 4's CPU, see yolo_detector.py).
-    model = arg('model', 'mdp_v2_ncnn_model' if role == 'solo' and not sim else 'best_v4.pt')
+    # YOLO model: best_v4.pt (PyTorch). YOLO runs on the laptop (role:=laptop, sim);
+    # PyTorch crashed on the Pi 4's CPU (SIGILL), so role:=solo on the real car
+    # has no working YOLO model any more (the NCNN exports were removed 2026-10-08).
+    model = arg('model', 'best_v4.pt')
     quiet = arg('log', 'quiet') != 'full'
     serial_port = arg('serial_port', '')              # '' = config/bridges.yaml
     bluetooth_device = arg('bluetooth_device', '')
@@ -212,8 +211,8 @@ def generate_launch_description(argv=None):
                               description='COL,ROW tablet cell under the rear axle centre (base_link) at start'),
         DeclareLaunchArgument('start_dir', default_value=DEFAULT_START_DIR, description='N/E/S/W facing at start'),
         DeclareLaunchArgument('gui', default_value='true', description='sim: Gazebo window'),
-        DeclareLaunchArgument('model', default_value='best_v4.pt (mdp_v2_ncnn_model on the Pi, role:=solo real)',
-                              description='YOLO model under mdp_vision/models/: a .pt file or an NCNN dir'),
+        DeclareLaunchArgument('model', default_value='best_v4.pt',
+                              description='YOLO model file under mdp_vision/models/, or a full path'),
         DeclareLaunchArgument('serial_port', default_value='config/bridges.yaml', description='real: STM32 USART3 device'),
         DeclareLaunchArgument('bluetooth_device', default_value='config/bridges.yaml', description='tablet RFCOMM device'),
         DeclareLaunchArgument('log', default_value='quiet',

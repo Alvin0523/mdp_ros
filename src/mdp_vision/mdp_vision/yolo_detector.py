@@ -28,28 +28,19 @@ try:
 except ImportError:
     ULTRALYTICS_AVAILABLE = False
 
-# The `_ncnn_model` suffix is required, not a naming choice - ultralytics'
-# AutoBackend detects the model format from the directory name itself
-# (every export format has its own required suffix: *_ncnn_model/,
-# *_saved_model/, *_openvino_model/, ...), not from the files inside it.
 MODELS_DIR = os.path.join(get_package_share_directory('mdp_vision'), 'models')
 
-# Default to the latest MDP-trained model (classes = Arrow/Letter/Number/
-# Circle - the actual task symbols). Available models:
-#   mdp_v2_ncnn_model  - latest MDP model (default)
-#   mdp_v1_ncnn_model  - older MDP model (kept for comparison)
-# Switch with the `model_path` parameter (see vision.launch.py /
-# mdp.launch.py `model:=` launch arg), which accepts either a bare
-# model-dir name under models/ or an absolute path.
-DEFAULT_MODEL = 'mdp_v2_ncnn_model'
+# YOLO runs on the laptop (`pixi run laptop`), PyTorch weights from models/:
+#   best_v4.pt  - YOLO26m, the current model (default)
+#   best.pt     - the previous one
+# Switch with the `model_path` parameter (the `model:=` launch arg of
+# mdp.launch.py / vision.launch.py): a file name under models/ or a full path.
+DEFAULT_MODEL = 'best_v4.pt'
 
 
 def pick_device(model_path: str):
-    """(device for Ultralytics, what to log). A .pt model runs on the NVIDIA GPU
-    when PyTorch sees one (the laptop's CUDA build, pixi.toml), else the CPU; an
-    NCNN model always runs on the CPU (NCNN's own runtime)."""
-    if not model_path.endswith('.pt'):
-        return 'cpu', 'CPU (NCNN)'
+    """(device for Ultralytics, what to log): the NVIDIA GPU when PyTorch sees
+    one (the laptop's CUDA build, pixi.toml), else the CPU."""
     try:
         import torch
         if torch.cuda.is_available():
@@ -60,8 +51,8 @@ def pick_device(model_path: str):
 
 
 def resolve_model_path(value: str) -> str:
-    """Accept either a bare model name (e.g. 'mdp_v2_ncnn_model', resolved under
-    the package models/ dir) or an absolute/relative path to a model dir."""
+    """Accept either a bare model file name (e.g. 'best_v4.pt', resolved under
+    the package models/ dir) or an absolute/relative path to one."""
     if os.path.isabs(value) or os.path.sep in value:
         return value
     return os.path.join(MODELS_DIR, value)
@@ -73,7 +64,7 @@ def resolve_model_path(value: str) -> str:
 # prefix the asset PNG filenames (e.g. 20_AlphabetA.png -> 20), so the ID is
 # authoritative regardless of what a given model happens to name its classes.
 #
-# The model's class NAMES vary (mdp_v2_ncnn_model uses "Letter A"/"Number 1"/
+# The model's class NAMES vary (best_v4.pt uses "Letter A"/"Number 1"/
 # "Arrow Up"/"Circle"; a raw dataset export might use "AlphabetA"/"One"/...),
 # so we map by a normalised key (lowercased, non-alphanumerics stripped)
 # rather than the exact string. Publishing the ID - not the name - is what
@@ -156,10 +147,7 @@ class YoloDetector(Node):
         # string with no way to see what the model actually saw/boxed.
         # Published every frame regardless of whether anything was detected,
         # same as any other live camera feed. JPEG-compressed (not raw
-        # Image) - inference itself is the real bottleneck on this hardware
-        # (~0.7 fps measured on a Pi 4B with the NCNN model), but a raw
-        # frame every ~1.4s is still ~0.9MB each; publishing compressed
-        # avoids adding unnecessary bandwidth/decode cost on top of that.
+        # Image): a raw frame is ~0.9 MB.
         self.annotated_pub = self.create_publisher(CompressedImage, annotated_topic, 10)
         # BEST_EFFORT + depth 1 (KEEP_LAST): if inference falls even slightly
         # behind the camera's frame rate, a reliable depth-10 subscription
@@ -182,11 +170,6 @@ class YoloDetector(Node):
                                  self.image_callback, image_qos)
 
         if ULTRALYTICS_AVAILABLE:
-            # NCNN (exported via `model.export(format='ncnn')`) rather than a
-            # raw .pt checkpoint - NCNN's runtime doesn't route inference
-            # through torch's BLAS/CUDA backend at all, which is what was
-            # crashing (SIGILL, exit -4) on the Pi's Cortex-A72 with a .pt
-            # model - see docs/pi-camera-vision.md "Known open issues" #1.
             self.model = YOLO(model_path, task='detect')
             self.device, where = pick_device(model_path)
             self.get_logger().info(f"YOLO      model loaded: {os.path.basename(model_path)} on {where}")
@@ -207,6 +190,11 @@ class YoloDetector(Node):
         if self.model is not None:
             results = self.model(cv_image, verbose=False, device=self.device, conf=self.min_conf)
             for r in results:
+                # Boxes too small to be the block in front (min_box_px) are dropped
+                # here: not picked, not drawn, not on /yolo_detections.
+                if len(r.boxes):
+                    xyxy = r.boxes.xyxy
+                    r = r[((xyxy[:, 2:] - xyxy[:, :2]).max(dim=1).values >= self.min_box).cpu().numpy()]
                 self.publish_boxes(r, msg.header, cv_image.shape)
                 box = self.pick_box(r, cv_image.shape)
                 self.publish_annotated(r, msg.header, box)
@@ -242,8 +230,6 @@ class YoloDetector(Node):
         whole, cut = [], []
         for box in result.boxes:
             x1, y1, x2, y2 = (float(v) for v in box.xyxy[0])
-            if max(x2 - x1, y2 - y1) < self.min_box:
-                continue                          # too small: not the block in front
             edge = x1 <= m or y1 <= m or x2 >= w - m or y2 >= h - m
             (cut if edge else whole).append(((x2 - x1) * (y2 - y1), float(box.conf[0]), box))
         boxes = whole or cut
