@@ -90,9 +90,10 @@ MDP_TARGET_IDS = {
     'arrowdown': 37, 'down': 37, 'downarrow': 37,
     'arrowright': 38, 'right': 38, 'rightarrow': 38,
     'arrowleft': 39, 'left': 39, 'leftarrow': 39,
-    'stop': 40,
-    # bullseye -> 99
-    'bullseye': 99, 'circle': 99,
+    # Stop = the filled black circle (MDP image list) - best_v5.pt calls it "Circle"
+    'stop': 40, 'circle': 40,
+    # bullseye -> 99 (not on the MDP list: a model with a Bullseye class only)
+    'bullseye': 99,
 }
 
 
