@@ -903,6 +903,7 @@ class Task1Runner(RunnerBase):
                    f'{self.leading_ir()} IR on the block - creeping on' if creep_on else 'scanning')
             self.get_logger().info(f"ARRIVED   #{self.current_label()} at {self.fmt(self.current_pose)} "
                                    f"(target {self.fmt((cx, cy, ct))}, heading {dyaw:+.0f}deg) - {how}")
+            self.stop_timer_at_last()
             if creep_on:
                 self.start_find()
             elif ir_stop:
@@ -911,6 +912,16 @@ class Task1Runner(RunnerBase):
             return
         else:
             self.send_cmd(*cmd)
+
+    def stop_timer_at_last(self):
+        """The car has stopped at the last obstacle: the run time stops here, not after
+        YOLO's scan - someone times the run by hand and stops when it stops (2026-10-09).
+        If the last stop does an IR creep, the car still moves: the time stops at FINISHED."""
+        idx = self.current_target_idx
+        if idx == len(self.visiting_order) - 1 and not self.ir_active(idx) and self.run_end is None:
+            self.end_run()
+            self.get_logger().info(f"TIMER     stopped at {self.run_time():.1f} s - "
+                                   f"the car stopped at the last obstacle")
 
     def ir_active(self, idx) -> bool:
         """The IR approach, creep and fix at stop `idx`: not at the last one (nothing
@@ -1002,6 +1013,7 @@ class Task1Runner(RunnerBase):
                                    f"scanning from here")
             self.scan_detections, self.detected_target_id = [], None
             self.set_state(State.PAUSE_FOR_SCAN)
+            self.stop_timer_at_last()
             return True
         if self.ir_fix is not None:
             bx, by, facing = self.obstacles[self.visiting_order[idx]]
@@ -1072,9 +1084,11 @@ class Task1Runner(RunnerBase):
 
         self.current_target_idx += 1
         if self.current_target_idx >= len(self.visiting_order):
+            scan_s = self.now() - self.state_start
             self.set_state(State.FINISHED)
             self.end_run()
-            self.get_logger().info(f"FINISHED  all obstacles visited in {self.run_time():.1f} s")
+            self.get_logger().info(f"FINISHED  all obstacles visited in {self.run_time():.1f} s "
+                                   f"(+{scan_s:.1f} s last scan)")
         else:
             self.set_state(State.NAVIGATING_TO_TARGET)   # the next tick loads the leg
         self.publish_checkpoints()
