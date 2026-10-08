@@ -7,11 +7,12 @@
  * task1_runner.
  *
  * Tablet -> ROS
- *   OBSTACLE,<n>,<x>,<y>,<N|E|S|W>  collected; x,y are the tablet cell's lower-left
- *                                   corner, col*10 / row*10 (cm), cells 0..19. An OBSTACLE
- *                                   arriving after a DONE starts a new set.
+ *   OBSTACLE,<n>,<col>,<row>,<N|E|S|W>  collected; col,row are the tablet's CELL,
+ *                                   0..19 (10 cm cells, (0,0) bottom-left). An OBSTACLE
+ *                                   arriving after a DONE starts a new set. (Until
+ *                                   2026-10-08 the tablet sent the cell's corner in cm.)
  *   DONE                            publish the set on /obstacle_setup (metres,
- *                                   CELL CENTRE = corner + 5 cm)
+ *                                   at the CELL CENTRE = (col + 0.5) * 10 cm)
  *   BEGIN                           call /start_run
  *   STOP                            call /stop_run
  *   RESET                           call /reset_pose (car back at the start pose,
@@ -114,14 +115,14 @@ std::optional<char> parseFacing(const std::string & s)
 struct Obstacle
 {
   int n;
-  int x_cm;
-  int y_cm;
+  int col;
+  int row;
   char facing;
 };
 
-constexpr int kArenaCm = 200;
-/// Tablet grid cell size. OBSTACLE x,y name a cell's corner; the obstacle
-/// block fills that cell, so its centre is half a cell further in.
+/// The tablet's grid: 20 x 20 cells of 10 cm. OBSTACLE col,row name a cell; the
+/// obstacle block fills it, so its centre is half a cell in from its corner.
+constexpr int kCells = 20;
 constexpr int kCellCm = 10;
 
 }  // namespace
@@ -371,7 +372,7 @@ private:
   void handleObstacle(const std::vector<std::string> & f)
   {
     if (f.size() != 5) {
-      RCLCPP_WARN(get_logger(), "BT        OBSTACLE needs 4 fields (n,x,y,facing), got %zu", f.size() - 1);
+      RCLCPP_WARN(get_logger(), "BT        OBSTACLE needs 4 fields (n,col,row,facing), got %zu", f.size() - 1);
       return;
     }
     const auto n = parseInt(f[1]);
@@ -379,13 +380,13 @@ private:
     const auto y = parseInt(f[3]);
     const auto facing = parseFacing(f[4]);
     if (!n || !x || !y || !facing) {
-      RCLCPP_WARN(get_logger(), "BT        bad OBSTACLE line (n=%s x=%s y=%s facing=%s)",
+      RCLCPP_WARN(get_logger(), "BT        bad OBSTACLE line (n=%s col=%s row=%s facing=%s)",
         f[1].c_str(), f[2].c_str(), f[3].c_str(), f[4].c_str());
       return;
     }
-    if (*x < 0 || *x >= kArenaCm || *y < 0 || *y >= kArenaCm) {
-      RCLCPP_WARN(get_logger(), "BT        OBSTACLE %d at (%d,%d)cm is outside the %dcm arena - ignored",
-        *n, *x, *y, kArenaCm);
+    if (*x < 0 || *x >= kCells || *y < 0 || *y >= kCells) {
+      RCLCPP_WARN(get_logger(), "BT        OBSTACLE %d at cell (%d,%d) is outside the %dx%d grid - ignored",
+        *n, *x, *y, kCells, kCells);
       return;
     }
 
@@ -415,7 +416,7 @@ private:
     for (const auto & o : obstacles_) {
       char item[64];
       std::snprintf(item, sizeof(item), "%d:%.2f,%.2f,%c",
-        o.n, (o.x_cm + kCellCm / 2.0) / 100.0, (o.y_cm + kCellCm / 2.0) / 100.0, o.facing);
+        o.n, (o.col + 0.5) * kCellCm / 100.0, (o.row + 0.5) * kCellCm / 100.0, o.facing);
       if (!out.empty()) {out += '|';}
       out += item;
     }
