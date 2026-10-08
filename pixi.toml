@@ -135,9 +135,8 @@ ROS_DOMAIN_ID = "14"
 # Pi <-> laptop: no multicast discovery, reach the other machine directly.
 # Same list on both machines (Pi first, laptop second; listing yourself is harmless).
 ROS_AUTOMATIC_DISCOVERY_RANGE = "LOCALHOST"
-ROS_STATIC_PEERS = "192.168.68.103;192.168.68.104"   # router "scott1": Pi .103, laptop .104
-# ROS_STATIC_PEERS = "10.42.0.10;10.42.0.1"     # Ethernet cable
-# ROS_STATIC_PEERS = "10.43.0.1;10.43.0.10"     # Pi's WiFi hotspot MDP-Grp14
+ROS_STATIC_PEERS = "10.42.0.1;10.42.0.119"   # Pi's WiFi hotspot max_verstappen: Pi .1, laptop .119 (static)
+# ROS_STATIC_PEERS = "192.168.68.103;192.168.68.104"   # router "scott1": Pi .103, laptop .104
 GZ_SIM_SYSTEM_PLUGIN_PATH = "$CONDA_PREFIX/lib"
 
 # Pi only: OpenCV/numpy (OpenMP) worker threads spin between jobs - the camera
