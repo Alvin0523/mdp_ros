@@ -22,7 +22,7 @@ def generate_launch_description():
     common = {'use_sim_time': arg('use_sim_time')}
     ros_args = ['--log-level', arg('log_level')]
     return LaunchDescription([
-        DeclareLaunchArgument('model', default_value='best_v4.pt',
+        DeclareLaunchArgument('model', default_value='best_v5.pt',
                               description='YOLO model file under mdp_vision/models/, or a full path'),
         DeclareLaunchArgument('camera', default_value='true', description='start the Pi camera'),
         DeclareLaunchArgument('yolo', default_value='true',

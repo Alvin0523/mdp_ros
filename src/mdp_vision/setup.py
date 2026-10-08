@@ -12,7 +12,7 @@ setup(
         ('share/ament_index/resource_index/packages',
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
-        # PyTorch weights (best_v4.pt, best.pt), one file each:
+        # PyTorch weights (best_v5.pt, best_v4.pt, ...), one file each:
         # share/mdp_vision/models/<name>.pt - the detector's model_path=<name> switch.
         (os.path.join('share', package_name, 'models'), glob('models/*.pt')),
     ],
