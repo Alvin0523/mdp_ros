@@ -59,13 +59,14 @@ task1_runner:
     costmap:
       resolution: 0.01                # m per costmap cell (the tablet's 10 cm
                                       # cells are too coarse for a 19 cm car)
-      footprint_padding: 0.04         # m added on every side of the footprint
-                                      # for the hard collision check. Nav2's
-                                      # default is 0.01; with 0.01 the planner
-                                      # passed blocks at ~1 cm, less than the
-                                      # car tracks (hit obstacle 1 in sim). 0.04:
-                                      # with 0.03 it squeezed past (16,13)E at
-                                      # 3 cm and hit it (car, 2026-10-07).
+      footprint_padding: 0.06         # m added on every side of the footprint
+                                      # against BLOCKS (hard collision check).
+                                      # 0.01: passed blocks at ~1 cm (sim hit);
+                                      # 0.03: squeezed past (16,13)E at 3 cm and hit
+                                      # it; 0.04: still ~4 cm past #8 (car, 2026-10-08).
+      edge_padding: 0.02              # m kept from the TABLE EDGE instead: only a
+                                      # line, nothing to hit - so in a gap between a
+                                      # block and the edge the car runs nearer the edge.
       inflation_radius: 0.25          # m from a lethal cell over which cost is
                                       # spread. Nav2 advises >= the circumscribed
                                       # radius (base_link to the far front corner
