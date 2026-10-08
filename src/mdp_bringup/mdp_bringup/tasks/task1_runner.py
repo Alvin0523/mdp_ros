@@ -79,6 +79,7 @@ REPLAN_FALLBACK_M = 0.15   # car inside the safety margin this close to the leg'
 # if the car is this far off its start. 5 cm was not enough: 2-3 cm off, a leg
 # starting in reverse left its path and replanned from the old start (sim 2026-10-03).
 IR_REPLAN_POS_M = 0.02
+SLID_IR_MAX_M = 0.03    # a stop slid further than this along the face: no IR creep or fix there
 
 
 class State(Enum):
@@ -686,7 +687,10 @@ class Task1Runner(RunnerBase):
             bx, by, facing = self.obstacles[self.visiting_order[i]]
             nx, ny = markers.FACING[facing]
             along = (x - bx) * -ny + (y - by) * nx
-            if abs(along) > 0.005:
+            # A slide up to SLID_IR_MAX_M leaves both IRs on the 10 cm face (the IR creep
+            # centres them again): still an IR stop. With 6 cm block padding two ordinary
+            # stops slid 1 cm and lost their IR fix (car, 2026-10-09).
+            if abs(along) > SLID_IR_MAX_M:
                 self._slid[i] = abs(along)
         sensors = self.ir_sensors()
         self.ir_fix = IrPoseFix(sensors) if sensors else None
