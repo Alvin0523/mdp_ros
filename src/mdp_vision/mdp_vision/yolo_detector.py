@@ -31,11 +31,12 @@ except ImportError:
 MODELS_DIR = os.path.join(get_package_share_directory('mdp_vision'), 'models')
 
 # YOLO runs on the laptop (`pixi run laptop`), PyTorch weights from models/:
-#   best_v4.pt  - YOLO26m, the current model (default)
-#   best.pt     - the previous one
+#   best_v5.pt  - YOLO26m trained at 640, the current model (default)
+#   best_v4.pt  - YOLO26m trained at 512 (stretched), the previous one
+#   best.pt     - older
 # Switch with the `model_path` parameter (the `model:=` launch arg of
 # mdp.launch.py / vision.launch.py): a file name under models/ or a full path.
-DEFAULT_MODEL = 'best_v4.pt'
+DEFAULT_MODEL = 'best_v5.pt'
 
 
 def pick_device(model_path: str):
@@ -51,7 +52,7 @@ def pick_device(model_path: str):
 
 
 def resolve_model_path(value: str) -> str:
-    """Accept either a bare model file name (e.g. 'best_v4.pt', resolved under
+    """Accept either a bare model file name (e.g. 'best_v5.pt', resolved under
     the package models/ dir) or an absolute/relative path to one."""
     if os.path.isabs(value) or os.path.sep in value:
         return value
@@ -64,7 +65,7 @@ def resolve_model_path(value: str) -> str:
 # prefix the asset PNG filenames (e.g. 20_AlphabetA.png -> 20), so the ID is
 # authoritative regardless of what a given model happens to name its classes.
 #
-# The model's class NAMES vary (best_v4.pt uses "Letter A"/"Number 1"/
+# The model's class NAMES vary (best_v5.pt uses "Letter A"/"Number 1"/
 # "Arrow Up"/"Circle"; a raw dataset export might use "AlphabetA"/"One"/...),
 # so we map by a normalised key (lowercased, non-alphanumerics stripped)
 # rather than the exact string. Publishing the ID - not the name - is what
