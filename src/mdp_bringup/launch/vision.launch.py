@@ -2,7 +2,7 @@
 (vision:=true). Settings: config/vision.yaml.
 
     ros2 launch mdp_bringup vision.launch.py                       Pi camera + YOLO
-    ros2 launch mdp_bringup vision.launch.py model:=mdp_v1_ncnn_model
+    ros2 launch mdp_bringup vision.launch.py model:=best.pt
     ros2 launch mdp_bringup vision.launch.py camera:=false camera_topic:=/camera/image_raw
                                                                   YOLO on another camera (sim)
 """
@@ -22,8 +22,8 @@ def generate_launch_description():
     common = {'use_sim_time': arg('use_sim_time')}
     ros_args = ['--log-level', arg('log_level')]
     return LaunchDescription([
-        DeclareLaunchArgument('model', default_value='mdp_v2_ncnn_model',
-                              description='YOLO model dir under mdp_vision/models/, or an absolute path'),
+        DeclareLaunchArgument('model', default_value='best_v4.pt',
+                              description='YOLO model file under mdp_vision/models/, or a full path'),
         DeclareLaunchArgument('camera', default_value='true', description='start the Pi camera'),
         DeclareLaunchArgument('yolo', default_value='true',
                               description='start YOLO (false: the laptop runs it - `pixi run pi` / `laptop`)'),

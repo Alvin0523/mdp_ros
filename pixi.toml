@@ -21,7 +21,7 @@ realtime = { cmd = "scripts/realtime/install.sh", description = "Pi, once: allow
 #   pixi run pi-solo vision:=false               without camera + YOLO (vision is on by default)
 #   pixi run sim task:=2                         task 2 in Gazebo (laptop)
 #   pixi run sim task:=1 obstacles:=tablet       Gazebo, obstacles only from the tablet
-#   task:=0|1|2  vision:=true|false  model:=mdp_v1_ncnn_model  obstacles:=tablet|yaml
+#   task:=0|1|2  vision:=true|false  model:=best.pt  obstacles:=tablet|yaml
 #   layout:=<tasks.yaml>  start_cell:=1,1  start_dir:=N  gui:=false (sim)  log:=full
 #   serial_port:=...  bluetooth_device:=...      (default: config/bridges.yaml)
 pi = { cmd = "ros2 launch mdp_bringup mdp.launch.py sim:=false role:=pi", description = "On the Pi, with the laptop running `pixi run laptop`: the robot without YOLO and the monitors. Args: task:=0|1|2 vision:=true|false obstacles:=tablet|yaml start_cell:=COL,ROW start_dir:=N|E|S|W" }
@@ -90,7 +90,6 @@ hypothesis = ">=6.168.1,<7"
 
 [pypi-dependencies]
 ultralytics = "*"
-ncnn = "*"
 # torch / torchvision per machine (below): CUDA on the laptop, CPU on the Pi.
 
 # ---------------------------------------------------------------------------
@@ -109,7 +108,7 @@ torch = { version = "==2.8.0", index = "https://download.pytorch.org/whl/cu128" 
 torchvision = { version = "==0.23.0", index = "https://download.pytorch.org/whl/cu128" }
 
 [target.linux-aarch64.pypi-dependencies]
-# The Pi: CPU build (no CUDA; YOLO there uses NCNN anyway - PyTorch crashes on it)
+# The Pi: CPU build (no CUDA; YOLO runs on the laptop - PyTorch crashed on the Pi)
 torch = { version = "==2.8.0", index = "https://download.pytorch.org/whl/cpu" }
 torchvision = { version = "==0.23.0", index = "https://download.pytorch.org/whl/cpu" }
 
