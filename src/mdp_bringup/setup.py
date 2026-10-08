@@ -12,6 +12,7 @@ NODES = {
     'robot_pose_feedback': 'robot.robot_pose_feedback', 'manual_drive': 'robot.manual_drive',
     'health_monitor': 'robot.health_monitor', 'bag_recorder': 'robot.bag_recorder',
     'bt_monitor': 'robot.bt_monitor', 'pi_status': 'robot.pi_status', 'go_sound': 'robot.go_sound',
+    'scan_snapshots': 'robot.scan_snapshots',
     'sim_helpers': 'sim.sim_helpers',
 }
 TOOLS = {'trigger': 'tools.trigger', 'publish_obstacles': 'tools.publish_obstacles',
