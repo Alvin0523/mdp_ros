@@ -123,10 +123,6 @@ class YoloDetector(Node):
         # away was read instead of the target, sim 2026-09-30).
         self.declare_parameter('min_confidence', 0.5)
         self.declare_parameter('edge_margin_px', 3)
-        # Boxes whose longer side is under min_box_px are ignored: the target at a
-        # scan stop is 61-89 px; a mini "8" on the car at the bottom of the frame
-        # (27-32 px) was reported as #6's answer (car, 2026-10-08).
-        self.declare_parameter('min_box_px', 55)
 
         camera_topic = self.get_parameter('camera_topic').value
         model_path = resolve_model_path(self.get_parameter('model_path').value)
@@ -135,7 +131,6 @@ class YoloDetector(Node):
         self.jpeg_quality = self.get_parameter('jpeg_quality').value
         self.min_conf = float(self.get_parameter('min_confidence').value)
         self.edge_margin = int(self.get_parameter('edge_margin_px').value)
-        self.min_box = float(self.get_parameter('min_box_px').value)
 
         self.bridge = CvBridge()
         self.result_pub = self.create_publisher(String, result_topic, 10)
@@ -191,11 +186,6 @@ class YoloDetector(Node):
         if self.model is not None:
             results = self.model(cv_image, verbose=False, device=self.device, conf=self.min_conf)
             for r in results:
-                # Boxes too small to be the block in front (min_box_px) are dropped
-                # here: not picked, not drawn, not on /yolo_detections.
-                if len(r.boxes):
-                    xyxy = r.boxes.xyxy
-                    r = r[((xyxy[:, 2:] - xyxy[:, :2]).max(dim=1).values >= self.min_box).cpu().numpy()]
                 self.publish_boxes(r, msg.header, cv_image.shape)
                 box = self.pick_box(r, cv_image.shape)
                 self.publish_annotated(r, msg.header, box)
@@ -223,7 +213,7 @@ class YoloDetector(Node):
             {'stamp': stamp, 'w': shape[1], 'h': shape[0], 'boxes': boxes})))
 
     def pick_box(self, result, shape):
-        """The box to report (see min_confidence / edge_margin_px / min_box_px): the
+        """The box to report (see min_confidence / edge_margin_px): the
         biggest whole one; a cut-off one only when nothing whole is seen; within 10 %
         in size, the more confident. None when nothing is seen."""
         h, w = shape[:2]
