@@ -16,10 +16,7 @@ costmap.footprint_padding (Nav2 `footprint_padding`).
 COSTMAP: built like a Nav2 costmap with a static layer plus an inflation layer:
   * LETHAL (254): cells inside an obstacle block. Everything outside the arena
     counts as lethal too (off the map = collision, and the edge is inflated
-    like a wall) - but the table edge is only a line, nothing to hit: the car
-    keeps costmap.edge_padding from it instead of footprint_padding (the padded
-    outline may reach that much less far past it; task 2's real walls pass
-    edge_padding_cm = the full padding).
+    like a wall).
   * INSCRIBED (253): within the footprint's inscribed radius of a lethal cell -
     base_link cannot be there without the body touching it.
   * 252 * exp(-cost_scaling_factor * (d - inscribed)) out to inflation_radius,
@@ -120,8 +117,7 @@ class Costmap:
     walls: extra lethal rectangles (x0, y0, x1, y1), cm."""
 
     def __init__(self, obstacles: List[Obstacle], params: planner_params.PlannerParams = None,
-                 resolution_cm: float = None, arena_cm=(ARENA_SIZE_CM, ARENA_SIZE_CM), walls=(),
-                 edge_padding_cm: float = None):
+                 resolution_cm: float = None, arena_cm=(ARENA_SIZE_CM, ARENA_SIZE_CM), walls=()):
         p = params or planner_params.ACTIVE
         self.obstacles = list(obstacles)
         assert len(self.obstacles) <= 8   # the arena has at most 8 obstacles
@@ -131,19 +127,13 @@ class Costmap:
         self.resolution = resolution_cm if resolution_cm is not None else p.resolution * 100.0
         self.width_cm, self.height_cm = float(arena_cm[0]), float(arena_cm[1])
         self.walls = [tuple(map(float, w)) for w in walls]
-        # The padded outline may stick this far past the table edge: the real car then
-        # keeps edge_padding from it, not the blocks' footprint_padding.
-        edge_pad = p.edge_padding * 100.0 if edge_padding_cm is None else edge_padding_cm
-        self.edge_out = max(0.0, p.footprint_padding * 100.0 - edge_pad)
-        self.edge_out_cells = int(self.edge_out // (resolution_cm if resolution_cm is not None
-                                                    else p.resolution * 100.0))
         self.nx = int(round(self.width_cm / self.resolution))
         self.ny = int(round(self.height_cm / self.resolution))
         X, Y = np.meshgrid((np.arange(self.nx) + 0.5) * self.resolution,
                            (np.arange(self.ny) + 0.5) * self.resolution, indexing='ij')   # [i = x][j = y]
         # Distance from each cell centre to the nearest lethal thing: the arena
         # edge (lethal beyond it), a block (0 inside it) or a wall rectangle.
-        d = np.minimum(np.minimum(X, self.width_cm - X), np.minimum(Y, self.height_cm - Y)) + self.edge_out
+        d = np.minimum(np.minimum(X, self.width_cm - X), np.minimum(Y, self.height_cm - Y))
         boxes = [(o.x_cm - o.size_x_cm / 2.0, o.y_cm - o.size_y_cm / 2.0,
                   o.x_cm + o.size_x_cm / 2.0, o.y_cm + o.size_y_cm / 2.0) for o in self.obstacles]
         for x0, y0, x1, y1 in boxes + self.walls:
@@ -185,11 +175,8 @@ class Costmap:
         c, s = math.cos(theta), math.sin(theta)
         i = np.floor((x + c * self._px - s * self._py) / self.resolution).astype(int)
         j = np.floor((y + s * self._px + c * self._py) / self.resolution).astype(int)
-        m = self.edge_out_cells
-        if i.min() < -m or j.min() < -m or i.max() >= self.nx + m or j.max() >= self.ny + m:
+        if i.min() < 0 or j.min() < 0 or i.max() >= self.nx or j.max() >= self.ny:
             return LETHAL
-        if m:   # past the table edge, within edge_out: as the edge cell beside it
-            i, j = np.clip(i, 0, self.nx - 1), np.clip(j, 0, self.ny - 1)
         return max(centre, int(self.cost[i, j].max()))
 
     def in_collision(self, x: float, y: float, theta: float) -> bool:

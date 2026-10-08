@@ -27,7 +27,7 @@ SECTIONS = {
     'robot': ('wheelbase', 'footprint_rear', 'footprint_front', 'footprint_half_width',
               'steering_limit_left', 'steering_limit_right',
               'minimum_turning_radius_left', 'minimum_turning_radius_right'),
-    'costmap': ('resolution', 'footprint_padding', 'edge_padding', 'inflation_radius', 'cost_scaling_factor'),
+    'costmap': ('resolution', 'footprint_padding', 'inflation_radius', 'cost_scaling_factor'),
     'planner': ('turning_radius_margin', 'step_size', 'xy_search_resolution',
                 'angle_quantization_bins', 'cost_penalty', 'reverse_penalty', 'change_penalty',
                 'steering_change_penalty', 'analytic_expansion_max_cost',
@@ -59,7 +59,6 @@ class PlannerParams:
     # --- costmap -----------------------------------------------------------
     resolution: float
     footprint_padding: float
-    edge_padding: float
     inflation_radius: float
     cost_scaling_factor: float
     # --- planner (Hybrid A*) ----------------------------------------------

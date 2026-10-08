@@ -704,8 +704,7 @@ class Task2Runner(RunnerBase):
             obstacles.append(Obstacle(x2 * cm, TASK2_CENTRE_Y * cm, 'W', 1, s2[0] * cm, s2[1] * cm))
         walls = self.arena.carpark_walls() + (self.arena.side_walls(x2) if x2 is not None else [])
         return Costmap(obstacles, arena_cm=(TASK2_AREA_M[0] * cm, TASK2_AREA_M[1] * cm),
-                       walls=[tuple(v * cm for v in w) for w in walls],
-                       edge_padding_cm=planner_params.ACTIVE.footprint_padding * cm)   # real walls
+                       walls=[tuple(v * cm for v in w) for w in walls])
 
     def plan_legs(self, start, gen, leg_paths, waypoints, costmap):
         """Background thread: every leg back to back (like task 1)."""
