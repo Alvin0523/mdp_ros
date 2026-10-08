@@ -55,9 +55,8 @@ from mdp_algorithm.control.path_follower import PathFollower, yaw_from_quaternio
 from mdp_algorithm.planning.costmap import Costmap, Obstacle
 from mdp_algorithm.planning.planner import plan_leg, plan_visiting_order
 from mdp_algorithm.utils import params as planner_params
-from mdp_bringup.tasks.ir_pose_fix import (BLOCK_HALF, IR_APPROACH_M, IR_APPROACH_YAW, IR_CREEP_MAX_M,
-                                           IR_FIX_DELAY_S, IR_FIX_MAX_S, IR_PAST_EDGE_M, IR_SEARCH_MAX_M,
-                                           Face, IrPoseFix)
+from mdp_bringup.tasks.ir_pose_fix import (IR_APPROACH_M, IR_APPROACH_YAW, IR_CREEP_MAX_M, IR_FIX_DELAY_S,
+                                           IR_FIX_MAX_S, IR_PAST_EDGE_M, IR_SEARCH_MAX_M, Face, IrPoseFix)
 from mdp_bringup.tasks.runner_base import RunnerBase
 from mdp_bringup.utils.run import run
 from mdp_bringup.utils import manual, markers, obstacle_layout, targets
@@ -80,24 +79,7 @@ REPLAN_FALLBACK_M = 0.15   # car inside the safety margin this close to the leg'
 # if the car is this far off its start. 5 cm was not enough: 2-3 cm off, a leg
 # starting in reverse left its path and replanned from the old start (sim 2026-10-03).
 IR_REPLAN_POS_M = 0.02
-# A block within AIM_SHORT_LOOK_M straight ahead of the car's leading end (nose driving in
-# forward, tail reversing) at a stop: the leg ends AIM_SHORT_M before the stop and the slow
-# IR creep does the rest - arriving at speed it rolled on and, with drift, nearly touched
-# the block ahead (car, 2026-10-08, #3's stop with #1 ahead).
-AIM_SHORT_M = 0.04
-SLID_IR_MAX_M = 0.03   # a stop slid further than this along the face: no IR creep or fix there
-AIM_SHORT_LOOK_M = 0.10
 
-
-
-def trim_end(path, dist):
-    """`path` without its last `dist` metres - only along its final forward/reverse
-    stretch, and never down to fewer than 2 points."""
-    out, cut = list(path), 0.0
-    while len(out) > 2 and out[-2][3] == out[-1][3] and cut < dist:
-        cut += math.hypot(out[-1][0] - out[-2][0], out[-1][1] - out[-2][1])
-        out.pop()
-    return out
 
 class State(Enum):
     WAITING_FOR_SETUP = auto()
@@ -704,10 +686,7 @@ class Task1Runner(RunnerBase):
             bx, by, facing = self.obstacles[self.visiting_order[i]]
             nx, ny = markers.FACING[facing]
             along = (x - bx) * -ny + (y - by) * nx
-            # A slide up to SLID_IR_MAX_M leaves both IRs on the 10 cm face (the IR creep
-            # centres them again): still an IR stop. With 6 cm block padding (2026-10-08)
-            # two ordinary stops slid 1 cm and lost their IR fix.
-            if abs(along) > SLID_IR_MAX_M:
+            if abs(along) > 0.005:
                 self._slid[i] = abs(along)
         sensors = self.ir_sensors()
         self.ir_fix = IrPoseFix(sensors) if sensors else None
@@ -1012,13 +991,6 @@ class Task1Runner(RunnerBase):
             threading.Thread(target=self.replan_leg, daemon=True,
                              args=(idx, tuple(self.current_pose), self._plan_gen)).start()
             return False
-        if path:
-            gap = self.block_ahead(idx, path[-1][3])
-            if gap is not None:
-                path = trim_end(path, AIM_SHORT_M)
-                self.get_logger().info(f"AIM SHORT #{self.current_label()} a block {gap * 100:.0f} cm ahead of the "
-                                       f"{'nose' if path[-1][3] >= 0 else 'tail'} - the leg ends "
-                                       f"{AIM_SHORT_M * 100:.0f} cm before the stop")
         self.follower.set_path(path)
         self._on_path = False          # left_path() arms once the car is on it
         if not path:
@@ -1036,27 +1008,6 @@ class Task1Runner(RunnerBase):
         self.get_logger().info(f"LEG {idx + 1}/{len(self.visiting_order)}   -> #{self.current_label()} "
                                f"{self.fmt(self.checkpoints[idx])}  {moves}")
         return True
-
-    def block_ahead(self, idx, gear):
-        """m from the car's leading end (nose if `gear` >= 0, tail if reversing) at stop
-        `idx` to the nearest other block straight ahead in its lane, or None when none is
-        within AIM_SHORT_LOOK_M."""
-        x, y, th = self.checkpoints[idx]
-        car = planner_params.ACTIVE
-        c, s = math.cos(th), math.sin(th)
-        best = None
-        for i, (bx, by, _) in enumerate(self.obstacles):
-            if i == self.visiting_order[idx]:
-                continue
-            pts = [((bx + dx - x) * c + (by + dy - y) * s, -(bx + dx - x) * s + (by + dy - y) * c)
-                   for dx in (-BLOCK_HALF, BLOCK_HALF) for dy in (-BLOCK_HALF, BLOCK_HALF)]
-            xs, ys = [p[0] for p in pts], [p[1] for p in pts]
-            if max(ys) < -car.footprint_half_width or min(ys) > car.footprint_half_width:
-                continue                                    # not in the car's lane
-            gap = min(xs) - car.footprint_front if gear >= 0 else -car.footprint_rear - max(xs)
-            if 0.0 <= gap <= AIM_SHORT_LOOK_M and (best is None or gap < best):
-                best = gap
-        return best
 
     def off_leg_start(self, idx, pose=None, pos_tol=REPLAN_POS_M) -> bool:
         """Is the car further than REPLAN_POS_M / REPLAN_YAW_RAD from where leg idx

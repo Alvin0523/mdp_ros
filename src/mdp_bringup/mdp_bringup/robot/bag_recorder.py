@@ -23,10 +23,8 @@ from std_srvs.srv import Trigger
 from mdp_bringup.utils.run import run
 
 # Raw frames only (~0.9 MB each). The JPEG copies stay in: /image_raw/compressed (what YOLO
-# reads - clean frames for training) and /yolo_result/image_annotated (its boxes) - ~35 MB a
-# minute, fine on the laptop. Anchored at the end: '/image_raw' alone also matched (and
-# dropped) /image_raw/compressed (2026-10-08).
-EXCLUDE = '(/image_raw|/camera/image_raw)$'
+# reads) and /yolo_result/image_annotated (its boxes) - ~35 MB a minute, fine on the laptop.
+EXCLUDE = '/image_raw|/camera/image_raw'
 
 
 class BagRecorder(Node):
