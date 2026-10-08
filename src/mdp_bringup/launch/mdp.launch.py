@@ -270,6 +270,9 @@ def generate_launch_description(argv=None):
         # Foxglove's REC records here: bags land on the laptop, not the Pi's SD card.
         actions.append(Node(package='mdp_bringup', executable='bag_recorder', output='screen',
                             parameters=[sim_time]))
+        # A sound on this laptop's speakers at GO (sounds/go.mp3).
+        actions.append(Node(package='mdp_bringup', executable='go_sound', output='screen',
+                            parameters=[sim_time]))
         return LaunchDescription(declared + actions)
 
     # ------------------------------------------------------------ robot ----
