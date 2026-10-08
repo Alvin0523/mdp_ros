@@ -24,3 +24,7 @@ yolo_detector:
     # closest (all symbols are one size). Foxglove's annotated image marks it SENT.
     min_confidence: 0.5
     edge_margin_px: 3
+    # Boxes with a longer side under this are ignored: at a scan stop (~30 cm) the
+    # target's box is 61-89 px; the mini "8" at the bottom of the frame 27-32 px and
+    # other blocks in the background 17-52 px (car bags 2026-10-07/08).
+    min_box_px: 55
