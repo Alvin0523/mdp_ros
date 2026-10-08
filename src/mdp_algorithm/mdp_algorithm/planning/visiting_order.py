@@ -8,12 +8,12 @@ CHECKPOINT: one per obstacle, straight out from its image face:
     position = obstacle centre + planner.checkpoint_standoff * facing direction
     heading  = facing back at the obstacle, turned by theta_offset for the
                camera's mounting angle (task 1: the camera looks LEFT)
-snapped to the centre of its 10 cm cell. Where the car does not fit there -
-its nose (or tail) over the table's edge, e.g. block (1,18) facing E, or on
-another block, e.g. (13,11)E with (16,13)W - the stop slides along the car's
-heading (along the face), 1 cm at a time up to MAX_SLIDE_CM either way, to the
-nearest spot where it fits and no other block is within the stand-off. An
-obstacle with no such spot is unreachable and skipped.
+snapped to the centre of its 10 cm cell. Where the car does not fit there - its
+nose (or tail) over the table's edge, e.g. block (1,18) facing E, or on another
+block, e.g. (13,11)E with (16,13)W - or another block stands between it and the
+face, the stop slides along the car's heading (along the face), 1 cm at a time up
+to MAX_SLIDE_CM either way, to the nearest spot where it fits and sees the face.
+An obstacle with no such spot is unreachable and skipped.
 
 ORDER: every permutation of the reachable obstacles, scored by the sum of
 Reeds-Shepp path lengths between consecutive checkpoints (exact for the <= 8
@@ -37,15 +37,29 @@ from .costmap import Costmap, Obstacle, snap_to_cell_centre
 Checkpoint = Tuple[float, float, float, int]  # (x_cm, y_cm, theta_rad, obstacle_id)
 
 MAX_SLIDE_CM = 10.0   # a stop slid further than this: the camera misses the block
+MAX_STANDOFF_SHIFT_CM = 3.0   # a stop may also be this much nearer the face or further from it
 
 
-def _blocked_by_any_obstacle(costmap: Costmap, x: float, y: float) -> bool:
-    """Is (x, y) closer than the stand-off to ANY obstacle's centre? True
-    Euclidean distance, not a grid lookup: a checkpoint sits exactly the
-    stand-off from its own obstacle (so is not blocked by it), and a grid cell
-    snap once made such points look closer than they are (2026-09-05)."""
-    standoff = planner_params.ACTIVE.checkpoint_standoff_cm
-    return any(np.hypot(x - o.x_cm, y - o.y_cm) < standoff for o in costmap.obstacles)
+def _view_blocked(costmap: Costmap, obstacle: Obstacle, x: float, y: float) -> bool:
+    """Does another block stand between the stop (x, y) and `obstacle`'s image
+    face? The straight line from the stop to the face's centre, against every
+    other block's square. (Was: any block's centre within the stand-off of the
+    stop - that also threw away stops with a block merely beside them, e.g.
+    (16,12)W with (11,12) 20 cm to the side, 2026-10-09.)"""
+    a = utils.facing_to_rad(obstacle.facing)
+    fx, fy = np.cos(a), np.sin(a)
+    face = (obstacle.x_cm + fx * obstacle.size_x_cm / 2.0, obstacle.y_cm + fy * obstacle.size_y_cm / 2.0)
+    for o in costmap.obstacles:
+        if o is obstacle:
+            continue
+        x0, x1 = o.x_cm - o.size_x_cm / 2.0, o.x_cm + o.size_x_cm / 2.0
+        y0, y1 = o.y_cm - o.size_y_cm / 2.0, o.y_cm + o.size_y_cm / 2.0
+        for k in range(41):
+            t = k / 40.0
+            px, py = x + (face[0] - x) * t, y + (face[1] - y) * t
+            if x0 <= px <= x1 and y0 <= py <= y1:
+                return True
+    return False
 
 
 def obstacle_to_checkpoint(costmap: Costmap, obstacle: Obstacle,
@@ -61,13 +75,20 @@ def obstacle_to_checkpoint(costmap: Costmap, obstacle: Obstacle,
     # obstacles (the tablet's convention) this changes nothing.
     x, y = snap_to_cell_centre(x), snap_to_cell_centre(y)
 
-    # The car must fit there: on the table and clear of every block, and no other
-    # block within the stand-off. Else the nearest spot along the face that is
-    # (2026-10-07: the table's edge, then a block beside the stop).
+    # The car must fit there (on the table, clear of every block, with the padding)
+    # and see the face (no block in between). Else the nearest spot along the face
+    # that does (2026-10-07: the table's edge, then a block beside the stop).
+    # Also up to MAX_STANDOFF_SHIFT_CM nearer the face or further from it: a block
+    # beside the stop can leave the car short of room by a cm (2026-10-09: (16,12)W
+    # with (11,12) beside it, 0.5 cm). The smallest change wins; the IR fix takes
+    # the gap the car really has, so a cm nearer or further does not matter to it.
     c, s = np.cos(theta), np.sin(theta)
-    for d in [0.0] + [k * sign for k in np.arange(1.0, MAX_SLIDE_CM + 0.5) for sign in (-1.0, 1.0)]:
-        sx, sy = x + d * c, y + d * s
-        if not _blocked_by_any_obstacle(costmap, sx, sy) and not costmap.in_collision(sx, sy, theta):
+    nx, ny = np.cos(facing_rad), np.sin(facing_rad)
+    slides = [k for k in np.arange(-MAX_SLIDE_CM, MAX_SLIDE_CM + 0.5)]
+    shifts = [k for k in np.arange(-MAX_STANDOFF_SHIFT_CM, MAX_STANDOFF_SHIFT_CM + 0.5)]
+    for d, e in sorted(((d, e) for d in slides for e in shifts), key=lambda de: (abs(de[0]) + abs(de[1]), abs(de[1]))):
+        sx, sy = x + d * c + e * nx, y + d * s + e * ny
+        if not costmap.in_collision(sx, sy, theta) and not _view_blocked(costmap, obstacle, sx, sy):
             return (float(sx), float(sy), theta, obstacle.id)
     return None
 
