@@ -134,8 +134,8 @@
 
   <!-- HC-SR04 ultrasonic, front centre, looking forward (+x). Its range is
        measured from here: task2_runner adds this offset to find the obstacle.
-       TODO measure on the car (measuring sheet row J): placed at the front of
-       the body, 50 mm above the table. -->
+       Right on top of the chassis at its front (2026-10-08): the chassis top is
+       69 mm above the table (base_link mesh), the 20 mm board's centre 79 mm. -->
   <link name="ultrasonic_link">
     <!-- HC-SR04 look-alike: 45 x 20 mm board, two 16 mm transducers facing +x. -->
     <visual>
@@ -155,7 +155,7 @@
     </visual>
   </link>
   <joint name="ultrasonic_joint" type="fixed">
-    <origin xyz="0.19 0 ${0.05 - wheel_radius}" rpy="0 0 0"/>
+    <origin xyz="0.19 0 ${0.079 - wheel_radius}" rpy="0 0 0"/>
     <parent link="base_link"/>
     <child link="ultrasonic_link"/>
   </joint>
@@ -174,7 +174,8 @@
     <link name="${name}_link">
       <visual>
         <origin xyz="-0.0065 0 0" rpy="0 0 0"/>
-        <geometry><box size="0.013 0.0295 0.0135"/></geometry>
+        <!-- 13 deep x 13.5 wide x 29.5 mm tall: mounted upright (2026-10-08). -->
+        <geometry><box size="0.013 0.0135 0.0295"/></geometry>
         <material name="lens_black"/>
       </visual>
     </link>
@@ -191,9 +192,9 @@
        link's +x; camera_yaw turns it (task 1: left). On the 3D-printed mount
        above the right rear wheel (2026-10-03): in line with the rear axle,
        so base_link - which a scan checkpoint puts square in front of the
-       block's centre - and the camera face the image together. Height still
-       the CAD mount's (60 mm above the axle); the print puts the lens ~80 mm
-       above the STM32. TODO measure once mounted (sheet rows H1-H5). -->
+       block's centre - and the camera face the image together. Measured on the
+       car 2026-10-08: the lens 175 mm above the table, 55 mm right of the centre
+       line. -->
   <link name="camera_link">
     <visual>
       <geometry><box size="0.009 0.025 0.024"/></geometry>
@@ -214,7 +215,7 @@
     </xacro:if>
   </link>
   <joint name="camera_joint" type="fixed">
-    <origin xyz="0 ${-rear_track / 2} ${cad_z + 0.076204}" rpy="0 0 $(arg camera_yaw)"/>
+    <origin xyz="0 -0.055 ${0.175 - wheel_radius}" rpy="0 0 $(arg camera_yaw)"/>
     <parent link="base_link"/>
     <child link="camera_link"/>
   </joint>
@@ -263,8 +264,7 @@
   <xacro:rear_wheel side="r" sign="-1"/>
 
   <!-- Front: steering knuckle (left_link / right_link, both at the same angle -
-       one servo and a tie rod), then the free-spinning wheel (sim only: the
-       real car has no front encoders). -->
+       one servo and a tie rod), then the free-spinning wheel. -->
   <xacro:macro name="front_wheel" params="side knuckle sign">
     <link name="${knuckle}_link">
       <visual>
@@ -290,15 +290,15 @@
       <axis xyz="0 0 1"/>
       <limit lower="${-steer_right}" upper="${steer_left}" effort="10.0" velocity="5.0"/>
     </joint>
-    <xacro:if value="${sim}">
-      <xacro:tyre name="${side}f_link" mesh_name="${side}f_link" width="0.026" y_offset="${-sign * 0.00045}"/>
-      <joint name="${side}f_joint" type="continuous">
-        <origin xyz="0 ${sign * knuckle_out} ${-knuckle_up}" rpy="0 0 0"/>
-        <parent link="${knuckle}_link"/>
-        <child link="${side}f_link"/>
-        <axis xyz="0 1 0"/>
-      </joint>
-    </xacro:if>
+    <xacro:tyre name="${side}f_link" mesh_name="${side}f_link" width="0.026" y_offset="${-sign * 0.00045}"/>
+    <!-- Sim: spins (Gazebo reports it). Real car: no front encoders, so nothing
+         would publish its angle - fixed, just drawn (it steers with the knuckle). -->
+    <joint name="${side}f_joint" type="${'continuous' if sim else 'fixed'}">
+      <origin xyz="0 ${sign * knuckle_out} ${-knuckle_up}" rpy="0 0 0"/>
+      <parent link="${knuckle}_link"/>
+      <child link="${side}f_link"/>
+      <xacro:if value="${sim}"><axis xyz="0 1 0"/></xacro:if>
+    </joint>
   </xacro:macro>
   <xacro:front_wheel side="l" knuckle="left" sign="1"/>
   <xacro:front_wheel side="r" knuckle="right" sign="-1"/>
