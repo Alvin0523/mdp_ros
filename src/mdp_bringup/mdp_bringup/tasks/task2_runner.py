@@ -119,6 +119,7 @@ class Task2Runner(RunnerBase):
         self.go_received = False
         self.run_start = self.run_end = None
         self.current_pose = (0.0, 0.0, 0.0)
+        self.pose_offset = (0.0, 0.0)    # the IR fixes of the last run
         self.have_pose = False           # GO waits for the first EKF pose
         self.us_range = None             # (range m, time s) - latest valid ultrasonic reading
         self.us_trigger_count = 0
@@ -203,13 +204,16 @@ class Task2Runner(RunnerBase):
                             TASK2_CENTRE_Y + out * h, out, wp)
 
     def ir_callback(self, name, msg: Range):
-        if not self.passes or not math.isfinite(msg.range):
+        if not self.passes or self.last_odom is None or not math.isfinite(msg.range):
             return
-        v = self.last_odom.twist.twist.linear.x if self.last_odom is not None else 0.0
-        # The EKF pose is pose_latency late: where the car is NOW (sim 2026-10-10: without
-        # this the 'along' fixes were +2..+10 cm on perfect odometry).
+        v = self.last_odom.twist.twist.linear.x
+        # The pose where the car was at the reading's time: the EKF pose moved on by
+        # the time between their stamps (sim 2026-10-10: without it the 'along' fixes
+        # were +2..+10 cm on perfect odometry; a fixed pose_latency x v overshot, -4 cm).
+        dt = (rclpy.time.Time.from_msg(msg.header.stamp).nanoseconds
+              - rclpy.time.Time.from_msg(self.last_odom.header.stamp).nanoseconds)
         x, y, yaw = self.current_pose
-        lag = v * float(self.p('pose_latency'))
+        lag = v * max(0.0, min(0.2, dt * 1e-9))
         pose = (x + lag * math.cos(yaw), y + lag * math.sin(yaw), yaw)
         for item in list(self.passes):
             n, fp = item
@@ -221,9 +225,9 @@ class Task2Runner(RunnerBase):
             if fp.seen and past:
                 self.passes.remove(item)
                 dx, dy, note = fp.correction()
-                if math.hypot(dx, dy) >= 0.005 and self.shift_pose(dx, dy):
-                    x, y, yaw = self.current_pose
-                    self.get_logger().info(f"IR FIX    {fp.label}: {note} -> {self.fmt((x + dx, y + dy, yaw))}")
+                if math.hypot(dx, dy) >= 0.005:
+                    self.shift_pose(dx, dy)
+                    self.get_logger().info(f"IR FIX    {fp.label}: {note} -> {self.fmt(self.current_pose)}")
                 else:
                     self.get_logger().info(f"IR FIX    {fp.label}: none - {note}")
 

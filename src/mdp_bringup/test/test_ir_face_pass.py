@@ -37,3 +37,10 @@ def test_recovers_offsets():
 def test_too_big_refused():
     dx, dy, note = drive_past(0.0, 0.07, speed=0.3)
     assert (dx, dy) == (0.0, 0.0) or abs(dy + 0.07) < 0.003, note
+
+
+def test_out_fix_survives_along_error():
+    # +5 cm along left only 2 readings inside the corners by the pose: 'out' was refused.
+    dx, dy, note = drive_past(0.05, -0.04)
+    assert abs(dx + 0.05) < 0.012, note
+    assert abs(dy - 0.04) < 0.003, note
