@@ -2,7 +2,7 @@
 #
 #   SPEEDS AT A GLANCE (m/s)
 #     task 1 path following    task1_runner  follower.desired_linear_vel   0.3 (reverse 0.3)
-#     task 2                   task2_runner  straight_speed / path_speed   0.45 / 0.25
+#     task 2                   task2_runner  straight_speed / path_speed   0.9 / 0.5
 #     tablet arrow buttons     all nodes     manual_speed_mps              0.15
 #
 #   task1_runner  the car's outline and turning circles (like Nav2's footprint /
@@ -196,7 +196,7 @@ task2_runner:
     # Speeds (live). The turning circles were measured at 0.2 m/s: faster turns
     # are wider - test in sim first.
     straight_speed: 0.90       # m/s, out of the carpark to obstacle 1, and straight parts of the planned path
-    path_speed: 0.35           # m/s, the slowest: gear changes, arriving, the fallback swerve
+    path_speed: 0.50           # m/s, the slowest: gear changes, arriving, the fallback swerve (sim 2026-10-10)
     # The swerve round obstacle 1 (front ultrasonic reading to obstacle 1): as early
     # as possible - from swerve_early_dist once YOLO has read arrow 1, at the latest
     # at swerve_trigger_dist (waiting there if the arrow is still unread). It ends
@@ -213,10 +213,10 @@ task2_runner:
                                # (0.3 + side_clearance 0.25 gave the most clean diagonals, 24 of 36
                                # layouts, in an offline search 2026-09-30; the rest use Hybrid A*)
     slow_down_dist: 0.40       # m looked ahead (plus the lookahead) for the curve speed below
-    max_lateral_accel: 1.00    # m/s^2: curve speed = sqrt(this x radius), path_speed..straight_speed
-    path_tracking: pure_pursuit   # pure_pursuit | lqr (task1_runner follower.* has the lqr weights)
-    pose_latency: 0.0          # s, the EKF pose's delay the follower allows for (task 1: 0.06)
-                               # (1.0 -> 0.58 m/s at the tightest turns, 0.74 m/s round the bar)
+    max_lateral_accel: 1.50    # m/s^2: curve speed = sqrt(this x radius), path_speed..straight_speed
+    path_tracking: lqr         # pure_pursuit | lqr (task1_runner follower.* has the lqr weights)
+    pose_latency: 0.09         # s, the EKF pose's delay the follower allows for (task 1: 0.06)
+                               # (sim 2026-10-10 with these four: 8.4-10.8 s, closest gap 8.8 cm over 4 layouts)
 
 # The tablet's arrow buttons (f b fl fr bl br): a short burst, then stop.
 # Every node loading this file gets them - manual_drive (task 0) and
