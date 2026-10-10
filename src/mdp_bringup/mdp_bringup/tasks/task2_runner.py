@@ -119,6 +119,7 @@ class Task2Runner(RunnerBase):
         self.go_received = False
         self.run_start = self.run_end = None
         self.current_pose = (0.0, 0.0, 0.0)
+        self.pose_offset = (0.0, 0.0)    # the IR fixes of the last run
         self.have_pose = False           # GO waits for the first EKF pose
         self.us_range = None             # (range m, time s) - latest valid ultrasonic reading
         self.us_trigger_count = 0
@@ -178,10 +179,10 @@ class Task2Runner(RunnerBase):
                     pass
         return self.ir_sensors
 
-    def watch_face(self, label, x0, x1, face_y, out, at):
+    def watch_face(self, label, x0, x1, face_y, out, at, use_along=True):
         """Fix the position with whichever IR looks at this face when the car is at `at`."""
         for name, sensor in self.sensors().items():
-            fp = FacePass(label, x0, x1, face_y, out, sensor)
+            fp = FacePass(label, x0, x1, face_y, out, sensor, use_along)
             if fp.beam(at) is not None:
                 self.passes.append((name, fp))
                 return
@@ -193,23 +194,27 @@ class Task2Runner(RunnerBase):
                         self.side, (self.x1, TASK2_CENTRE_Y + self.side * float(self.p('lane_offset')), 0.0))
 
     def watch_bar_ends(self):
-        """The bar's end on arrow 2's side (passed heading out) and its other end (heading home)."""
+        """The bar's end on arrow 2's side (passed heading out) and its other end (heading home).
+        'out' only: their 'along' was +4.5..+7.6 cm off in 3 of 4 sim runs (2026-10-10)."""
         h = self.arena.obstacle_2_size[1] / 2.0
         d = self.arena.obstacle_2_size[0] / 2.0
         s2 = SIDE[self.arrows[1]]
         for k, wp in enumerate(self.waypoints[:2]):
             out = s2 if k == 0 else -s2
             self.watch_face(f"the bar's {'first' if k == 0 else 'second'} end", self.x2 - d, self.x2 + d,
-                            TASK2_CENTRE_Y + out * h, out, wp)
+                            TASK2_CENTRE_Y + out * h, out, wp, use_along=False)
 
     def ir_callback(self, name, msg: Range):
-        if not self.passes or not math.isfinite(msg.range):
+        if not self.passes or self.last_odom is None or not math.isfinite(msg.range):
             return
-        v = self.last_odom.twist.twist.linear.x if self.last_odom is not None else 0.0
-        # The EKF pose is pose_latency late: where the car is NOW (sim 2026-10-10: without
-        # this the 'along' fixes were +2..+10 cm on perfect odometry).
+        v = self.last_odom.twist.twist.linear.x
+        # The pose where the car was at the reading's time: the EKF pose moved on by
+        # the time between their stamps (sim 2026-10-10: without it the 'along' fixes
+        # were +2..+10 cm on perfect odometry; a fixed pose_latency x v overshot, -4 cm).
+        dt = (rclpy.time.Time.from_msg(msg.header.stamp).nanoseconds
+              - rclpy.time.Time.from_msg(self.last_odom.header.stamp).nanoseconds)
         x, y, yaw = self.current_pose
-        lag = v * float(self.p('pose_latency'))
+        lag = v * max(0.0, min(0.2, dt * 1e-9))
         pose = (x + lag * math.cos(yaw), y + lag * math.sin(yaw), yaw)
         for item in list(self.passes):
             n, fp = item
@@ -221,9 +226,9 @@ class Task2Runner(RunnerBase):
             if fp.seen and past:
                 self.passes.remove(item)
                 dx, dy, note = fp.correction()
-                if math.hypot(dx, dy) >= 0.005 and self.shift_pose(dx, dy):
-                    x, y, yaw = self.current_pose
-                    self.get_logger().info(f"IR FIX    {fp.label}: {note} -> {self.fmt((x + dx, y + dy, yaw))}")
+                if math.hypot(dx, dy) >= 0.005:
+                    self.shift_pose(dx, dy)
+                    self.get_logger().info(f"IR FIX    {fp.label}: {note} -> {self.fmt(self.current_pose)}")
                 else:
                     self.get_logger().info(f"IR FIX    {fp.label}: none - {note}")
 

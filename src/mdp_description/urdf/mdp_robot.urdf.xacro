@@ -224,8 +224,11 @@
       <collision><geometry><box size="0.009 0.025 0.024"/></geometry></collision>
     </xacro:if>
   </link>
+  <!-- Task 2 (2026-10-10, not measured yet): at the front of the car on the centre
+       line, same height - looking ahead at the arrows. -->
+  <xacro:property name="camera_xy" value="${'0.19 0' if '$(arg task)' == '2' else '0 -0.055'}"/>
   <joint name="camera_joint" type="fixed">
-    <origin xyz="0 -0.055 ${0.175 - wheel_radius}" rpy="0 0 $(arg camera_yaw)"/>
+    <origin xyz="${camera_xy} ${0.175 - wheel_radius}" rpy="0 0 $(arg camera_yaw)"/>
     <parent link="base_link"/>
     <child link="camera_link"/>
   </joint>

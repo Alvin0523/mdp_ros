@@ -23,11 +23,12 @@ MAX_FIX = 0.10                 # m, a bigger correction is a misreading: not use
 
 
 class FacePass:
-    def __init__(self, label, x0, x1, face_y, out, sensor):
+    def __init__(self, label, x0, x1, face_y, out, sensor, use_along=True):
         self.label = label
+        self.use_along = use_along         # False: 'out' only (the edges still recorded, for the log)
         self.x0, self.x1, self.face_y, self.out = min(x0, x1), max(x0, x1), face_y, out
         self.sensor = sensor               # (x, y, yaw) of the IR on base_link
-        self.gaps, self.edges = [], []
+        self.hits, self.edges = [], []     # (along, how much further out) per reading on the face
         self.prev = None                   # (on the face?, along) of the previous reading
         self.seen = False
 
@@ -59,9 +60,8 @@ class FacePass:
               and abs(reading - expected) < HIT_TOL)
         if on:
             self.seen = True
-            if self.x0 + EDGE_INSET <= along <= self.x1 - EDGE_INSET:
-                # Further than expected -> the car is further OUT than the pose says.
-                self.gaps.append((reading - expected) * (-self.out * math.sin(pose[2] + self.sensor[2])))
+            # Further than expected -> the car is further OUT than the pose says.
+            self.hits.append((along, (reading - expected) * (-self.out * math.sin(pose[2] + self.sensor[2]))))
         if self.prev is not None and self.prev[0] != on:
             moved = along - self.prev[1]
             if abs(moved) > 1e-4:
@@ -80,18 +80,24 @@ class FacePass:
         if len(self.edges) >= 2 and max(self.edges) - min(self.edges) <= EDGE_SPREAD:
             dx = -sum(self.edges) / len(self.edges)
             notes.append(f'along {dx * 100:+.1f} ({len(self.edges)} edge{"s" if len(self.edges) > 1 else ""})')
+            if not self.use_along:
+                notes[-1] += ' not used'
+                dx = 0.0
         else:
             notes.append('along ? (' + ('edges disagree' if len(self.edges) > 1 else
                                         f'{len(self.edges)} edge') + ')')
-        if len(self.gaps) >= MIN_READINGS:
-            med = median(self.gaps)
-            if median(abs(g - med) for g in self.gaps) <= MAX_MAD:
+        # Inside the corners by where the edges put the car: with the pose cm off along,
+        # the pose alone left 2 of the ~4 readings (sim offline 2026-10-10: 'out' refused).
+        gaps = [g for a, g in self.hits if self.x0 + EDGE_INSET <= a + dx <= self.x1 - EDGE_INSET]
+        if len(gaps) >= MIN_READINGS:
+            med = median(gaps)
+            if median(abs(g - med) for g in gaps) <= MAX_MAD:
                 dy = self.out * med
-                notes.append(f'out {med * 100:+.1f} cm ({len(self.gaps)} readings)')
+                notes.append(f'out {med * 100:+.1f} cm ({len(gaps)} readings)')
             else:
                 notes.append('out ? (noisy)')
         else:
-            notes.append(f'out ? ({len(self.gaps)} readings)')
+            notes.append(f'out ? ({len(gaps)} readings)')
         if math.hypot(dx, dy) > MAX_FIX:
             return 0.0, 0.0, f'{math.hypot(dx, dy) * 100:.0f} cm too big ({" ".join(notes)})'
         return dx, dy, ' '.join(notes)
