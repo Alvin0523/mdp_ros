@@ -69,6 +69,9 @@ US_VALID = (0.25, 2.2)        # m - lane readings outside this are not obstacle 
 HEDGE_RAD = math.radians(7.0)
 HEDGE_CENTRE_M = 0.10         # m off the centre line: straight on from there
 ARROW_2_DEADLINE_M = 0.60     # m from the bar's face with arrow 2 still unread: the nearer end
+LEVEL_X_M = 0.30              # m before obstacle 1's centre: straight in the lane from here, the
+                              # ultrasonic and camera see past it (obstacle 2 and arrow 2) and
+                              # arrow 1 is out of the camera's view - read them on the move
 NO_BAR_LIMIT_M = 0.35         # m past obstacle 1's centre without obstacle 2 seen: stop (the
                               # bar's face can be 0.65 m past it, the car's nose is 0.2 m ahead)
 
@@ -546,9 +549,9 @@ class Task2Runner(RunnerBase):
         return [(float(x), float(y), float(th), g) for x, y, th, g in pts]
 
     def level_with_1(self, max_yaw: float = math.radians(8.0)) -> bool:
-        """Beside obstacle 1 and pointing (nearly) straight: the ultrasonic and the
-        camera now look past it at obstacle 2."""
-        return (self.x1 is not None and self.current_pose[0] >= self.x1 - 0.10
+        """In the lane beside obstacle 1 and pointing (nearly) straight: the ultrasonic
+        and the camera now look past it at obstacle 2."""
+        return (self.x1 is not None and self.current_pose[0] >= self.x1 - LEVEL_X_M
                 and abs(self.current_pose[2]) < max_yaw)
 
     def read_obstacle_2(self):
@@ -791,7 +794,10 @@ class Task2Runner(RunnerBase):
             if dist >= window:
                 break
         else:
-            return v_min            # the end of the path is within the window
+            if self.state != State.TO_CHECKPOINT_1:
+                return v_min        # the end of the path is within the window
+            # Checkpoint 1 is no stop: the car rolls straight on, and turns for obstacle 2
+            # as soon as it is planned (its leg's own curves slow it then).
         v = math.sqrt(float(self.p('max_lateral_accel')) / kappa) if kappa > 1e-6 else v_max
         return max(v_min, min(v_max, v))
 
