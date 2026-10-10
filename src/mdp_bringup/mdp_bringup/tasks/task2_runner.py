@@ -69,6 +69,10 @@ US_VALID = (0.25, 2.2)        # m - lane readings outside this are not obstacle 
 HEDGE_RAD = math.radians(7.0)
 HEDGE_CENTRE_M = 0.10         # m off the centre line: straight on from there
 ARROW_2_DEADLINE_M = 0.60     # m from the bar's face with arrow 2 still unread: the nearer end
+LEVEL_X_M = 0.30              # m before obstacle 1's centre: straight in the lane from here, the
+                              # ultrasonic and camera see past it (obstacle 2 and arrow 2) and
+                              # arrow 1 is out of the camera's view - read them on the move
+IN_CARPARK_MARGIN_M = 0.02    # m: the whole outline this far inside the carpark's walls = home
 NO_BAR_LIMIT_M = 0.35         # m past obstacle 1's centre without obstacle 2 seen: stop (the
                               # bar's face can be 0.65 m past it, the car's nose is 0.2 m ahead)
 
@@ -546,9 +550,9 @@ class Task2Runner(RunnerBase):
         return [(float(x), float(y), float(th), g) for x, y, th, g in pts]
 
     def level_with_1(self, max_yaw: float = math.radians(8.0)) -> bool:
-        """Beside obstacle 1 and pointing (nearly) straight: the ultrasonic and the
-        camera now look past it at obstacle 2."""
-        return (self.x1 is not None and self.current_pose[0] >= self.x1 - 0.10
+        """In the lane beside obstacle 1 and pointing (nearly) straight: the ultrasonic
+        and the camera now look past it at obstacle 2."""
+        return (self.x1 is not None and self.current_pose[0] >= self.x1 - LEVEL_X_M
                 and abs(self.current_pose[2]) < max_yaw)
 
     def read_obstacle_2(self):
@@ -721,18 +725,43 @@ class Task2Runner(RunnerBase):
             self.get_logger().info(f"LEG {self.leg + 1}/3   -> {self.names[self.leg]} "
                                    f"{self.fmt(self.waypoints[self.leg])}  {moves}")
             self.publish_waypoints()
+        # The whole car inside the carpark -> done (no creeping on to its middle).
+        if self.leg == len(self.waypoints) - 1 and self.in_carpark():
+            return self.finish("all of it in the carpark")
         # Into the carpark: the ultrasonic sees the back wall -> done.
         r = self.fresh_range()
         if (self.leg == len(self.waypoints) - 1 and r is not None and r <= float(self.p('home_stop_dist'))
                 and self.current_pose[0] < self.arena.opening_x):
             return self.finish("the back wall")
         self.publish_leg()
-        if self.follower_step():
+        if self.follower_step(stop_at_end=self.next_leg() is None):
             self.get_logger().info(f"ARRIVED   {self.names[self.leg]} at {self.fmt(self.current_pose)}")
             self.leg += 1
             self.follower.set_path([])
             if self.leg >= len(self.waypoints):
                 self.finish("HOME")
+
+    def in_carpark(self) -> bool:
+        """Every corner of the car's outline inside the carpark's walls (by IN_CARPARK_MARGIN_M)."""
+        x, y, yaw = self.current_pose
+        c, s, m = math.cos(yaw), math.sin(yaw), IN_CARPARK_MARGIN_M
+        half = self.arena.carpark_width / 2.0 - m
+        for a in (-self.car.footprint_rear, self.car.footprint_front):
+            for b in (-self.car.footprint_half_width, self.car.footprint_half_width):
+                px, py = x + c * a - s * b, y + s * a + c * b
+                if not (TASK2_BACK_WALL_X + m < px < self.arena.opening_x - m and abs(py - TASK2_CENTRE_Y) < half):
+                    return False
+        return True
+
+    def next_leg(self):
+        """The next leg's path when the car rolls straight on into it: planned, and
+        in the gear the current leg ends in. None otherwise (home, a gear change,
+        still planning) - then the car slows for the checkpoint and stops there."""
+        path = self.follower.path
+        if self.state != State.FOLLOW or not path or self.leg + 1 >= len(self.leg_paths):
+            return None
+        nxt = self.leg_paths[self.leg + 1]
+        return nxt if nxt and nxt[0][3] == path[-1][3] else None
 
     def follower_step(self, stop_at_end: bool = True) -> bool:
         """One tick along the follower's path at the speed profile. True once the
@@ -767,7 +796,9 @@ class Task2Runner(RunnerBase):
         k = min(range(i0, min(len(path), self.follower._search_idx + 1)),
                 key=lambda j: (path[j][0] - x) ** 2 + (path[j][1] - y) ** 2)
         window = float(self.p('slow_down_dist')) + self.follower.lookahead_dist
-        kappa, dist = 0.0, 0.0
+        nxt = self.next_leg()
+        path = path[k:] + (nxt[1:] if nxt else [])   # rolling on into the next leg: no slowing for the checkpoint
+        k, kappa, dist = 0, 0.0, 0.0
         for j in range(k + 1, len(path)):
             ds = math.hypot(path[j][0] - path[j - 1][0], path[j][1] - path[j - 1][1])
             dist += ds
@@ -779,7 +810,10 @@ class Task2Runner(RunnerBase):
             if dist >= window:
                 break
         else:
-            return v_min            # the end of the path is within the window
+            if self.state != State.TO_CHECKPOINT_1:
+                return v_min        # the end of the path is within the window
+            # Checkpoint 1 is no stop: the car rolls straight on, and turns for obstacle 2
+            # as soon as it is planned (its leg's own curves slow it then).
         v = math.sqrt(float(self.p('max_lateral_accel')) / kappa) if kappa > 1e-6 else v_max
         return max(v_min, min(v_max, v))
 
