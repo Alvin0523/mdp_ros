@@ -23,8 +23,9 @@ MAX_FIX = 0.10                 # m, a bigger correction is a misreading: not use
 
 
 class FacePass:
-    def __init__(self, label, x0, x1, face_y, out, sensor):
+    def __init__(self, label, x0, x1, face_y, out, sensor, use_along=True):
         self.label = label
+        self.use_along = use_along         # False: 'out' only (the edges still recorded, for the log)
         self.x0, self.x1, self.face_y, self.out = min(x0, x1), max(x0, x1), face_y, out
         self.sensor = sensor               # (x, y, yaw) of the IR on base_link
         self.hits, self.edges = [], []     # (along, how much further out) per reading on the face
@@ -79,6 +80,9 @@ class FacePass:
         if len(self.edges) >= 2 and max(self.edges) - min(self.edges) <= EDGE_SPREAD:
             dx = -sum(self.edges) / len(self.edges)
             notes.append(f'along {dx * 100:+.1f} ({len(self.edges)} edge{"s" if len(self.edges) > 1 else ""})')
+            if not self.use_along:
+                notes[-1] += ' not used'
+                dx = 0.0
         else:
             notes.append('along ? (' + ('edges disagree' if len(self.edges) > 1 else
                                         f'{len(self.edges)} edge') + ')')

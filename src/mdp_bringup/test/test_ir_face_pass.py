@@ -44,3 +44,16 @@ def test_out_fix_survives_along_error():
     dx, dy, note = drive_past(0.05, -0.04)
     assert abs(dx + 0.05) < 0.012, note
     assert abs(dy - 0.04) < 0.003, note
+
+
+def test_along_off_keeps_out():
+    fp = FacePass('test', 1.0, 1.1, 1.25, +1.0, RIGHT_IR, use_along=False)
+    true_y = 1.25 + 0.138 + 0.062
+    x = 0.6
+    while x < 1.4:
+        bm = fp.beam((x, true_y, 0.0))
+        on = bm is not None and 1.0 <= bm[1] <= 1.1
+        fp.on_reading(bm[0] if on else 0.8, (x + 0.04, true_y - 0.03, 0.0), 0.5)
+        x += 0.02
+    dx, dy, note = fp.correction()
+    assert dx == 0.0 and abs(dy - 0.03) < 0.003, note

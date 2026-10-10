@@ -179,10 +179,10 @@ class Task2Runner(RunnerBase):
                     pass
         return self.ir_sensors
 
-    def watch_face(self, label, x0, x1, face_y, out, at):
+    def watch_face(self, label, x0, x1, face_y, out, at, use_along=True):
         """Fix the position with whichever IR looks at this face when the car is at `at`."""
         for name, sensor in self.sensors().items():
-            fp = FacePass(label, x0, x1, face_y, out, sensor)
+            fp = FacePass(label, x0, x1, face_y, out, sensor, use_along)
             if fp.beam(at) is not None:
                 self.passes.append((name, fp))
                 return
@@ -194,14 +194,15 @@ class Task2Runner(RunnerBase):
                         self.side, (self.x1, TASK2_CENTRE_Y + self.side * float(self.p('lane_offset')), 0.0))
 
     def watch_bar_ends(self):
-        """The bar's end on arrow 2's side (passed heading out) and its other end (heading home)."""
+        """The bar's end on arrow 2's side (passed heading out) and its other end (heading home).
+        'out' only: their 'along' was +4.5..+7.6 cm off in 3 of 4 sim runs (2026-10-10)."""
         h = self.arena.obstacle_2_size[1] / 2.0
         d = self.arena.obstacle_2_size[0] / 2.0
         s2 = SIDE[self.arrows[1]]
         for k, wp in enumerate(self.waypoints[:2]):
             out = s2 if k == 0 else -s2
             self.watch_face(f"the bar's {'first' if k == 0 else 'second'} end", self.x2 - d, self.x2 + d,
-                            TASK2_CENTRE_Y + out * h, out, wp)
+                            TASK2_CENTRE_Y + out * h, out, wp, use_along=False)
 
     def ir_callback(self, name, msg: Range):
         if not self.passes or self.last_odom is None or not math.isfinite(msg.range):
