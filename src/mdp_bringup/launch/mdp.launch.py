@@ -25,9 +25,6 @@ Arguments
                      ROS_DOMAIN_ID, finding each other by ROS_STATIC_PEERS.
              Sim, the same split on one laptop: `pixi run sim role:=pi ...`
              + `pixi run laptop sim:=true`.
-  fake_arrows  task 2 in sim: a stand-in YOLO that always reads the sim layout's
-             arrows instead of the real YOLO on the camera  (default: false - the
-             real YOLO reads them; task 2's camera is at the front since 2026-10-10)
   obstacles  tablet -> only the tablet (over Bluetooth on `bluetooth_device`); in
                        sim task 1 Gazebo starts with an empty arena and the
                        blocks appear when the tablet sends its layout
@@ -173,7 +170,6 @@ def generate_launch_description(argv=None):
     role = arg('role', 'solo')
     if role not in ('solo', 'pi', 'laptop'):
         raise ValueError(f"role:={role} - expected solo, pi or laptop")
-    fake_arrows = sim and task == '2' and _true(arg('fake_arrows', 'false'))
     obstacles = arg('obstacles', 'yaml' if sim else 'tablet')
     if obstacles not in ('yaml', 'tablet'):
         raise ValueError(f"obstacles:={obstacles} - expected yaml or tablet")
@@ -201,8 +197,6 @@ def generate_launch_description(argv=None):
         DeclareLaunchArgument('vision', default_value='true', description='camera + YOLO (false: without)'),
         DeclareLaunchArgument('role', default_value='solo',
                               description='solo: everything here; pi: the Pi with a laptop; laptop: YOLO, planning, monitors'),
-        DeclareLaunchArgument('fake_arrows', default_value='false',
-                              description='sim task 2: stand-in YOLO reading the sim layout arrows (sim_helpers)'),
         DeclareLaunchArgument('obstacles', default_value='yaml in sim, tablet on real',
                               description='tablet: only the tablet (sim: empty arena until it sends); yaml: also publish `layout` once at startup (task 1)'),
         DeclareLaunchArgument('layout', default_value='config/tasks.yaml',
@@ -423,7 +417,7 @@ def generate_launch_description(argv=None):
                    '--yaw', str(start_yaw), '--pitch', '0.0', '--roll', '0.0',
                    '--frame-id', 'map', '--child-frame-id', 'odom']))
 
-    if vision and not fake_arrows:    # fake arrows: sim_helpers stands in for YOLO
+    if vision:
         # Camera (real only - Gazebo has its own) + YOLO: launch/vision.launch.py.
         actions.append(IncludeLaunchDescription(
             PythonLaunchDescriptionSource(os.path.join(pkg_bringup, 'launch', 'vision.launch.py')),
@@ -438,10 +432,9 @@ def generate_launch_description(argv=None):
         parameters=[bridges] + ([{'device': bluetooth_device}] if bluetooth_device else []) + [sim_time]))
     if sim:
         # Stand-ins for what Gazebo lacks: /ultrasonic always; task 1 Gazebo's
-        # blocks follow the tablet's layout; task 2 the fake arrows (sim/sim_helpers.py).
+        # blocks follow the tablet's layout (sim/sim_helpers.py).
         actions.append(Node(package='mdp_bringup', executable='sim_helpers', output='screen',
                             parameters=[{'task': task, 'layout': layout, 'world': world_name,
-                                         'fake_arrows': fake_arrows,
                                          'empty_start': obstacles == 'tablet'}, sim_time]))
     if obstacles == 'yaml' and task == '1':
         # The layout, published once to /obstacle_setup after task1_runner
