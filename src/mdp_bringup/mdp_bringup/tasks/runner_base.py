@@ -11,6 +11,9 @@ A runner subclasses RunnerBase and provides:
   on_pose()               optional: after each new pose (e.g. reset confirmation)
 and creates self.follower (after its parameters are set) before spinning.
 """
+import math
+
+import rclpy.time
 import tf2_geometry_msgs  # noqa: F401  registers the geometry_msgs conversions tf2 uses
 import tf2_ros
 from geometry_msgs.msg import PoseWithCovarianceStamped, TwistStamped
@@ -18,6 +21,7 @@ from mdp_interfaces.msg import RunStatus
 from nav_msgs.msg import OccupancyGrid, Odometry, Path
 from rclpy.node import Node
 from rclpy.qos import QoSDurabilityPolicy, QoSProfile
+from robot_localization.srv import SetPose
 from std_msgs.msg import String
 from std_srvs.srv import Trigger
 from visualization_msgs.msg import Marker, MarkerArray
@@ -56,6 +60,7 @@ class RunnerBase(Node):
         self.create_service(Trigger, '/stop_run', self.stop_run_callback)
         self.tf_buffer = tf2_ros.Buffer()
         self.tf_listener = tf2_ros.TransformListener(self.tf_buffer, self)
+        self.ekf_shift = self.create_client(SetPose, '/set_pose')   # shift_pose(); the service, no RESET
         wall_timer(self, 0.05, self._loop)   # 20 Hz
 
         self.follower = None             # the runner's PathFollower
@@ -128,6 +133,28 @@ class RunnerBase(Node):
 
     def on_pose(self):
         pass
+
+    def shift_pose(self, dx: float, dy: float) -> bool:
+        """Move the EKF pose by (dx, dy) in the map frame, heading kept (a sensor
+        fix). False when it cannot (no odom yet / no odom <- map transform)."""
+        if self.last_odom is None:
+            return False
+        try:   # the shift is in the map frame; the EKF wants odom
+            tf = self.tf_buffer.lookup_transform('odom', 'map', rclpy.time.Time())
+        except tf2_ros.TransformException:
+            return False
+        a = yaw_from_quaternion(tf.transform.rotation)
+        odom = self.last_odom.pose.pose
+        req = SetPose.Request()
+        req.pose.header.frame_id = self.last_odom.header.frame_id
+        req.pose.header.stamp = self.last_odom.header.stamp   # the EKF's own time base
+        p = req.pose.pose.pose
+        p.position.x = odom.position.x + math.cos(a) * dx - math.sin(a) * dy
+        p.position.y = odom.position.y + math.sin(a) * dx + math.cos(a) * dy
+        p.orientation = odom.orientation
+        req.pose.pose.covariance = list(self.last_odom.pose.covariance)
+        self.ekf_shift.call_async(req)
+        return True
 
     # ---------------------------------------------------------------- loop ----
 
