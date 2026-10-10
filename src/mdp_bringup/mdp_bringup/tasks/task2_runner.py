@@ -47,12 +47,13 @@ from mdp_interfaces.msg import RunStatus
 from sensor_msgs.msg import Range
 from std_msgs.msg import String
 
-from mdp_algorithm.control.path_follower import PathFollower
+from mdp_algorithm.control.path_follower import PathFollower, yaw_from_quaternion
 from mdp_algorithm.planning.costmap import Costmap, Obstacle
 from mdp_algorithm.planning.planner import plan_leg
 from mdp_algorithm.utils import params as planner_params
 from mdp_bringup.utils import config, markers, obstacle_layout
 from mdp_bringup.utils.obstacle_layout import TASK2_AREA_M, TASK2_BACK_WALL_X, TASK2_CENTRE_Y
+from mdp_bringup.tasks.ir_face_pass import FacePass
 from mdp_bringup.tasks.runner_base import RunnerBase
 from mdp_bringup.utils.run import run
 
@@ -62,6 +63,14 @@ HEADING_GAIN = 1.5            # rad of steering per rad of heading error, on str
 ARC_LEAD_RAD = math.radians(5.0)   # end an arc this early: the steering takes a moment to swing back
 ARROW_WAIT_S = 3.0            # an arrow not read yet when needed: wait this long, then guess
 US_VALID = (0.25, 2.2)        # m - lane readings outside this are not obstacle 2
+# Beside obstacle 1 with arrow 2 or obstacle 2's distance still unknown: no stop -
+# angle gently toward the centre line (the camera points at arrow 2, and the middle
+# is as near to either end of the bar as anywhere) until both are known.
+HEDGE_RAD = math.radians(7.0)
+HEDGE_CENTRE_M = 0.10         # m off the centre line: straight on from there
+ARROW_2_DEADLINE_M = 0.60     # m from the bar's face with arrow 2 still unread: the nearer end
+NO_BAR_LIMIT_M = 0.35         # m past obstacle 1's centre without obstacle 2 seen: stop (the
+                              # bar's face can be 0.65 m past it, the car's nose is 0.2 m ahead)
 
 
 class State(Enum):
@@ -91,6 +100,11 @@ class Task2Runner(RunnerBase):
 
         # (/cmd_vel, /run_status, the Foxglove drawings, /start_run ...: RunnerBase)
         self.create_subscription(Range, '/ultrasonic', self.ultrasonic_callback, 10)
+        # The IRs at the front wheels, one each side (URDF task 2): position fixes
+        # while the car passes obstacle 1's side and the bar's ends (ir_face_pass.py).
+        for name in ('ir', 'ir2'):
+            self.create_subscription(Range, f'/{name}', lambda m, n=name: self.ir_callback(n, m), 10)
+        self.ir_sensors = {}             # name -> (x, y, yaw) on base_link (TF, from the URDF)
 
         self.follower = PathFollower()
         # Task 2 sets the speed and lookahead itself (speed_ahead(), follower_step()).
@@ -122,6 +136,7 @@ class Task2Runner(RunnerBase):
         self.pre = None                  # the path home -> beside obstacle 1, planned before GO
         self.lane_waypoint = None        # checkpoint 1, beside obstacle 1
         self.x1_seen = None              # obstacle 1 as the ultrasonic sees it from home (drawn)
+        self.passes = []                 # (sensor name, FacePass) - faces the IRs are watching for
         self._plan_gen = getattr(self, '_plan_gen', 0) + 1
         self.follower.set_path([])
 
@@ -151,6 +166,66 @@ class Task2Runner(RunnerBase):
                                        throttle_duration_sec=5.0)
                 return 0.19
         return self.us_offset
+
+    def sensors(self):
+        """Where the IRs are on the car (x, y, yaw on base_link), from the URDF."""
+        if len(self.ir_sensors) < 2:
+            for name in ('ir', 'ir2'):
+                try:
+                    t = self.tf_buffer.lookup_transform('base_link', f'{name}_link', rclpy.time.Time()).transform
+                    self.ir_sensors[name] = (t.translation.x, t.translation.y, yaw_from_quaternion(t.rotation))
+                except tf2_ros.TransformException:
+                    pass
+        return self.ir_sensors
+
+    def watch_face(self, label, x0, x1, face_y, out, at):
+        """Fix the position with whichever IR looks at this face when the car is at `at`."""
+        for name, sensor in self.sensors().items():
+            fp = FacePass(label, x0, x1, face_y, out, sensor)
+            if fp.beam(at) is not None:
+                self.passes.append((name, fp))
+                return
+
+    def watch_obstacle_1(self):
+        h = self.arena.obstacle_1_size[1] / 2.0
+        d = self.arena.obstacle_1_size[0] / 2.0
+        self.watch_face("obstacle 1's side", self.x1 - d, self.x1 + d, TASK2_CENTRE_Y + self.side * h,
+                        self.side, (self.x1, TASK2_CENTRE_Y + self.side * float(self.p('lane_offset')), 0.0))
+
+    def watch_bar_ends(self):
+        """The bar's end on arrow 2's side (passed heading out) and its other end (heading home)."""
+        h = self.arena.obstacle_2_size[1] / 2.0
+        d = self.arena.obstacle_2_size[0] / 2.0
+        s2 = SIDE[self.arrows[1]]
+        for k, wp in enumerate(self.waypoints[:2]):
+            out = s2 if k == 0 else -s2
+            self.watch_face(f"the bar's {'first' if k == 0 else 'second'} end", self.x2 - d, self.x2 + d,
+                            TASK2_CENTRE_Y + out * h, out, wp)
+
+    def ir_callback(self, name, msg: Range):
+        if not self.passes or not math.isfinite(msg.range):
+            return
+        v = self.last_odom.twist.twist.linear.x if self.last_odom is not None else 0.0
+        # The EKF pose is pose_latency late: where the car is NOW (sim 2026-10-10: without
+        # this the 'along' fixes were +2..+10 cm on perfect odometry).
+        x, y, yaw = self.current_pose
+        lag = v * float(self.p('pose_latency'))
+        pose = (x + lag * math.cos(yaw), y + lag * math.sin(yaw), yaw)
+        for item in list(self.passes):
+            n, fp = item
+            if n != name:
+                continue
+            fp.on_reading(float(msg.range), pose, abs(v))
+            bm = fp.beam(pose)
+            past = bm is None or not (fp.x0 - 0.10 <= bm[1] <= fp.x1 + 0.10)   # the pose may be cm off
+            if fp.seen and past:
+                self.passes.remove(item)
+                dx, dy, note = fp.correction()
+                if math.hypot(dx, dy) >= 0.005 and self.shift_pose(dx, dy):
+                    x, y, yaw = self.current_pose
+                    self.get_logger().info(f"IR FIX    {fp.label}: {note} -> {self.fmt((x + dx, y + dy, yaw))}")
+                else:
+                    self.get_logger().info(f"IR FIX    {fp.label}: none - {note}")
 
     def fresh_range(self, max_age: float = 0.3):
         if self.us_range and self.now() - self.us_range[1] <= max_age:
@@ -273,6 +348,7 @@ class Task2Runner(RunnerBase):
             self.arrows[0], self.x1, self.side = pre['arrow'], pre['x1'], SIDE[pre['arrow']]
             self.lane_waypoint = pre['goal']
             self.follower.set_path(pre['path'])
+            self.watch_obstacle_1()
             self.get_logger().info(f"GO        arrow 1 {pre['arrow']}, obstacle 1 at "
                                    f"({markers.cell(self.x1)},{markers.cell(TASK2_CENTRE_Y)}) -> beside it "
                                    f"{self.fmt(pre['goal'])}")
@@ -464,17 +540,17 @@ class Task2Runner(RunnerBase):
         pts.append((cx, cy + side * r2, 0.0, 1))                                 # exactly the goal
         return [(float(x), float(y), float(th), g) for x, y, th, g in pts]
 
-    def level_with_1(self) -> bool:
+    def level_with_1(self, max_yaw: float = math.radians(8.0)) -> bool:
         """Beside obstacle 1 and pointing (nearly) straight: the ultrasonic and the
         camera now look past it at obstacle 2."""
         return (self.x1 is not None and self.current_pose[0] >= self.x1 - 0.10
-                and abs(self.current_pose[2]) < math.radians(8.0))
+                and abs(self.current_pose[2]) < max_yaw)
 
     def read_obstacle_2(self):
         """One ultrasonic reading of obstacle 2 (its centre along the course), kept
         if it is beyond obstacle 1."""
         r = self.fresh_range(0.1)
-        if r is not None and US_VALID[0] <= r <= US_VALID[1] and self.level_with_1():
+        if r is not None and US_VALID[0] <= r <= US_VALID[1] and self.level_with_1(HEDGE_RAD + math.radians(4.0)):
             x2 = self.ahead_x(r, self.arena.obstacle_2_size[0])
             if x2 > self.x1 + 0.3:
                 self.lane_readings.append(x2)
@@ -513,6 +589,7 @@ class Task2Runner(RunnerBase):
             if path:
                 self.arrows[0], self.x1, self.side, self.lane_waypoint = arrow, x1, SIDE[arrow], goal
                 self.follower.set_path(path)
+                self.watch_obstacle_1()
                 self.get_logger().info(f"ARROW 1   {arrow} at {self.fmt(self.current_pose)}, obstacle 1 at "
                                        f"({markers.cell(x1)},{markers.cell(TASK2_CENTRE_Y)}) -> beside it "
                                        f"{self.fmt(goal)}")
@@ -560,17 +637,28 @@ class Task2Runner(RunnerBase):
 
     def checkpoint_1(self):
         """At checkpoint 1: obstacle 2's distance (ultrasonic) and arrow 2 (YOLO)
-        -> checkpoints 2, 3, 4 and the path through them, from right here. Waits,
-        stopped, only for a reading still missing."""
+        -> checkpoints 2, 3, 4 and the path through them, from right here. A reading
+        still missing: no stop - roll on, angled gently toward the centre line
+        (hedge()), until it comes; arrow 2 still unread ARROW_2_DEADLINE_M from the
+        bar: the nearer end."""
         self.read_obstacle_2()
+        if self.arrows[1] is None:
+            self.arrows[1] = self.arrow(1)
+        x, y, _ = self.current_pose
         if not self.lane_readings:
-            self.send_cmd(0.0, 0.0)
-            if self.now() - self.state_start > 1.5:
+            if x > self.x1 + NO_BAR_LIMIT_M:
+                self.send_cmd(0.0, 0.0)
                 self.get_logger().error("CHECKPOINT 1  obstacle 2 not seen by the ultrasonic - stopping")
                 self.set_state(State.STOPPED)
-            return
-        if not self.need_arrow(1):
-            return
+                return
+            return self.hedge()
+        if self.arrows[1] is None:
+            face = statistics.median(self.lane_readings) - self.arena.obstacle_2_size[0] / 2.0
+            if face - (x + self.car.footprint_front) > ARROW_2_DEADLINE_M:
+                return self.hedge()
+            self.arrows[1] = 'LEFT' if self.side > 0 else 'RIGHT'
+            self.get_logger().warn(f"ARROW 2   not read {ARROW_2_DEADLINE_M:.1f} m from the bar - "
+                                   f"taking the nearer end ({self.arrows[1]})")
         self.x2 = statistics.median(self.lane_readings)
         s2 = SIDE[self.arrows[1]]
         half2 = self.arena.obstacle_2_size[1] / 2.0 + float(self.p('side_clearance'))
@@ -584,6 +672,7 @@ class Task2Runner(RunnerBase):
                                f"  4 {self.fmt(self.home)}")
         self.build_costmap()
         self.publish_map()
+        self.watch_bar_ends()
         self.leg, self.plan_start = 0, start
         self.set_state(State.FOLLOW)
         self.publish_waypoints()
@@ -598,6 +687,15 @@ class Task2Runner(RunnerBase):
         self.leg_paths = [None] * len(self.waypoints)
         threading.Thread(target=self.plan_legs, daemon=True,
                          args=(start, self._plan_gen, self.leg_paths, list(self.waypoints), self.costmap)).start()
+
+    def hedge(self):
+        """Roll on at path_speed, angled HEDGE_RAD toward the centre line (straight
+        once within HEDGE_CENTRE_M of it)."""
+        off = (self.current_pose[1] - TASK2_CENTRE_Y) * self.side
+        heading = -self.side * HEDGE_RAD if off > HEDGE_CENTRE_M else 0.0
+        self.get_logger().info("CHECKPOINT 1  waiting for obstacle 2 / arrow 2 - rolling on",
+                               throttle_duration_sec=1.0)
+        self.hold_heading(float(self.p('path_speed')), heading)
 
     def follow(self):
         """Drive the planned legs; until leg 1 is ready, keep straight to its start."""

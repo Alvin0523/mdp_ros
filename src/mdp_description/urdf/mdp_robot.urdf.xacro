@@ -26,6 +26,7 @@
 <robot name="mini_akm_robot" xmlns:xacro="http://www.ros.org/wiki/xacro">
   <xacro:arg name="sim" default="false"/>
   <xacro:arg name="camera_yaw" default="0.0"/>        <!-- task 1: 1.5708 (camera looks LEFT) -->
+  <xacro:arg name="task" default="1"/>                <!-- 2: the IRs move to the front wheels (sharp_ir) -->
   <xacro:arg name="controller_config" default=""/>    <!-- sim: absolute path of controller.yaml -->
   <xacro:property name="sim" value="$(arg sim)"/>
 
@@ -170,7 +171,7 @@
        axle, IR1 (/ir, ir_link) 72.5 mm behind it = 31.5 mm BEHIND the rear axle.
        Both faces 62 mm left of the centre line (base_link y). Height 90 mm above
        the table (not measured; only needs to clear the left rear tyre, top ~66 mm). -->
-  <xacro:macro name="sharp_ir" params="name x">
+  <xacro:macro name="sharp_ir" params="name x y:=0.062 yaw:=${pi / 2}">
     <link name="${name}_link">
       <visual>
         <origin xyz="-0.0065 0 0" rpy="0 0 0"/>
@@ -180,13 +181,22 @@
       </visual>
     </link>
     <joint name="${name}_joint" type="fixed">
-      <origin xyz="${x} 0.062 ${0.09 - wheel_radius}" rpy="0 0 ${pi / 2}"/>
+      <origin xyz="${x} ${y} ${0.09 - wheel_radius}" rpy="0 0 ${yaw}"/>
       <parent link="base_link"/>
       <child link="${name}_link"/>
     </joint>
   </xacro:macro>
-  <xacro:sharp_ir name="ir" x="-0.0315"/>   <!-- IR1, /ir: the rear one -->
-  <xacro:sharp_ir name="ir2" x="0.041"/>    <!-- IR2, /ir2: the front one -->
+  <xacro:if value="${'$(arg task)' != '2'}">
+    <xacro:sharp_ir name="ir" x="-0.0315"/>   <!-- IR1, /ir: the rear one -->
+    <xacro:sharp_ir name="ir2" x="0.041"/>    <!-- IR2, /ir2: the front one -->
+  </xacro:if>
+  <!-- Task 2 (2026-10-10, not measured yet): one IR each side at the front axle, looking
+       out - IR1 right, IR2 left - for the sides of obstacle 1 and the bar's ends.
+       Same height and 62 mm out as task 1; the beam passes over the front tyres. -->
+  <xacro:if value="${'$(arg task)' == '2'}">
+    <xacro:sharp_ir name="ir" x="${wheelbase}" y="-0.062" yaw="${-pi / 2}"/>   <!-- IR1, /ir: right -->
+    <xacro:sharp_ir name="ir2" x="${wheelbase}" y="0.062"/>                    <!-- IR2, /ir2: left -->
+  </xacro:if>
 
   <!-- Raspberry Pi Camera v2 (25 x 24 mm board, 9 mm deep). Looks along this
        link's +x; camera_yaw turns it (task 1: left). On the 3D-printed mount

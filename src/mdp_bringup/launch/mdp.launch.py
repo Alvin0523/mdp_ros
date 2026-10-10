@@ -289,7 +289,7 @@ def generate_launch_description(argv=None):
     robot_desc = xacro.process_file(
         xacro_file,
         mappings={'sim': str(sim).lower(), 'camera_yaw': repr(math.pi / 2.0 if task == '1' else 0.0),
-                  'controller_config': controller_config}).toxml()
+                  'task': task, 'controller_config': controller_config}).toxml()
 
     if sim:
         pkg_ros_gz_sim = get_package_share_directory('ros_gz_sim')
