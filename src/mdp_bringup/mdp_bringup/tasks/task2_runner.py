@@ -72,6 +72,7 @@ ARROW_2_DEADLINE_M = 0.60     # m from the bar's face with arrow 2 still unread:
 LEVEL_X_M = 0.30              # m before obstacle 1's centre: straight in the lane from here, the
                               # ultrasonic and camera see past it (obstacle 2 and arrow 2) and
                               # arrow 1 is out of the camera's view - read them on the move
+IN_CARPARK_MARGIN_M = 0.02    # m: the whole outline this far inside the carpark's walls = home
 NO_BAR_LIMIT_M = 0.35         # m past obstacle 1's centre without obstacle 2 seen: stop (the
                               # bar's face can be 0.65 m past it, the car's nose is 0.2 m ahead)
 
@@ -724,6 +725,9 @@ class Task2Runner(RunnerBase):
             self.get_logger().info(f"LEG {self.leg + 1}/3   -> {self.names[self.leg]} "
                                    f"{self.fmt(self.waypoints[self.leg])}  {moves}")
             self.publish_waypoints()
+        # The whole car inside the carpark -> done (no creeping on to its middle).
+        if self.leg == len(self.waypoints) - 1 and self.in_carpark():
+            return self.finish("all of it in the carpark")
         # Into the carpark: the ultrasonic sees the back wall -> done.
         r = self.fresh_range()
         if (self.leg == len(self.waypoints) - 1 and r is not None and r <= float(self.p('home_stop_dist'))
@@ -736,6 +740,18 @@ class Task2Runner(RunnerBase):
             self.follower.set_path([])
             if self.leg >= len(self.waypoints):
                 self.finish("HOME")
+
+    def in_carpark(self) -> bool:
+        """Every corner of the car's outline inside the carpark's walls (by IN_CARPARK_MARGIN_M)."""
+        x, y, yaw = self.current_pose
+        c, s, m = math.cos(yaw), math.sin(yaw), IN_CARPARK_MARGIN_M
+        half = self.arena.carpark_width / 2.0 - m
+        for a in (-self.car.footprint_rear, self.car.footprint_front):
+            for b in (-self.car.footprint_half_width, self.car.footprint_half_width):
+                px, py = x + c * a - s * b, y + s * a + c * b
+                if not (TASK2_BACK_WALL_X + m < px < self.arena.opening_x - m and abs(py - TASK2_CENTRE_Y) < half):
+                    return False
+        return True
 
     def next_leg(self):
         """The next leg's path when the car rolls straight on into it: planned, and
