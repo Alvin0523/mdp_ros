@@ -727,12 +727,22 @@ class Task2Runner(RunnerBase):
                 and self.current_pose[0] < self.arena.opening_x):
             return self.finish("the back wall")
         self.publish_leg()
-        if self.follower_step():
+        if self.follower_step(stop_at_end=self.next_leg() is None):
             self.get_logger().info(f"ARRIVED   {self.names[self.leg]} at {self.fmt(self.current_pose)}")
             self.leg += 1
             self.follower.set_path([])
             if self.leg >= len(self.waypoints):
                 self.finish("HOME")
+
+    def next_leg(self):
+        """The next leg's path when the car rolls straight on into it: planned, and
+        in the gear the current leg ends in. None otherwise (home, a gear change,
+        still planning) - then the car slows for the checkpoint and stops there."""
+        path = self.follower.path
+        if self.state != State.FOLLOW or not path or self.leg + 1 >= len(self.leg_paths):
+            return None
+        nxt = self.leg_paths[self.leg + 1]
+        return nxt if nxt and nxt[0][3] == path[-1][3] else None
 
     def follower_step(self, stop_at_end: bool = True) -> bool:
         """One tick along the follower's path at the speed profile. True once the
@@ -767,7 +777,9 @@ class Task2Runner(RunnerBase):
         k = min(range(i0, min(len(path), self.follower._search_idx + 1)),
                 key=lambda j: (path[j][0] - x) ** 2 + (path[j][1] - y) ** 2)
         window = float(self.p('slow_down_dist')) + self.follower.lookahead_dist
-        kappa, dist = 0.0, 0.0
+        nxt = self.next_leg()
+        path = path[k:] + (nxt[1:] if nxt else [])   # rolling on into the next leg: no slowing for the checkpoint
+        k, kappa, dist = 0, 0.0, 0.0
         for j in range(k + 1, len(path)):
             ds = math.hypot(path[j][0] - path[j - 1][0], path[j][1] - path[j - 1][1])
             dist += ds
