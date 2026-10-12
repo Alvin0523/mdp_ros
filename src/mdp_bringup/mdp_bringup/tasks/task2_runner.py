@@ -72,6 +72,7 @@ ARROW_2_DEADLINE_M = 0.60     # m from the bar's face with arrow 2 still unread:
 LEVEL_X_M = 0.30              # m before obstacle 1's centre: straight in the lane from here, the
                               # ultrasonic and camera see past it (obstacle 2 and arrow 2) and
                               # arrow 1 is out of the camera's view - read them on the move
+BRAKE_RESPONSE_S = 0.15       # s for the wheels' speed to follow a slower command (speed_ahead)
 IN_CARPARK_MARGIN_M = 0.02    # m: the whole outline this far inside the carpark's walls = home
 NO_BAR_LIMIT_M = 0.35         # m past obstacle 1's centre without obstacle 2 seen: stop (the
                               # bar's face can be 0.65 m past it, the car's nose is 0.2 m ahead)
@@ -783,38 +784,48 @@ class Task2Runner(RunnerBase):
         return False
 
     def speed_ahead(self) -> float:
-        """Speed for the path ahead (from the car, slow_down_dist plus the lookahead):
-        as fast as its tightest curve allows at max_lateral_accel (v = sqrt(a * R)),
-        between path_speed and straight_speed. A gear change or the end of the
-        path in that stretch: path_speed."""
+        """Speed now: as fast as still lets the car brake, at brake_decel, down to every
+        limit on the path ahead in time - each curve's sqrt(max_lateral_accel x R), and
+        path_speed at a gear change or the path's end (not at checkpoint 1, nor at a
+        checkpoint it rolls straight through). Between path_speed and straight_speed.
+        The distances count from BRAKE_RESPONSE_S of travel ahead (the speed takes that
+        long to follow the command). Replaced a flat slow_down_dist + lookahead window
+        (0.85 m at 0.9 m/s), which slowed for every curve in it (sim 2026-10-12)."""
         path = self.follower.path
         v_min, v_max = float(self.p('path_speed')), float(self.p('straight_speed'))
         if not path:
             return v_min
+        a_lat, a_brake = float(self.p('max_lateral_accel')), float(self.p('brake_decel'))
         x, y, _ = self.current_pose
         i0 = max(0, self.follower._search_idx - 40)
         k = min(range(i0, min(len(path), self.follower._search_idx + 1)),
                 key=lambda j: (path[j][0] - x) ** 2 + (path[j][1] - y) ** 2)
-        window = float(self.p('slow_down_dist')) + self.follower.lookahead_dist
         nxt = self.next_leg()
         path = path[k:] + (nxt[1:] if nxt else [])   # rolling on into the next leg: no slowing for the checkpoint
-        k, kappa, dist = 0, 0.0, 0.0
-        for j in range(k + 1, len(path)):
+        margin = max(abs(self._last_cmd[0]), v_min) * BRAKE_RESPONSE_S
+        horizon = margin + (v_max ** 2 - v_min ** 2) / (2.0 * a_brake) + 0.05
+
+        def reachable(v_at, d):         # fastest speed now that still gets down to v_at in d
+            return math.sqrt(v_at ** 2 + 2.0 * a_brake * max(0.0, d - margin))
+
+        v, dist = v_max, 0.0
+        for j in range(1, len(path)):
             ds = math.hypot(path[j][0] - path[j - 1][0], path[j][1] - path[j - 1][1])
             dist += ds
-            if path[j][3] != path[k][3]:
-                return v_min
+            if path[j][3] != path[0][3]:
+                return max(v_min, min(v, reachable(v_min, dist)))
             if ds > 1e-4:
                 dth = math.atan2(math.sin(path[j][2] - path[j - 1][2]), math.cos(path[j][2] - path[j - 1][2]))
-                kappa = max(kappa, abs(dth) / ds)
-            if dist >= window:
+                kappa = abs(dth) / ds
+                if kappa > 1e-6:
+                    v = min(v, reachable(math.sqrt(a_lat / kappa), dist))
+            if dist >= horizon:
                 break
         else:
+            # The end of the path is within reach. Checkpoint 1 is no stop: the car
+            # rolls straight on and turns for obstacle 2 once it is planned.
             if self.state != State.TO_CHECKPOINT_1:
-                return v_min        # the end of the path is within the window
-            # Checkpoint 1 is no stop: the car rolls straight on, and turns for obstacle 2
-            # as soon as it is planned (its leg's own curves slow it then).
-        v = math.sqrt(float(self.p('max_lateral_accel')) / kappa) if kappa > 1e-6 else v_max
+                v = min(v, reachable(v_min, dist))
         return max(v_min, min(v_max, v))
 
     def finish(self, why: str):

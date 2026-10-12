@@ -212,7 +212,7 @@ task2_runner:
     line_up_dist: 0.30         # m, straight into checkpoints 1 and 2: the diagonal ends this far before
                                # (0.3 + side_clearance 0.25 gave the most clean diagonals, 24 of 36
                                # layouts, in an offline search 2026-09-30; the rest use Hybrid A*)
-    slow_down_dist: 0.40       # m looked ahead (plus the lookahead) for the curve speed below
+    brake_decel: 1.20          # m/s^2 the speed profile brakes at, for curves, gear changes and path ends
     max_lateral_accel: 1.50    # m/s^2: curve speed = sqrt(this x radius), path_speed..straight_speed
     path_tracking: lqr         # pure_pursuit | lqr (task1_runner follower.* has the lqr weights)
     pose_latency: 0.09         # s, the EKF pose's delay the follower allows for (task 1: 0.06)
