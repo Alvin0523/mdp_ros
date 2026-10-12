@@ -826,7 +826,30 @@ class Task2Runner(RunnerBase):
             # rolls straight on and turns for obstacle 2 once it is planned.
             if self.state != State.TO_CHECKPOINT_1:
                 v = min(v, reachable(v_min, dist))
-        return max(v_min, min(v_max, v))
+        return max(v_min, min(v_max, v, self.ir_pass_limit(a_brake, margin)))
+
+    def ir_pass_limit(self, a_brake: float, margin: float) -> float:
+        """ir_pass_speed while an IR passes a face it is watching (and braking for one
+        ahead): at full speed a 10 cm face got 2 readings at 25 Hz - too few for a fix
+        (sim 2026-10-12, drift runs: most fixes refused)."""
+        v_pass = float(self.p('ir_pass_speed'))
+        x, y, yaw = self.current_pose
+        c, s = math.cos(yaw), math.sin(yaw)
+        if abs(c) < 0.8:                   # not running along the course
+            return float('inf')
+        sign = math.copysign(1.0, c)
+        limit = float('inf')
+        for name, fp in self.passes:
+            sx, sy, _ = self.ir_sensors.get(name, (0.0, 0.0, 0.0))
+            px, py = x + c * sx - s * sy, y + s * sx + c * sy
+            if abs(py - fp.face_y) > 0.5:
+                continue
+            d = (fp.x0 - px) if sign > 0 else (px - fp.x1)      # to the face's near corner
+            if d <= 0.0 and ((px <= fp.x1) if sign > 0 else (px >= fp.x0)):
+                limit = min(limit, v_pass)                    # on the face
+            elif d > 0.0:
+                limit = min(limit, math.sqrt(v_pass ** 2 + 2.0 * a_brake * max(0.0, d - margin)))
+        return limit
 
     def finish(self, why: str):
         self.send_cmd(0.0, 0.0)

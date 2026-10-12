@@ -213,6 +213,7 @@ task2_runner:
                                # (0.3 + side_clearance 0.25 gave the most clean diagonals, 24 of 36
                                # layouts, in an offline search 2026-09-30; the rest use Hybrid A*)
     brake_decel: 1.20          # m/s^2 the speed profile brakes at, for curves, gear changes and path ends
+    ir_pass_speed: 0.60        # m/s while an IR passes obstacle 1's side / a bar end (enough readings for a fix)
     max_lateral_accel: 1.50    # m/s^2: curve speed = sqrt(this x radius), path_speed..straight_speed
     path_tracking: lqr         # pure_pursuit | lqr (task1_runner follower.* has the lqr weights)
     pose_latency: 0.09         # s, the EKF pose's delay the follower allows for (task 1: 0.06)
