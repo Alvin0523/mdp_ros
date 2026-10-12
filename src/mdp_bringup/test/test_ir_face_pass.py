@@ -57,3 +57,25 @@ def test_along_off_keeps_out():
         x += 0.02
     dx, dy, note = fp.correction()
     assert dx == 0.0 and abs(dy - 0.03) < 0.003, note
+
+
+def test_out_fix_with_large_along_error():
+    # drift: the pose 9 cm ahead and 5 cm in - the out fix must still come (sim 2026-10-12)
+    dx, dy, note = drive_past(0.09, -0.05, speed=0.6)
+    assert abs(dy - 0.05) < 0.005, note
+
+
+def test_out_fix_while_turning():
+    # The bar's second end, passed finishing the half circle round the bar (heading ~160-180 deg)
+    x2, cy, r, v = 2.0, 1.2, 0.55, 0.6
+    fp = FacePass('2nd', x2 - 0.05, x2 + 0.05, cy - 0.30, -1.0, RIGHT_IR, use_along=False)
+    pts, t = [], 0.0
+    while t <= math.pi:
+        pts.append((x2 + r * math.sin(t), cy + r * math.cos(t), -t))
+        t += v / 25.0 / r
+    for p in pts:
+        bm = fp.beam(p)
+        on = bm is not None and fp.x0 <= bm[1] <= fp.x1
+        fp.on_reading(bm[0] if on else 0.8, (p[0], p[1] + 0.04, p[2]), v)
+    dx, dy, note = fp.correction()
+    assert abs(dy + 0.04) < 0.005, note

@@ -12,14 +12,16 @@ import math
 from statistics import median
 
 IR_MIN, IR_MAX = 0.06, 0.40    # m, readings used (task 2 passes closer than task 1's 10 cm)
-HIT_TOL = 0.08                 # m, a reading this close to the expected range is "the face"
-MAX_INCIDENCE = math.radians(25.0)   # beam this far off square to the face: not used
+HIT_TOL = 0.12                 # m, a reading this close to the expected range is "the face" (drift
+                               # runs 2026-10-12: 8 cm missed the face once the pose was 9 cm off)
+MAX_INCIDENCE = math.radians(35.0)   # beam this far off square to the face: not used (25: the bar's
+                                     # second end, passed finishing the turn round it, got 2 readings)
 EDGE_INSET = 0.01              # m, across readings only this far inside the corners
 IR_LAG_S = 0.0                 # s, the reading's delay (sim: none; real Sharp ~0.04 - to measure)
 MIN_READINGS = 3
 MAX_MAD = 0.01                 # m, across readings disagreeing more: not used
 EDGE_SPREAD = 0.03             # m, edges disagreeing more: not used
-MAX_FIX = 0.10                 # m, a bigger correction is a misreading: not used
+MAX_FIX = 0.15                 # m, a bigger correction is a misreading: not used
 
 
 class FacePass:
@@ -88,7 +90,10 @@ class FacePass:
                                         f'{len(self.edges)} edge') + ')')
         # Inside the corners by where the edges put the car: with the pose cm off along,
         # the pose alone left 2 of the ~4 readings (sim offline 2026-10-10: 'out' refused).
-        gaps = [g for a, g in self.hits if self.x0 + EDGE_INSET <= a + dx <= self.x1 - EDGE_INSET]
+        # No along fix: the pose may be cm off along the face, so keep every reading
+        # that matched it (the median and MAX_MAD see off a corner reading).
+        gaps = ([g for a, g in self.hits if self.x0 + EDGE_INSET <= a + dx <= self.x1 - EDGE_INSET]
+                if dx else [g for _, g in self.hits])
         if len(gaps) >= MIN_READINGS:
             med = median(gaps)
             if median(abs(g - med) for g in gaps) <= MAX_MAD:
