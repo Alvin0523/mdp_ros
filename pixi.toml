@@ -55,6 +55,12 @@ bag-all = { cmd = "ros2 bag record -a -o bags/rosbag2_$(date +%Y%m%d_%H%M%S)", d
 panels = { cmd = "python src/mdp_description/scripts/gen_symbol_meshes.py", description = "Generate the symbol panel meshes" }
 import-symbols = { cmd = "python src/mdp_description/scripts/import_symbol_textures.py", description = "Import the symbol textures" }
 
+# --- YOLO on a Mac --------------------------------------------------------------
+# CoreML (Neural Engine) is the fastest there; the detector picks <name>.mlpackage
+# next to <name>.pt by itself. CUDA (NVIDIA laptop) / MPS / CPU otherwise.
+export-coreml = { cmd = "python scripts/yolo/export_coreml.py && colcon build --symlink-install --packages-select mdp_vision", description = "Mac, once per model: best_v5.pt -> best_v5.mlpackage (CoreML) and install it. Args: [model.pt] [--int8]" }
+bench-yolo = { cmd = "python scripts/yolo/bench_yolo.py", description = "Time YOLO here on every backend there is (CUDA / CoreML / MPS / CPU). Args: [model.pt] [--frames N] [--images DIR]" }
+
 [dependencies]
 # Core ROS2 & Control
 ros-jazzy-ros-base = "*"
@@ -90,7 +96,8 @@ hypothesis = ">=6.168.1,<7"
 
 [pypi-dependencies]
 ultralytics = "*"
-# torch / torchvision per machine (below): CUDA on the laptop, CPU on the Pi.
+# torch / torchvision per machine (below): CUDA on the Linux laptop, CPU on the Pi,
+# CPU + Apple GPU (MPS) on a Mac - plus CoreML there (`pixi run export-coreml`).
 
 # ---------------------------------------------------------------------------
 # Laptop-only targets (Simulation, GUI testing, Model conversion)
@@ -119,8 +126,9 @@ ros-jazzy-joint-state-publisher-gui = "*"
 
 [target.osx-arm64.pypi-dependencies]
 pnnx = "*"
-torch = "==2.8.0"
+torch = "==2.8.0"          # PyPI's Mac build: CPU + the Apple GPU (MPS)
 torchvision = "==0.23.0"
+coremltools = "*"          # `pixi run export-coreml`: YOLO -> CoreML (Neural Engine)
 
 [activation]
 scripts = ["install/setup.bash"]

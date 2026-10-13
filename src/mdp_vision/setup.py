@@ -15,6 +15,11 @@ setup(
         # PyTorch weights (best_v5.pt, best_v4.pt, ...), one file each:
         # share/mdp_vision/models/<name>.pt - the detector's model_path=<name> switch.
         (os.path.join('share', package_name, 'models'), glob('models/*.pt')),
+    ] + [
+        # CoreML exports (Mac, `pixi run export-coreml`): <name>.mlpackage is a
+        # folder - every file in it, keeping its layout.
+        (os.path.join('share', package_name, root), [os.path.join(root, f) for f in files])
+        for pkg in glob('models/*.mlpackage') for root, _, files in os.walk(pkg) if files
     ],
     install_requires=['setuptools'],
     zip_safe=True,
