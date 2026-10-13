@@ -8,6 +8,7 @@ and publishes detected target/arrow string to /yolo_result.
 
 import json
 import os
+import sys
 
 import signal
 
@@ -36,17 +37,36 @@ MODELS_DIR = os.path.join(get_package_share_directory('mdp_vision'), 'models')
 #   best.pt     - older
 # Switch with the `model_path` parameter (the `model:=` launch arg of
 # mdp.launch.py / vision.launch.py): a file name under models/ or a full path.
+# Where it runs (pick_device): an NVIDIA GPU (CUDA) when there is one; on a Mac
+# the CoreML export of the same model (<name>.mlpackage next to <name>.pt, made
+# once with `pixi run export-coreml`) on the Neural Engine, else the Apple GPU
+# (MPS); else the CPU. `coreml:=false` keeps a Mac on the .pt (MPS).
 DEFAULT_MODEL = 'best_v5.pt'
 
 
+def coreml_twin(model_path: str) -> str:
+    """On a Mac: <name>.mlpackage next to <name>.pt (`pixi run export-coreml`)
+    when there is one - CoreML runs it on the Neural Engine. Else model_path."""
+    if sys.platform != 'darwin' or not model_path.endswith('.pt'):
+        return model_path
+    twin = model_path[:-len('.pt')] + '.mlpackage'
+    return twin if os.path.isdir(twin) else model_path
+
+
 def pick_device(model_path: str):
-    """(device for Ultralytics, what to log): the NVIDIA GPU when PyTorch sees
-    one (the laptop's CUDA build, pixi.toml), else the CPU."""
+    """(device for Ultralytics, what to log): CoreML picks its own hardware
+    (None); else the NVIDIA GPU when PyTorch sees one (the laptop's CUDA build,
+    pixi.toml), the Apple GPU (MPS) on a Mac, else the CPU."""
+    if model_path.endswith('.mlpackage'):
+        return None, 'CoreML (Apple Neural Engine / GPU)'
     try:
         import torch
         if torch.cuda.is_available():
             return 0, f'GPU (CUDA: {torch.cuda.get_device_name(0)})'
-        return 'cpu', f'CPU (PyTorch {torch.__version__}, no CUDA)'
+        mps = getattr(torch.backends, 'mps', None)
+        if mps is not None and mps.is_available():
+            return 'mps', 'Apple GPU (MPS)'
+        return 'cpu', f'CPU (PyTorch {torch.__version__}, no CUDA / MPS)'
     except Exception:
         return 'cpu', 'CPU'
 
@@ -124,9 +144,12 @@ class YoloDetector(Node):
         # away was read instead of the target, sim 2026-09-30).
         self.declare_parameter('min_confidence', 0.5)
         self.declare_parameter('edge_margin_px', 3)
+        self.declare_parameter('coreml', True)   # Mac: use <model>.mlpackage when it exists
 
         camera_topic = self.get_parameter('camera_topic').value
         model_path = resolve_model_path(self.get_parameter('model_path').value)
+        if self.get_parameter('coreml').value:
+            model_path = coreml_twin(model_path)
         result_topic = self.get_parameter('result_topic').value
         annotated_topic = self.get_parameter('annotated_topic').value
         self.jpeg_quality = self.get_parameter('jpeg_quality').value
@@ -185,7 +208,8 @@ class YoloDetector(Node):
             return
 
         if self.model is not None:
-            results = self.model(cv_image, verbose=False, device=self.device, conf=self.min_conf)
+            kwargs = {} if self.device is None else {'device': self.device}   # CoreML: its own choice
+            results = self.model(cv_image, verbose=False, conf=self.min_conf, **kwargs)
             for r in results:
                 self.publish_boxes(r, msg.header, cv_image.shape)
                 box = self.pick_box(r, cv_image.shape)

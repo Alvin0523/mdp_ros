@@ -31,3 +31,6 @@ snapshots/
 
 # camera recordings for labelling (pixi run capture) - large, keep local
 datasets/
+
+# CoreML exports (Mac, `pixi run export-coreml`) - made from the .pt on each Mac
+src/mdp_vision/models/*.mlpackage/
