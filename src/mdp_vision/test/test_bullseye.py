@@ -24,21 +24,21 @@ def frame_with(template, boxes):
     return frame
 
 
-@pytest.mark.parametrize('size', [12, 22, 40, 70])
+@pytest.mark.parametrize('size', [16, 22, 40, 70])
 def test_finds_one_at_its_size(template, size):
     x, y = 300, 200
-    found = find_bullseyes(frame_with(template, [(x, y, size)]), template)
+    found = find_bullseyes(frame_with(template, [(x, y, size)]), template, min_px=14.0)   # vision.yaml
     assert found
     _, x1, y1, x2, y2 = found[0]
-    assert abs(x1 - x) <= 0.15 * size + 1 and abs(y1 - y) <= 0.15 * size + 1
-    assert abs((x2 - x1) - size) <= 0.15 * size + 1
+    assert abs(x1 - x) <= 0.1 * size + 1 and abs(y1 - y) <= 0.1 * size + 1
+    assert abs((x2 - x1) - size) <= 0.04 * size + 1          # the runner reads distance from it
 
 
 def test_two_far_apart(template):
-    found = find_bullseyes(frame_with(template, [(220, 222, 22), (400, 222, 22)]), template)
+    found = find_bullseyes(frame_with(template, [(220, 222, 22), (400, 222, 22)]), template, min_px=14.0)
     xs = sorted(round(b[1]) for b in found[:2])
     assert len(found) >= 2 and abs(xs[0] - 220) <= 4 and abs(xs[1] - 400) <= 4
 
 
 def test_nothing_in_an_empty_frame(template):
-    assert find_bullseyes(frame_with(template, []), template) == []
+    assert find_bullseyes(frame_with(template, []), template, min_px=14.0) == []

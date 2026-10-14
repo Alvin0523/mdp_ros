@@ -539,8 +539,9 @@ class Task2Runner(RunnerBase):
         counts = self.arrow_counts[i]
         return counts.most_common(1)[0][0] if counts else None
 
-    def need_arrow(self, i: int) -> bool:
-        """Arrow i known -> True. Not yet: stop, wait up to ARROW_WAIT_S, then guess."""
+    def need_arrow(self, i: int, guess: str = None) -> bool:
+        """Arrow i known -> True. Not yet: stop, wait up to ARROW_WAIT_S, then guess
+        (`guess`, else LEFT for arrow 1, RIGHT for arrow 2)."""
         if self.arrows[i] is None:
             self.arrows[i] = self.arrow(i)
         if self.arrows[i] is not None:
@@ -551,7 +552,7 @@ class Task2Runner(RunnerBase):
         if self.now() - self._arrow_wait_since < ARROW_WAIT_S:
             self.get_logger().warn(f"ARROW {i + 1}   not read yet - waiting", throttle_duration_sec=1.0)
             return False
-        self.arrows[i] = 'LEFT' if i == 0 else 'RIGHT'
+        self.arrows[i] = guess or ('LEFT' if i == 0 else 'RIGHT')
         self._arrow_wait_since = None
         self.get_logger().warn(f"ARROW {i + 1}   never read - guessing {self.arrows[i]}")
         return True
@@ -971,9 +972,11 @@ class Task2Runner(RunnerBase):
             face = x2 - self.arena.obstacle_2_size[0] / 2.0
             if face - (x + self.car.footprint_front) > ARROW_2_DEADLINE_M:
                 return self.hedge()
-            self.arrows[1] = 'LEFT' if self.side > 0 else 'RIGHT'
-            self.get_logger().warn(f"ARROW 2   not read {ARROW_2_DEADLINE_M:.1f} m from the bar - "
-                                   f"taking the nearer end ({self.arrows[1]})")
+            # Stop and wait for it (then the nearer end): a guess is the wrong side half
+            # the time - a failed run. At d2 = 0.6 m the deadline is checkpoint 1 itself, and
+            # from there arrow 2 is near the picture's edge (sim 2026-10-14: 3 of 12 guessed).
+            if not self.need_arrow(1, 'LEFT' if self.side > 0 else 'RIGHT'):
+                return
         if not self.decide_bar_width(x2):
             return self.hold_heading(max(abs(self._last_cmd[0]), float(self.p('path_speed'))), 0.0)
         if why:
@@ -1247,7 +1250,19 @@ class Task2Runner(RunnerBase):
             # rolls straight on and turns for obstacle 2 once it is planned.
             if self.state != State.TO_CHECKPOINT_1:
                 v = min(v, reachable(v_min, dist))
-        return max(v_min, min(v_max, v, self.ir_pass_limit(a_brake, margin)))
+        return max(v_min, min(v_max, v, self.ir_pass_limit(a_brake, margin), self.arrow_2_limit(a_brake, margin)))
+
+    def arrow_2_limit(self, a_brake: float, margin: float) -> float:
+        """path_speed on the way into checkpoint 1 while arrow 2 is still unread: YOLO
+        gets more frames while it is in view (it is near the picture's edge there, and
+        out of view on the S before - sim 2026-10-14)."""
+        if self.state != State.TO_CHECKPOINT_1 or self.x1 is None or self.arrow(1) is not None:
+            return float('inf')
+        v_slow = float(self.p('path_speed'))
+        d = (self.x1 - 2 * LEVEL_X_M) - self.current_pose[0]          # to the straight bit
+        if d <= 0.0:
+            return v_slow
+        return math.sqrt(v_slow ** 2 + 2.0 * a_brake * max(0.0, d - margin))
 
     def ir_pass_limit(self, a_brake: float, margin: float) -> float:
         """ir_pass_speed while an IR passes a face it is watching (and braking for one
