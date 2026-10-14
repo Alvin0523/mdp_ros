@@ -184,6 +184,29 @@ def task2_sim(path: str):
     return obstacles, walls, (x1, x2)
 
 
+def task2_setup_string(path: str) -> str:
+    """`pixi run setup` for task 2: the sim layout as known obstacles, on /task2_setup -
+    '1:<x1>,<arrow 1>|2:<x2>,<arrow 2>' (centres in metres along the course, LEFT/RIGHT)."""
+    _, _, (x1, x2) = task2_sim(path)
+    with open(path) as f:
+        sim = (yaml.safe_load(f) or {})['task2']['sim']
+    arrows = [str(sim[k]).strip().upper() for k in ('arrow_1', 'arrow_2')]
+    for a in arrows:
+        if a not in ARROW_SYMBOL:
+            raise ValueError(f"{path}: task2 arrow {a!r} is not LEFT/RIGHT")
+    return f'1:{x1:.3f},{arrows[0]}|2:{x2:.3f},{arrows[1]}'
+
+
+def from_task2_setup(data: str):
+    """A /task2_setup message -> (x1, x2, arrow 1, arrow 2); ValueError if malformed."""
+    items = dict(item.split(':', 1) for item in data.strip().split('|'))
+    (x1, a1), (x2, a2) = (items['1'].split(','), items['2'].split(','))
+    a1, a2 = a1.strip().upper(), a2.strip().upper()
+    if a1 not in ARROW_SYMBOL or a2 not in ARROW_SYMBOL:
+        raise ValueError(f"arrows {a1!r} / {a2!r} are not LEFT/RIGHT")
+    return float(x1), float(x2), a1, a2
+
+
 # ---------------------------------------------------------------- Gazebo ----
 #
 # Geometry, for anyone changing the model below: the model sits at z = height/2
