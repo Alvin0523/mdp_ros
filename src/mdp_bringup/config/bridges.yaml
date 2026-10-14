@@ -17,14 +17,17 @@ serial_bridge_node:            # STM32 (real robot only)
     # over a 90 s run.
     gyro_zero_s: 5.0
     # IR distance per sensor: cm = a / (raw/4095)^b on the raw ADC value, [a, b].
-    # pixi run calib ir --sensors N --distances 10 13 16 19 22 25 30 40 --sample 10,
-    # 2026-10-07, after the IR mounts were fixed: each sensor twice, the two runs
-    # repeatable (IR1 [6.21, 1.210] / [6.25, 1.210]), fitted on both together.
-    #   IR1 within 1.0 cm at 13-25 cm, 0.0 at 19 (the scan-stop gap); 2.9 at 40.
-    #   IR2 within 0.4 cm at 13-25 cm; 1.4 at 40.
-    # (The STM32's own 6.30 / x^1.226 is 0.5-1.6 / 1.0-1.1 cm off at 13-25 cm.)
-    ir1_curve: [6.23, 1.210]   # IR1, /ir, PC2 (rear)
-    ir2_curve: [6.53, 1.157]   # IR2, /ir2, PC1 (front)
+    # pixi run calib ir, 2026-10-14, task 2 mounts, firmware averaging 8 conversions:
+    # fitted on 10-30 cm (task 2 passes the faces at ~15 cm; the power law cannot also
+    # hold 40 cm). IR1 within 0.6 cm at 10-25, -1.3 at 30 (that run had the old 10 s
+    # countdown - redo it with Enter for a cleaner fit); IR2 within 0.1 cm at 10-30.
+    # Both read 2-3 cm short at 40. (Before: [6.23, 1.210] / [6.53, 1.157], 2026-10-07,
+    # task 1 mounts - up to 1.4 cm off at 13-25 on the new data.)
+    # The STM32 sends raw (mean of 8 conversions); these curves are what the car uses.
+    # mdp_stm32 src/ir.c IR*_DISPLAY_* is a copy for its OLED only - update it too
+    # if the OLED should read the same as /ir and /ir2.
+    ir1_curve: [6.69, 1.111]   # IR1, /ir, PC2 - task 2: right side (task 1: left, rear)
+    ir2_curve: [6.95, 1.077]   # IR2, /ir2, PC1 - task 2: left side (task 1: left, front)
     ir_min_cm: 4.0             # clamp (Sharp readings are unreliable below ~7 cm)
     ir_max_cm: 80.0
 

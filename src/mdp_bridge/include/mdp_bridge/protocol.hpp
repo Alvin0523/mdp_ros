@@ -48,7 +48,7 @@ struct TelemetryPacket
   float battery_v;
   uint16_t ir_raw;
   float ir_voltage;
-  float ir_distance_cm;
+  float ir_distance_cm;  /* unused, always -1 since 2026-10-14: the curve is applied here (ir_cm()) */
   uint16_t ir2_raw;         /* second IR sensor, PC1/ADC1_CH11 */
   float ir2_voltage;
   float ir2_distance_cm;

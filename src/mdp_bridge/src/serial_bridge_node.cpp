@@ -54,8 +54,9 @@ public:
     declare_parameter<double>("gyro_zero_s", 2.0);
     gyro_zero_ms_ = static_cast<uint32_t>(get_parameter("gyro_zero_s").as_double() * 1000.0);
     /* Each IR sensor's own curve, cm = a / (raw/4095)^b, applied here to the raw
-     * ADC value the STM32 sends (config/bridges.yaml). Defaults = the STM32's
-     * generic formula (ir.c), so a missing setting cannot stop the bridge. */
+     * ADC value the STM32 sends (config/bridges.yaml) - the only place it lives
+     * (the STM32 sends raw only since 2026-10-14). Defaults = the Sharp's generic
+     * formula, so a missing setting cannot stop the bridge. */
     declare_parameter<std::vector<double>>("ir1_curve", {6.30, 1.226});
     declare_parameter<std::vector<double>>("ir2_curve", {6.30, 1.226});
     declare_parameter<double>("ir_min_cm", 4.0);
@@ -64,7 +65,7 @@ public:
     ir_curve_[1] = get_parameter("ir2_curve").as_double_array();
     for (auto & c : ir_curve_) {
       if (c.size() != 2) {
-        RCLCPP_WARN(get_logger(), "IR        curve needs [a, b] - using the STM32's 6.30 / x^1.226");
+        RCLCPP_WARN(get_logger(), "IR        curve needs [a, b] - using the generic 6.30 / x^1.226");
         c = {6.30, 1.226};
       }
     }
@@ -512,7 +513,7 @@ private:
     ir_range.field_of_view = 0.1f; /* ~6 deg, radians - narrow analog IR beam */
     ir_range.min_range = static_cast<float>(ir_min_cm_ / 100.0);
     ir_range.max_range = static_cast<float>(ir_max_cm_ / 100.0);
-    /* Unlike ultrasonic, ir_raw_to_distance_cm() always returns a
+    /* Unlike ultrasonic, ir_cm() always returns a
      * clamped value in [MIN,MAX] - it has no "invalid/no detection" sentinel
      * to check, so there is no +Inf case here. A reading pinned exactly at
      * the min or max bound may mean "actually closer/farther than the

@@ -4,13 +4,14 @@ the ir1_curve / ir2_curve in config/bridges.yaml (serial bridge).
     pixi run calib ir                          IR1 then IR2, 10/15/20/25/30/40 cm
     pixi run calib ir --sensors 2              IR2 only
     pixi run calib ir --distances 10 20 30     other distances (cm)
-    pixi run calib ir --wait 15                more time to move the block (s)
+    pixi run calib ir --wait 10                a 10 s countdown instead of Enter
 
 HOW: the car stands still with the stack up (pixi run pi / pi-solo). For every
 sensor and distance it says where to put the block - a flat face square to the
-beam, the distance measured from the SENSOR'S FACE - counts down --wait seconds
-while you move it, then samples the raw reading (/ir/raw, /ir2/raw) for
---sample seconds. At the end, per sensor: the new curve, the error at each
+beam, the distance measured from the SENSOR'S FACE - waits for Enter once it
+is placed (or counts down --wait seconds), then samples the raw reading (/ir/raw, /ir2/raw) for
+--sample seconds. Between the sensors a break (Enter) to go round to the
+other side. After each sensor (and on Ctrl+C, with what was measured): the new curve, the error at each
 distance with the curve now in bridges.yaml and with the new one, and the line
 to paste into bridges.yaml. Nothing is changed for you; every point goes into
 calibration_log.csv (tools/calib/log.py). Restart the serial bridge (pixi run pi)
@@ -31,6 +32,7 @@ from mdp_bringup.tools.calib import log
 
 TOPICS = {1: '/ir/raw', 2: '/ir2/raw'}
 NAMES = {1: 'IR1 (/ir)', 2: 'IR2 (/ir2)'}
+SIDES = {1: 'task 2: the RIGHT side', 2: 'task 2: the LEFT side'}
 STM32_CURVE = (6.30, 1.226)       # the STM32's generic formula (ir.c)
 
 
@@ -83,12 +85,28 @@ class Sampler:
         return list(self.latest[i])
 
 
+def report(where, old, i, points):
+    """The new curve for sensor i, its errors next to the curve now, the line to paste."""
+    if len(points) < 3:
+        print(f"{NAMES[i]}: {len(points)} point(s) - need 3+ to fit")
+        return
+    new = fit(points)
+    print(f"=== {NAMES[i]}: new curve a={new[0]:.2f} b={new[1]:.3f}")
+    print(f"   {'true':>6} {'curve now':>10} {'new curve':>10}")
+    for raw, d in points:
+        print(f"   {d:6.1f} {curve_cm(raw, old[i]):10.1f} {curve_cm(raw, new):10.1f}")
+    print(f"   -> config/bridges.yaml:  ir{i}_curve: [{new[0]:.2f}, {new[1]:.3f}]")
+    log.write(where, f'ir{i} fit', ' '.join(f'{d:g}' for _, d in points) + ' cm', None, None, None, '',
+              f'curve a={new[0]:.3f} b={new[1]:.4f} (was {old[i][0]}, {old[i][1]})')
+
+
 def main():
     ap = argparse.ArgumentParser(description='Fit the side IR sensors\' distance curves: calib ir')
     ap.add_argument('--sensors', type=int, nargs='+', default=[1, 2], choices=[1, 2])
     ap.add_argument('--distances', type=float, nargs='+', default=[10, 15, 20, 25, 30, 40],
                     help='cm from the sensor face to the block (default 10 15 20 25 30 40)')
-    ap.add_argument('--wait', type=float, default=10.0, help='s to move the block before each sample (default 10)')
+    ap.add_argument('--wait', type=float, default=0.0,
+                    help='s countdown to move the block before each sample (default 0: press Enter when it is placed)')
     ap.add_argument('--sample', type=float, default=3.0, help='s of readings per distance (default 3)')
     a, ros_args = ap.parse_known_args()
 
@@ -104,16 +122,24 @@ def main():
         return 1
     where = log.where(node)
     old = current_curves()
-    results = {}
+    results, reported = {}, set()
     try:
-        for i in a.sensors:
-            print(f"\n=== {NAMES[i]} - curve now a={old[i][0]:.2f} b={old[i][1]:.3f}")
-            points = []
+        for n, i in enumerate(a.sensors):
+            if n:
+                # The next sensor is on the other side: its own break, not a countdown.
+                input(f"\n--- {NAMES[a.sensors[n - 1]]} done. Now {NAMES[i]} ({SIDES[i]}) - "
+                      f"press Enter to start ")
+            print(f"\n=== {NAMES[i]} ({SIDES[i]}) - curve now a={old[i][0]:.2f} b={old[i][1]:.3f}")
+            points = results[i] = []           # filled as it goes: a Ctrl+C keeps what was measured
             for d in a.distances:
                 print(f"\n{NAMES[i]}: put the block at {d:g} cm from the sensor face (flat face, square on)")
-                for left in range(int(a.wait), 0, -1):
-                    print(f"  sampling in {left:2d} s ", end='\r', flush=True)
-                    sampler.spin_for(1.0)
+                if a.wait > 0:
+                    for left in range(int(a.wait), 0, -1):
+                        print(f"  sampling in {left:2d} s ", end='\r', flush=True)
+                        sampler.spin_for(1.0)
+                else:
+                    input("  press Enter when it is in place (Ctrl+C: stop and fit what was measured) ")
+                    sampler.spin_for(0.5)    # readings queued while waiting (block still moving) are dropped
                 raws = sampler.sample(i, a.sample)
                 if not raws:
                     print(f"  no readings - skipped {d:g} cm")
@@ -125,26 +151,19 @@ def main():
                 points.append((raw, d))
                 log.write(where, f'ir{i}', f'{d:g} cm', None, old_cm, d, 'cm',
                           f'raw median {raw:.0f}, +-{spread:.0f} over {len(raws)} readings')
-            results[i] = points
+            print()
+            report(where, old, i, points)      # at once - a Ctrl+C later does not lose it
+            reported.add(i)
     except KeyboardInterrupt:
         print('\nstopped - fitting what was measured')
     finally:
         node.destroy_node()
         rclpy.try_shutdown()
 
-    print()
     for i, points in results.items():
-        if len(points) < 3:
-            print(f"{NAMES[i]}: {len(points)} point(s) - need 3+ to fit")
-            continue
-        new = fit(points)
-        print(f"=== {NAMES[i]}: new curve a={new[0]:.2f} b={new[1]:.3f}")
-        print(f"   {'true':>6} {'curve now':>10} {'new curve':>10}")
-        for raw, d in points:
-            print(f"   {d:6.1f} {curve_cm(raw, old[i]):10.1f} {curve_cm(raw, new):10.1f}")
-        print(f"   -> config/bridges.yaml:  ir{i}_curve: [{new[0]:.2f}, {new[1]:.3f}]")
-        log.write(where, f'ir{i} fit', ' '.join(f'{d:g}' for _, d in points) + ' cm', None, None, None, '',
-                  f'curve a={new[0]:.3f} b={new[1]:.4f} (was {old[i][0]}, {old[i][1]})')
+        if i not in reported:
+            print()
+            report(where, old, i, points)
     return 0
 
 
