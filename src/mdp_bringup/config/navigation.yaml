@@ -203,8 +203,11 @@ task2_runner:
     # parallel to the centre line, lane_offset to the side.
     swerve_early_dist: 0.90    # m
     swerve_trigger_dist: 0.45  # m
-    lane_offset: 0.25          # m, checkpoint 1 (beside obstacle 1) out from the centre line
-    side_clearance: 0.25       # m, checkpoints 2 and 3 out from obstacle 2's ends
+    lane_offset: 0.28          # m, checkpoint 1 (beside obstacle 1) out from the centre line. Was 0.25:
+                               # planned 9.6 cm past obstacle 1, the car cut ~3 cm more and IR1 read
+                               # it 8.5 cm away (car 2026-10-14); 0.28: 12.4 cm, and leg 1 (d2 = 0.6)
+                               # no longer reverses. 0.30: 14 cm but 2.7 s to plan; 0.33 squeezes the bar
+    side_clearance: 0.28       # m, checkpoints 2 and 3 out from obstacle 2's ends (was 0.25, as lane_offset)
     home_stop_dist: 0.12       # m, ultrasonic reading of the carpark's back wall = stop
     home_straight_dist: 0.45   # m, on the centre line before home: the car lines up this far out
     home_margin: 0.08          # m of extra room either side on the way home (it passes obstacle 1;
@@ -218,6 +221,10 @@ task2_runner:
     path_tracking: lqr         # pure_pursuit | lqr (task1_runner follower.* has the lqr weights)
     pose_latency: 0.09         # s, the EKF pose's delay the follower allows for (task 1: 0.06)
                                # (sim 2026-10-10 with these four: 8.4-10.8 s, closest gap 8.8 cm over 4 layouts)
+    ir_fix: true               # IR position fixes past obstacle 1's side and the bar's ends (live;
+                               # false = dead reckoning only, e.g. to test without the IRs)
+    obstacle_padding: 0.06     # m kept between the car's outline and the obstacles when planning,
+                               # task 2 only (task 1: costmap.footprint_padding)
 
 # The tablet's arrow buttons (f b fl fr bl br): a short burst, then stop.
 # Every node loading this file gets them - manual_drive (task 0) and
