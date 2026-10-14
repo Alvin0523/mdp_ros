@@ -22,7 +22,8 @@ serial_bridge_node:            # STM32 (real robot only)
     # repeatable (IR1 [6.21, 1.210] / [6.25, 1.210]), fitted on both together.
     #   IR1 within 1.0 cm at 13-25 cm, 0.0 at 19 (the scan-stop gap); 2.9 at 40.
     #   IR2 within 0.4 cm at 13-25 cm; 1.4 at 40.
-    # (The STM32's own 6.30 / x^1.226 is 0.5-1.6 / 1.0-1.1 cm off at 13-25 cm.)
+    # (The generic 6.30 / x^1.226 is 0.5-1.6 / 1.0-1.1 cm off at 13-25 cm.)
+    # The ONLY copy: the STM32 sends raw (mean of 8 conversions), its OLED shows raw.
     ir1_curve: [6.23, 1.210]   # IR1, /ir, PC2 (rear)
     ir2_curve: [6.53, 1.157]   # IR2, /ir2, PC1 (front)
     ir_min_cm: 4.0             # clamp (Sharp readings are unreliable below ~7 cm)
