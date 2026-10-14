@@ -136,7 +136,10 @@
   <!-- HC-SR04 ultrasonic, front centre, looking forward (+x). Its range is
        measured from here: task2_runner adds this offset to find the obstacle.
        Right on top of the chassis at its front (2026-10-08): the chassis top is
-       69 mm above the table (base_link mesh), the 20 mm board's centre 79 mm. -->
+       69 mm above the table (base_link mesh), the 20 mm board's centre 79 mm.
+       The transducers' fronts (this link) stick out 13 mm past the chassis
+       front, which is 199 mm ahead of the rear axle (measured 2026-10-14; was
+       190 mm, 22 mm short - every obstacle distance was off by that). -->
   <link name="ultrasonic_link">
     <!-- HC-SR04 look-alike: 45 x 20 mm board, two 16 mm transducers facing +x. -->
     <visual>
@@ -156,7 +159,7 @@
     </visual>
   </link>
   <joint name="ultrasonic_joint" type="fixed">
-    <origin xyz="0.19 0 ${0.079 - wheel_radius}" rpy="0 0 0"/>
+    <origin xyz="${0.199 + 0.013} 0 ${0.079 - wheel_radius}" rpy="0 0 0"/>
     <parent link="base_link"/>
     <child link="ultrasonic_link"/>
   </joint>
@@ -190,12 +193,14 @@
     <xacro:sharp_ir name="ir" x="-0.0315"/>   <!-- IR1, /ir: the rear one -->
     <xacro:sharp_ir name="ir2" x="0.041"/>    <!-- IR2, /ir2: the front one -->
   </xacro:if>
-  <!-- Task 2 (2026-10-10, not measured yet): one IR each side at the front axle, looking
-       out - IR1 right, IR2 left - for the sides of obstacle 1 and the bar's ends.
-       Same height and 62 mm out as task 1; the beam passes over the front tyres. -->
+  <!-- Task 2: one IR each side near the front, looking out - IR1 right, IR2 left -
+       for the sides of obstacle 1 and the bar's ends. Measured on the car
+       2026-10-14: centres 50 mm behind the chassis front (199 mm ahead of the
+       rear axle), faces 13 mm out from the chassis' 80 mm wide front (CAD:
+       40 mm each side). Height as task 1, not measured. -->
   <xacro:if value="${'$(arg task)' == '2'}">
-    <xacro:sharp_ir name="ir" x="${wheelbase}" y="-0.062" yaw="${-pi / 2}"/>   <!-- IR1, /ir: right -->
-    <xacro:sharp_ir name="ir2" x="${wheelbase}" y="0.062"/>                    <!-- IR2, /ir2: left -->
+    <xacro:sharp_ir name="ir" x="${0.199 - 0.050}" y="${-(0.040 + 0.013)}" yaw="${-pi / 2}"/>   <!-- IR1, /ir: right -->
+    <xacro:sharp_ir name="ir2" x="${0.199 - 0.050}" y="${0.040 + 0.013}"/>                      <!-- IR2, /ir2: left -->
   </xacro:if>
 
   <!-- Raspberry Pi Camera v2 (25 x 24 mm board, 9 mm deep). Looks along this

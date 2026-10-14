@@ -197,9 +197,9 @@ class Task2Runner(RunnerBase):
                 tf = self.tf_buffer.lookup_transform('base_link', 'ultrasonic_link', rclpy.time.Time())
                 self.us_offset = tf.transform.translation.x
             except tf2_ros.TransformException:
-                self.get_logger().warn("PLAN      no base_link -> ultrasonic_link transform - assuming 0.19 m",
+                self.get_logger().warn("PLAN      no base_link -> ultrasonic_link transform - assuming 0.212 m (URDF)",
                                        throttle_duration_sec=5.0)
-                return 0.19
+                return 0.212
         return self.us_offset
 
     def sensors(self):
