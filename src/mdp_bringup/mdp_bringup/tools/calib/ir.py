@@ -4,12 +4,12 @@ the ir1_curve / ir2_curve in config/bridges.yaml (serial bridge).
     pixi run calib ir                          IR1 then IR2, 10/15/20/25/30/40 cm
     pixi run calib ir --sensors 2              IR2 only
     pixi run calib ir --distances 10 20 30     other distances (cm)
-    pixi run calib ir --wait 15                more time to move the block (s)
+    pixi run calib ir --wait 10                a 10 s countdown instead of Enter
 
 HOW: the car stands still with the stack up (pixi run pi / pi-solo). For every
 sensor and distance it says where to put the block - a flat face square to the
-beam, the distance measured from the SENSOR'S FACE - counts down --wait seconds
-while you move it, then samples the raw reading (/ir/raw, /ir2/raw) for
+beam, the distance measured from the SENSOR'S FACE - waits for Enter once it
+is placed (or counts down --wait seconds), then samples the raw reading (/ir/raw, /ir2/raw) for
 --sample seconds. At the end, per sensor: the new curve, the error at each
 distance with the curve now in bridges.yaml and with the new one, and the line
 to paste into bridges.yaml. Nothing is changed for you; every point goes into
@@ -88,7 +88,8 @@ def main():
     ap.add_argument('--sensors', type=int, nargs='+', default=[1, 2], choices=[1, 2])
     ap.add_argument('--distances', type=float, nargs='+', default=[10, 15, 20, 25, 30, 40],
                     help='cm from the sensor face to the block (default 10 15 20 25 30 40)')
-    ap.add_argument('--wait', type=float, default=10.0, help='s to move the block before each sample (default 10)')
+    ap.add_argument('--wait', type=float, default=0.0,
+                    help='s countdown to move the block before each sample (default 0: press Enter when it is placed)')
     ap.add_argument('--sample', type=float, default=3.0, help='s of readings per distance (default 3)')
     a, ros_args = ap.parse_known_args()
 
@@ -111,9 +112,13 @@ def main():
             points = []
             for d in a.distances:
                 print(f"\n{NAMES[i]}: put the block at {d:g} cm from the sensor face (flat face, square on)")
-                for left in range(int(a.wait), 0, -1):
-                    print(f"  sampling in {left:2d} s ", end='\r', flush=True)
-                    sampler.spin_for(1.0)
+                if a.wait > 0:
+                    for left in range(int(a.wait), 0, -1):
+                        print(f"  sampling in {left:2d} s ", end='\r', flush=True)
+                        sampler.spin_for(1.0)
+                else:
+                    input("  press Enter when it is in place (Ctrl+C: stop and fit what was measured) ")
+                    sampler.spin_for(0.5)    # readings queued while waiting (block still moving) are dropped
                 raws = sampler.sample(i, a.sample)
                 if not raws:
                     print(f"  no readings - skipped {d:g} cm")
