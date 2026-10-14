@@ -367,6 +367,7 @@ class Task2Runner(RunnerBase):
             return
         self.known_layout = known
         self.pre = None                  # plan checkpoint 1 again from the known layout
+        self.x1_seen = None              # show_obstacle_1() draws it, the bar too (publish_map)
         x1, x2, a1, a2 = known
         self.get_logger().info(f"SETUP     known: obstacle 1 at ({markers.cell(x1)},{markers.cell(TASK2_CENTRE_Y)}) "
                                f"{a1}, bar at ({markers.cell(x2)},{markers.cell(TASK2_CENTRE_Y)}) {a2}"
@@ -458,25 +459,33 @@ class Task2Runner(RunnerBase):
         """Before GO: once the ultrasonic sees obstacle 1 and YOLO has read arrow 1,
         plan home -> beside obstacle 1 (again if either changes)."""
         arrow, x1 = self.arrow(0), self.home_x1()
-        if arrow is None or x1 is None:
+        # No pose yet (just after a reset): planning from (0, 0) outside the course
+        # searched max_planning_time (60 s) for nothing - car 2026-10-14, with setup.
+        if arrow is None or x1 is None or not self.have_pose:
             return
         pre = self.pre
-        if pre and (pre.get('planning') or (pre['arrow'] == arrow and abs(pre['x1'] - x1) < 0.03)):
+        # A failed plan is tried again (from the pose now), a found one only if the layout changes.
+        if pre and (pre.get('planning') or (pre['path'] and pre['arrow'] == arrow and abs(pre['x1'] - x1) < 0.03)):
             return
         goal = (x1, TASK2_CENTRE_Y + SIDE[arrow] * float(self.p('lane_offset')), 0.0)
         self.pre = pre = {'arrow': arrow, 'x1': x1, 'goal': goal, 'path': None, 'planning': True}
         costmap = self.make_costmap(x1, None)
 
         def plan(start=tuple(self.current_pose)):
+            t0 = time.monotonic()
             pre['path'] = (self.lined_up_path(start, goal, costmap, float(self.p('line_up_dist')))
                            or plan_leg(costmap, start, goal))
             pre['planning'] = False
+            took = time.monotonic() - t0
             if pre['path']:
                 self.lane_waypoint = goal
                 self.path_pub.publish(markers.route_path([pre['path']], self.stamp()))
                 self.publish_waypoints()
                 self.get_logger().info(f"PLAN      home -> beside obstacle 1 {self.fmt(goal)} (arrow 1 {arrow})"
-                                       f" - ready for GO")
+                                       f" - ready for GO ({took:.1f} s)")
+            else:
+                self.get_logger().warn(f"PLAN      NO PATH home -> beside obstacle 1 from {self.fmt(start)} "
+                                       f"after {took:.1f} s - trying again")
         threading.Thread(target=plan, daemon=True).start()
 
     def geometric_leg(self, idx, start, target, costmap):
@@ -985,12 +994,14 @@ class Task2Runner(RunnerBase):
             stamp, size=TASK2_AREA_M, start_box=(back, cy - half, self.arena.opening_x, cy + half)))
         blocks, sizes, labels = [], [], []
         x1 = self.x1 if self.x1 is not None else self.x1_seen
-        for i, (x, size) in enumerate(((x1, self.arena.obstacle_1_size), (self.x2, self.arena.obstacle_2_size))):
+        # The bar is drawn once measured - or at once when `pixi run setup` gave it.
+        x2 = self.x2 if self.x2 is not None else (self.known()[1] if self.known() else None)
+        for i, (x, size) in enumerate(((x1, self.arena.obstacle_1_size), (x2, self.arena.obstacle_2_size))):
             if x is not None:
                 blocks.append((x, cy, 'W'))
                 sizes.append(size[:2])
                 labels.append(str(i + 1))
-        walls = self.arena.carpark_walls() + (self.arena.side_walls(self.x2) if self.x2 is not None else [])
+        walls = self.arena.carpark_walls() + (self.arena.side_walls(x2) if x2 is not None else [])
         self.obstacle_pub.publish(markers.obstacle_markers(blocks, labels, stamp, sizes=sizes, walls=walls))
         if self.costmap is not None:
             self.grid_pub.publish(markers.costmap_grid(self.costmap, stamp))
