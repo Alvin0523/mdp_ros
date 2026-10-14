@@ -37,6 +37,7 @@ from the known bar. Kept across resets, like task 1's set. Served by the
 laptop's task1_planner (role:=pi) or by this node (serve_setup).
 """
 
+import dataclasses
 import math
 import statistics
 import threading
@@ -83,10 +84,6 @@ BRAKE_RESPONSE_S = 0.15       # s for the wheels' speed to follow a slower comma
 IN_CARPARK_MARGIN_M = 0.02    # m: the whole outline this far inside the carpark's walls = home
 NO_BAR_LIMIT_M = 0.35         # m past obstacle 1's centre without obstacle 2 seen: stop (the
                               # bar's face can be 0.65 m past it, the car's nose is 0.2 m ahead)
-# TEMP 2026-10-14: dead-reckoning smoke test on the car, IRs not set up yet - no IR
-# position fixes (watch_face) and no slowing to ir_pass_speed past the faces.
-# Set back to True once the IRs are mounted and calibrated.
-IR_FIX = False
 
 
 class State(Enum):
@@ -107,6 +104,10 @@ class Task2Runner(RunnerBase):
         # straight_speed, path_speed, swerve_trigger_dist, lane_offset, side_clearance,
         # home_stop_dist, ...: config/navigation.yaml (live).
         config.declare(self, 'task2_runner')
+        # Task 2's own margin round the obstacles (obstacle_padding) in place of the shared
+        # costmap.footprint_padding - this process only, so task 1 keeps its own.
+        planner_params.configure(dataclasses.replace(
+            planner_params.ACTIVE, footprint_padding=float(self.p('obstacle_padding'))))
         layout = self.declare_parameter(
             'layout', f"{get_package_share_directory('mdp_bringup')}/config/tasks.yaml").value
         self.arena = obstacle_layout.load_task2(layout)
@@ -215,7 +216,7 @@ class Task2Runner(RunnerBase):
 
     def watch_face(self, label, x0, x1, face_y, out, at, use_along=True):
         """Fix the position with whichever IR looks at this face when the car is at `at`."""
-        if not IR_FIX:
+        if not self.p('ir_fix'):         # navigation.yaml task2_runner ir_fix (live)
             return
         for name, sensor in self.sensors().items():
             fp = FacePass(label, x0, x1, face_y, out, sensor, use_along)
