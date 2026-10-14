@@ -472,6 +472,7 @@ def generate_launch_description(argv=None):
     elif task == '2':
         actions.append(Node(
             package='mdp_bringup', executable='task2_runner', output='screen',
-            parameters=[navigation, {'layout': layout, 'serve_setup': role != 'pi'}, sim_time]))
+            parameters=[navigation, {'layout': layout, 'serve_setup': role != 'pi', 'start_x': start_x,
+                                     'start_y': start_y, 'start_yaw': start_yaw}, sim_time]))
 
     return LaunchDescription(declared + actions)

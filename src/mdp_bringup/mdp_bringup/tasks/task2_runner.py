@@ -123,6 +123,11 @@ class Task2Runner(RunnerBase):
         self.car = planner_params.ACTIVE          # URDF + navigation.yaml (robot.*, follower.*)
         car_centre_ahead = (self.car.footprint_front - self.car.footprint_rear) / 2.0
         self.home = self.arena.car_pose_centred(car_centre_ahead, math.pi)
+        # Where every run starts (the launch's start pose: the carpark, facing out) - the
+        # path to checkpoint 1 is planned from here, like task 1, not from the live pose.
+        default = self.arena.car_pose_centred(car_centre_ahead, 0.0)
+        self.start = tuple(float(self.declare_parameter(n, v).value)
+                           for n, v in zip(('start_x', 'start_y', 'start_yaw'), default))
 
         # (/cmd_vel, /run_status, the Foxglove drawings, /start_run ...: RunnerBase)
         self.create_subscription(Range, '/ultrasonic', self.ultrasonic_callback, 10)
@@ -160,8 +165,11 @@ class Task2Runner(RunnerBase):
         self.leg_paths = []
         self.leg = 0
         self.costmap = None
-        self.pre = None                  # the path home -> beside obstacle 1, planned before GO
-        self.lane_waypoint = None        # checkpoint 1, beside obstacle 1
+        # The path start -> beside obstacle 1, planned before GO from self.start. With the
+        # setup layout it stays planned across resets (a reset only puts the pose back).
+        pre = getattr(self, 'pre', None)
+        self.pre = pre if self.known_layout and pre and pre.get('path') else None
+        self.lane_waypoint = self.pre['goal'] if self.pre else None   # checkpoint 1, beside obstacle 1
         self.x1_seen = None              # obstacle 1 as the ultrasonic sees it from home (drawn)
         self.passes = []                 # (sensor name, FacePass) - faces the IRs are watching for
         self._plan_gen = getattr(self, '_plan_gen', 0) + 1
@@ -392,7 +400,10 @@ class Task2Runner(RunnerBase):
             self.get_logger().warn("RESET     during a run - stopping it")
         self.reset_run()
         self.publish_map()
-        self.get_logger().info("RESET     ready - waiting for GO")
+        if self.pre:                     # the setup layout's plan, kept: show it again
+            self.path_pub.publish(markers.route_path([self.pre['path']], self.stamp()))
+            self.publish_waypoints()
+        self.get_logger().info("RESET     ready - waiting for GO" + (" (planned)" if self.pre else ""))
 
     # -------------------------------------------------------------- control ----
 
@@ -456,12 +467,10 @@ class Task2Runner(RunnerBase):
             self.publish_map()
 
     def preplan(self):
-        """Before GO: once the ultrasonic sees obstacle 1 and YOLO has read arrow 1,
-        plan home -> beside obstacle 1 (again if either changes)."""
+        """Before GO: once obstacle 1 and arrow 1 are known (setup, or the ultrasonic
+        and YOLO), plan start -> beside obstacle 1 (again if either changes)."""
         arrow, x1 = self.arrow(0), self.home_x1()
-        # No pose yet (just after a reset): planning from (0, 0) outside the course
-        # searched max_planning_time (60 s) for nothing - car 2026-10-14, with setup.
-        if arrow is None or x1 is None or not self.have_pose:
+        if arrow is None or x1 is None:
             return
         pre = self.pre
         # A failed plan is tried again (from the pose now), a found one only if the layout changes.
@@ -471,7 +480,10 @@ class Task2Runner(RunnerBase):
         self.pre = pre = {'arrow': arrow, 'x1': x1, 'goal': goal, 'path': None, 'planning': True}
         costmap = self.make_costmap(x1, None)
 
-        def plan(start=tuple(self.current_pose)):
+        # From the start pose, like task 1 - not the live pose: just after a reset that is
+        # (0, 0) outside the course, and Hybrid A* searched max_planning_time (60 s) for
+        # nothing (car 2026-10-14, with setup).
+        def plan(start=self.start):
             t0 = time.monotonic()
             pre['path'] = (self.lined_up_path(start, goal, costmap, float(self.p('line_up_dist')))
                            or plan_leg(costmap, start, goal))
@@ -481,10 +493,10 @@ class Task2Runner(RunnerBase):
                 self.lane_waypoint = goal
                 self.path_pub.publish(markers.route_path([pre['path']], self.stamp()))
                 self.publish_waypoints()
-                self.get_logger().info(f"PLAN      home -> beside obstacle 1 {self.fmt(goal)} (arrow 1 {arrow})"
+                self.get_logger().info(f"PLAN      start -> beside obstacle 1 {self.fmt(goal)} (arrow 1 {arrow})"
                                        f" - ready for GO ({took:.1f} s)")
             else:
-                self.get_logger().warn(f"PLAN      NO PATH home -> beside obstacle 1 from {self.fmt(start)} "
+                self.get_logger().warn(f"PLAN      NO PATH start -> beside obstacle 1 from {self.fmt(start)} "
                                        f"after {took:.1f} s - trying again")
         threading.Thread(target=plan, daemon=True).start()
 
