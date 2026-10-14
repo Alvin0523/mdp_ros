@@ -1,0 +1,27 @@
+"""`pixi run setup` for task 2: tasks.yaml's task2 sim layout survives the trip
+over /task2_setup, and lands where the Gazebo arena puts the obstacles."""
+from pathlib import Path
+
+import pytest
+
+from mdp_bringup.utils import obstacle_layout
+
+TASKS_YAML = Path(__file__).resolve().parents[1] / 'config' / 'tasks.yaml'
+
+
+def test_round_trip_matches_the_sim_arena():
+    x1, x2, a1, a2 = obstacle_layout.from_task2_setup(obstacle_layout.task2_setup_string(str(TASKS_YAML)))
+    _, _, (sim_x1, sim_x2) = obstacle_layout.task2_sim(str(TASKS_YAML))
+    assert x1 == pytest.approx(sim_x1, abs=1e-3)
+    assert x2 == pytest.approx(sim_x2, abs=1e-3)
+    assert {a1, a2} <= {'LEFT', 'RIGHT'}
+
+
+def test_parses_a_hand_written_message():
+    assert obstacle_layout.from_task2_setup('1:0.75,left|2:1.45,RIGHT') == (0.75, 1.45, 'LEFT', 'RIGHT')
+
+
+@pytest.mark.parametrize('bad', ['', '1:0.75,LEFT', '1:0.75,UP|2:1.45,RIGHT', '1:x,LEFT|2:1.45,RIGHT'])
+def test_rejects_malformed(bad):
+    with pytest.raises((ValueError, KeyError)):
+        obstacle_layout.from_task2_setup(bad)

@@ -27,8 +27,14 @@ known in advance, so the car measures them with the front ultrasonic:
 
 Frame (`map`): the task 2 course, x along it, centre line y = 1.2 m - see
 utils/obstacle_layout.py. The course rules (carpark, obstacle sizes) come from
-config/tasks.yaml task2; its `sim` layout is NOT read here. Settings:
-config/navigation.yaml task2_runner. Drawn in Foxglove like task 1.
+config/tasks.yaml task2. Settings: config/navigation.yaml task2_runner. Drawn
+in Foxglove like task 1.
+
+`pixi run setup` (Foxglove SETUP): tasks.yaml's task2 `sim` layout arrives on
+/task2_setup - both obstacles and arrows KNOWN, so no ultrasonic measuring and
+no YOLO: checkpoint 1 is planned before GO and checkpoints 2-4 at checkpoint 1
+from the known bar. Kept across resets, like task 1's set. Served by the
+laptop's task1_planner (role:=pi) or by this node (serve_setup).
 """
 
 import math
@@ -46,6 +52,7 @@ from ament_index_python.packages import get_package_share_directory
 from mdp_interfaces.msg import RunStatus
 from sensor_msgs.msg import Range
 from std_msgs.msg import String
+from std_srvs.srv import Trigger
 
 from mdp_algorithm.control.path_follower import PathFollower, yaw_from_quaternion
 from mdp_algorithm.planning.costmap import Costmap, Obstacle
@@ -76,6 +83,10 @@ BRAKE_RESPONSE_S = 0.15       # s for the wheels' speed to follow a slower comma
 IN_CARPARK_MARGIN_M = 0.02    # m: the whole outline this far inside the carpark's walls = home
 NO_BAR_LIMIT_M = 0.35         # m past obstacle 1's centre without obstacle 2 seen: stop (the
                               # bar's face can be 0.65 m past it, the car's nose is 0.2 m ahead)
+# TEMP 2026-10-14: dead-reckoning smoke test on the car, IRs not set up yet - no IR
+# position fixes (watch_face) and no slowing to ir_pass_speed past the faces.
+# Set back to True once the IRs are mounted and calibrated.
+IR_FIX = False
 
 
 class State(Enum):
@@ -99,9 +110,24 @@ class Task2Runner(RunnerBase):
         layout = self.declare_parameter(
             'layout', f"{get_package_share_directory('mdp_bringup')}/config/tasks.yaml").value
         self.arena = obstacle_layout.load_task2(layout)
+        self.layout = layout
+        # (x1, x2, arrow 1, arrow 2) from `pixi run setup`, None = measure them. Not
+        # cleared by reset_run(): a reset readies the same layout for the next run.
+        self.known_layout = None
+        self.create_subscription(String, '/task2_setup', self.task2_setup_callback, 10)
+        self.task2_setup_pub = self.create_publisher(String, '/task2_setup', 10)
+        # With a laptop (role:=pi) its task1_planner serves /setup_obstacles from the
+        # laptop's tasks.yaml, for both tasks; alone, this node does.
+        if self.declare_parameter('serve_setup', True).value:
+            self.create_service(Trigger, '/setup_obstacles', self.setup_obstacles_callback)
         self.car = planner_params.ACTIVE          # URDF + navigation.yaml (robot.*, follower.*)
         car_centre_ahead = (self.car.footprint_front - self.car.footprint_rear) / 2.0
         self.home = self.arena.car_pose_centred(car_centre_ahead, math.pi)
+        # Where every run starts (the launch's start pose: the carpark, facing out) - the
+        # path to checkpoint 1 is planned from here, like task 1, not from the live pose.
+        default = self.arena.car_pose_centred(car_centre_ahead, 0.0)
+        self.start = tuple(float(self.declare_parameter(n, v).value)
+                           for n, v in zip(('start_x', 'start_y', 'start_yaw'), default))
 
         # (/cmd_vel, /run_status, the Foxglove drawings, /start_run ...: RunnerBase)
         self.create_subscription(Range, '/ultrasonic', self.ultrasonic_callback, 10)
@@ -139,8 +165,11 @@ class Task2Runner(RunnerBase):
         self.leg_paths = []
         self.leg = 0
         self.costmap = None
-        self.pre = None                  # the path home -> beside obstacle 1, planned before GO
-        self.lane_waypoint = None        # checkpoint 1, beside obstacle 1
+        # The path start -> beside obstacle 1, planned before GO from self.start. With the
+        # setup layout it stays planned across resets (a reset only puts the pose back).
+        pre = getattr(self, 'pre', None)
+        self.pre = pre if self.known_layout and pre and pre.get('path') else None
+        self.lane_waypoint = self.pre['goal'] if self.pre else None   # checkpoint 1, beside obstacle 1
         self.x1_seen = None              # obstacle 1 as the ultrasonic sees it from home (drawn)
         self.passes = []                 # (sensor name, FacePass) - faces the IRs are watching for
         self._plan_gen = getattr(self, '_plan_gen', 0) + 1
@@ -186,6 +215,8 @@ class Task2Runner(RunnerBase):
 
     def watch_face(self, label, x0, x1, face_y, out, at, use_along=True):
         """Fix the position with whichever IR looks at this face when the car is at `at`."""
+        if not IR_FIX:
+            return
         for name, sensor in self.sensors().items():
             fp = FacePass(label, x0, x1, face_y, out, sensor, use_along)
             if fp.beam(at) is not None:
@@ -249,7 +280,13 @@ class Task2Runner(RunnerBase):
         x, _, yaw = self.current_pose
         return x + math.cos(yaw) * (self.ultrasonic_offset() + reading) + depth / 2.0
 
+    def known(self):
+        """(x1, x2, arrow 1, arrow 2) from `pixi run setup`, or None (measure them)."""
+        return self.known_layout
+
     def arrow(self, i: int):
+        if self.known():
+            return self.known()[2 + i]
         counts = self.arrow_counts[i]
         return counts.most_common(1)[0][0] if counts else None
 
@@ -299,13 +336,50 @@ class Task2Runner(RunnerBase):
             response.message = "Not ready: no pose from the EKF yet."
             self.get_logger().warn(f"`go` rejected: {response.message}")
             return response
+        if response.success and self.known() and not (self.pre and self.pre.get('legs')):
+            # Without the plan GO would drive APPROACH_1: straight on until the ultrasonic sees obstacle 1.
+            response.success, response.message = False, "Not ready: the setup layout's 4 legs are not planned yet."
+            self.get_logger().warn(f"`go` rejected: {response.message}")
+            return response
         if response.success:
             self.go_received = True
-            response.message = "Run started - task 2."
+            response.message = "Run started - task 2" + (" (setup layout)." if self.known() else ".")
         else:
             response.message = f"Ignored: {self.state.name} - reset (pixi run reset) to run again."
             self.get_logger().warn(f"`go` rejected: {response.message}")
         return response
+
+    def setup_obstacles_callback(self, request, response):
+        """/setup_obstacles without a laptop: this machine's task2 layout on /task2_setup."""
+        try:
+            data = obstacle_layout.task2_setup_string(self.layout)
+        except (OSError, ValueError, KeyError) as exc:
+            response.success, response.message = False, f'no task 2 layout in {self.layout} ({exc})'
+            self.get_logger().warn(f"SETUP     {response.message}")
+            return response
+        self.task2_setup_pub.publish(String(data=data))
+        response.success, response.message = True, f'task 2 layout from {self.layout}'
+        return response
+
+    def task2_setup_callback(self, msg: String):
+        """Both obstacles and arrows known (pixi run setup): no measuring this run."""
+        if self.state not in (State.WAITING_FOR_GO, State.FINISHED, State.STOPPED):
+            self.get_logger().warn(f"SETUP     ignored during the run ({self.state.name})")
+            return
+        try:
+            known = obstacle_layout.from_task2_setup(msg.data)
+        except (ValueError, KeyError) as exc:
+            self.get_logger().warn(f"SETUP     bad /task2_setup {msg.data!r}: {exc}")
+            return
+        if known == self.known_layout:
+            return
+        self.known_layout = known
+        self.pre = None                  # plan checkpoint 1 again from the known layout
+        self.x1_seen = None              # show_obstacle_1() draws it, the bar too (publish_map)
+        x1, x2, a1, a2 = known
+        self.get_logger().info(f"SETUP     known: obstacle 1 at ({markers.cell(x1)},{markers.cell(TASK2_CENTRE_Y)}) "
+                               f"{a1}, bar at ({markers.cell(x2)},{markers.cell(TASK2_CENTRE_Y)}) {a2}"
+                               f" - no ultrasonic / YOLO needed")
 
     def stop_run_callback(self, request, response):
         self._plan_gen += 1
@@ -326,7 +400,11 @@ class Task2Runner(RunnerBase):
             self.get_logger().warn("RESET     during a run - stopping it")
         self.reset_run()
         self.publish_map()
-        self.get_logger().info("RESET     ready - waiting for GO")
+        if self.pre:                     # the setup layout's plan, kept: show it again
+            self.waypoints = list(self.pre.get('waypoints', []))
+            self.path_pub.publish(markers.route_path([self.pre['path']] + self.pre.get('legs', []), self.stamp()))
+            self.publish_waypoints()
+        self.get_logger().info("RESET     ready - waiting for GO" + (" (planned)" if self.pre else ""))
 
     # -------------------------------------------------------------- control ----
 
@@ -370,41 +448,84 @@ class Task2Runner(RunnerBase):
                                f"driving on until it is")
         self.set_state(State.APPROACH_1)
 
-    def show_obstacle_1(self):
-        """At home: draw obstacle 1 and its costmap as soon as the ultrasonic reads it."""
+    def home_x1(self):
+        """Obstacle 1's centre as seen from home (the ultrasonic, or the setup layout), or None."""
+        if self.known():
+            return self.known()[0]
         r = self.fresh_range()
         if r is None or not (US_VALID[0] <= r <= US_VALID[1]):
+            return None
+        return self.ahead_x(r, self.arena.obstacle_1_size[0])
+
+    def show_obstacle_1(self):
+        """At home: draw obstacle 1 and its costmap as soon as the ultrasonic reads it."""
+        x1 = self.home_x1()
+        if x1 is None:
             return
-        x1 = self.ahead_x(r, self.arena.obstacle_1_size[0])
         if self.x1_seen is None or abs(self.x1_seen - x1) > 0.03:
             self.x1_seen = x1
             self.costmap = self.make_costmap(x1, None)
             self.publish_map()
 
     def preplan(self):
-        """Before GO: once the ultrasonic sees obstacle 1 and YOLO has read arrow 1,
-        plan home -> beside obstacle 1 (again if either changes)."""
-        arrow, r = self.arrow(0), self.fresh_range()
-        if arrow is None or r is None or not (US_VALID[0] <= r <= US_VALID[1]):
+        """Before GO: once obstacle 1 and arrow 1 are known (setup, or the ultrasonic
+        and YOLO), plan start -> beside obstacle 1 (again if either changes). With the
+        setup layout obstacle 2 is known too: the legs to checkpoints 2, 3, 4 as well,
+        all before GO - planned at checkpoint 1 at 0.9 m/s, the Hybrid A* leg came too
+        late on the busy Pi and the car rolled 0.5 m into the bar (car 2026-10-14)."""
+        arrow, x1 = self.arrow(0), self.home_x1()
+        if arrow is None or x1 is None:
             return
-        x1 = self.ahead_x(r, self.arena.obstacle_1_size[0])
-        pre = self.pre
-        if pre and (pre.get('planning') or (pre['arrow'] == arrow and abs(pre['x1'] - x1) < 0.03)):
+        known, pre = self.known(), self.pre
+        # A failed plan is tried again, a found one only if the layout changes.
+        done = pre and pre['path'] and (pre.get('legs') or not known)
+        if pre and (pre.get('planning') or (done and pre['arrow'] == arrow and abs(pre['x1'] - x1) < 0.03)):
             return
         goal = (x1, TASK2_CENTRE_Y + SIDE[arrow] * float(self.p('lane_offset')), 0.0)
         self.pre = pre = {'arrow': arrow, 'x1': x1, 'goal': goal, 'path': None, 'planning': True}
         costmap = self.make_costmap(x1, None)
 
-        def plan(start=tuple(self.current_pose)):
-            pre['path'] = (self.lined_up_path(start, goal, costmap, float(self.p('line_up_dist')))
-                           or plan_leg(costmap, start, goal))
-            pre['planning'] = False
-            if pre['path']:
+        # From the start pose, like task 1 - not the live pose: just after a reset that is
+        # (0, 0) outside the course, and Hybrid A* searched max_planning_time (60 s) for
+        # nothing (car 2026-10-14, with setup).
+        def plan(start=self.start):
+            t0 = time.monotonic()
+            try:
+                pre['path'] = (self.lined_up_path(start, goal, costmap, float(self.p('line_up_dist')))
+                               or plan_leg(costmap, start, goal))
+                if not pre['path']:
+                    self.get_logger().warn(f"PLAN      NO PATH start -> beside obstacle 1 from {self.fmt(start)} "
+                                           f"after {time.monotonic() - t0:.1f} s - trying again")
+                    return
                 self.lane_waypoint = goal
                 self.path_pub.publish(markers.route_path([pre['path']], self.stamp()))
                 self.publish_waypoints()
-                self.get_logger().info(f"PLAN      home -> beside obstacle 1 {self.fmt(goal)} (arrow 1 {arrow})"
-                                       f" - ready for GO")
+                if not known:
+                    self.get_logger().info(f"PLAN      start -> beside obstacle 1 {self.fmt(goal)} (arrow 1 {arrow})"
+                                           f" - ready for GO ({time.monotonic() - t0:.1f} s)")
+                    return
+                x2, arrow2 = known[1], known[3]
+                waypoints = self.bar_waypoints(x2, arrow2)
+                full = self.make_costmap(x1, x2)
+                legs, pose = [], goal
+                for idx, target in enumerate(waypoints):
+                    path = self.geometric_leg(idx, pose, target, full) or plan_leg(full, pose, target)
+                    if not path:
+                        self.get_logger().warn(f"PLAN      NO PATH to {self.names[idx]} {self.fmt(target)} - "
+                                               f"trying again")
+                        return
+                    legs.append(path)
+                    pose = target
+                pre.update(x2=x2, arrow2=arrow2, waypoints=waypoints, legs=legs)
+                self.waypoints = waypoints
+                self.path_pub.publish(markers.route_path([pre['path']] + legs, self.stamp()))
+                self.publish_waypoints()
+                self.get_logger().info(f"PLAN      all 4 legs (setup layout, arrows {arrow} / {arrow2})"
+                                       f" - ready for GO ({time.monotonic() - t0:.1f} s)")
+            except Exception:
+                self.get_logger().error(f"PLAN      crashed:\n{traceback.format_exc()}")
+            finally:
+                pre['planning'] = False
         threading.Thread(target=plan, daemon=True).start()
 
     def geometric_leg(self, idx, start, target, costmap):
@@ -559,6 +680,9 @@ class Task2Runner(RunnerBase):
     def read_obstacle_2(self):
         """One ultrasonic reading of obstacle 2 (its centre along the course), kept
         if it is beyond obstacle 1."""
+        if self.known():
+            self.lane_readings = [self.known()[1]]
+            return
         r = self.fresh_range(0.1)
         if r is not None and US_VALID[0] <= r <= US_VALID[1] and self.level_with_1(HEDGE_RAD + math.radians(4.0)):
             x2 = self.ahead_x(r, self.arena.obstacle_2_size[0])
@@ -651,6 +775,8 @@ class Task2Runner(RunnerBase):
         still missing: no stop - roll on, angled gently toward the centre line
         (hedge()), until it comes; arrow 2 still unread ARROW_2_DEADLINE_M from the
         bar: the nearer end."""
+        if self.pre and self.pre.get('legs'):
+            return self.follow_setup_legs()
         self.read_obstacle_2()
         if self.arrows[1] is None:
             self.arrows[1] = self.arrow(1)
@@ -670,10 +796,8 @@ class Task2Runner(RunnerBase):
             self.get_logger().warn(f"ARROW 2   not read {ARROW_2_DEADLINE_M:.1f} m from the bar - "
                                    f"taking the nearer end ({self.arrows[1]})")
         self.x2 = statistics.median(self.lane_readings)
-        s2 = SIDE[self.arrows[1]]
-        half2 = self.arena.obstacle_2_size[1] / 2.0 + float(self.p('side_clearance'))
         cy = TASK2_CENTRE_Y
-        self.waypoints = [(self.x2, cy + s2 * half2, 0.0), (self.x2, cy - s2 * half2, math.pi), self.home]
+        self.waypoints = self.bar_waypoints(self.x2, self.arrows[1])
         # Plan from where the car will be once the plan is ready (it rolls on meanwhile).
         x, y, _ = self.current_pose
         start = (x + abs(self._last_cmd[0]) * 0.15, y, 0.0)
@@ -697,6 +821,31 @@ class Task2Runner(RunnerBase):
         self.leg_paths = [None] * len(self.waypoints)
         threading.Thread(target=self.plan_legs, daemon=True,
                          args=(start, self._plan_gen, self.leg_paths, list(self.waypoints), self.costmap)).start()
+
+    def bar_waypoints(self, x2, arrow2):
+        """Checkpoints 2 (the bar's end on arrow 2's side), 3 (its other end, heading
+        back) and 4 (home)."""
+        s2 = SIDE[arrow2]
+        half2 = self.arena.obstacle_2_size[1] / 2.0 + float(self.p('side_clearance'))
+        cy = TASK2_CENTRE_Y
+        return [(x2, cy + s2 * half2, 0.0), (x2, cy - s2 * half2, math.pi), self.home]
+
+    def follow_setup_legs(self):
+        """At checkpoint 1 with the setup layout: checkpoints 2-4 and their legs were
+        all planned before GO (preplan) - nothing to compute while rolling."""
+        x2, arrow2 = self.pre['x2'], self.pre['arrow2']
+        self.x2, self.arrows[1] = x2, arrow2
+        self.waypoints = list(self.pre['waypoints'])
+        self.leg_paths = list(self.pre['legs'])
+        self.get_logger().info(f"OBSTACLE 2 at ({markers.cell(x2)},{markers.cell(TASK2_CENTRE_Y)}), arrow 2 {arrow2}"
+                               f" (setup) -> legs to checkpoints 2, 3, 4 planned before GO")
+        self.build_costmap()
+        self.publish_map()
+        self.watch_bar_ends()
+        self.leg, self.plan_start = 0, self.pre['goal']
+        self.set_state(State.FOLLOW)
+        self.publish_waypoints()
+        self.path_pub.publish(markers.route_path(self.leg_paths, self.stamp()))
 
     def hedge(self):
         """Roll on at path_speed, angled HEDGE_RAD toward the centre line (straight
@@ -910,12 +1059,14 @@ class Task2Runner(RunnerBase):
             stamp, size=TASK2_AREA_M, start_box=(back, cy - half, self.arena.opening_x, cy + half)))
         blocks, sizes, labels = [], [], []
         x1 = self.x1 if self.x1 is not None else self.x1_seen
-        for i, (x, size) in enumerate(((x1, self.arena.obstacle_1_size), (self.x2, self.arena.obstacle_2_size))):
+        # The bar is drawn once measured - or at once when `pixi run setup` gave it.
+        x2 = self.x2 if self.x2 is not None else (self.known()[1] if self.known() else None)
+        for i, (x, size) in enumerate(((x1, self.arena.obstacle_1_size), (x2, self.arena.obstacle_2_size))):
             if x is not None:
                 blocks.append((x, cy, 'W'))
                 sizes.append(size[:2])
                 labels.append(str(i + 1))
-        walls = self.arena.carpark_walls() + (self.arena.side_walls(self.x2) if self.x2 is not None else [])
+        walls = self.arena.carpark_walls() + (self.arena.side_walls(x2) if x2 is not None else [])
         self.obstacle_pub.publish(markers.obstacle_markers(blocks, labels, stamp, sizes=sizes, walls=walls))
         if self.costmap is not None:
             self.grid_pub.publish(markers.costmap_grid(self.costmap, stamp))

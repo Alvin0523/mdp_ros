@@ -1369,14 +1369,19 @@
                   "first": "CallService!t2_reset_pose",
                   "second": {
                     "direction": "row",
-                    "first": "CallService!t2_go",
+                    "first": "CallService!t2_setup",
                     "second": {
                       "direction": "row",
-                      "first": "CallService!t2_stop",
-                      "second": "CallService!t2_rec",
-                      "splitPercentage": 50
+                      "first": "CallService!t2_go",
+                      "second": {
+                        "direction": "row",
+                        "first": "CallService!t2_stop",
+                        "second": "CallService!t2_rec",
+                        "splitPercentage": 50
+                      },
+                      "splitPercentage": 33.333333333333336
                     },
-                    "splitPercentage": 33.333333333333336
+                    "splitPercentage": 25
                   },
                   "splitPercentage": 25
                 },
@@ -1438,6 +1443,16 @@
           }
         }
       ]
+    },
+    "CallService!t2_setup": {
+      "serviceName": "/setup_obstacles",
+      "requestPayload": "{}",
+      "buttonText": "SETUP",
+      "buttonColor": "#2e7d32",
+      "layout": "vertical",
+      "editingMode": false,
+      "timeoutSeconds": 10,
+      "foxglovePanelTitle": "Obstacle Setup"
     }
   },
   "globalVariables": {},

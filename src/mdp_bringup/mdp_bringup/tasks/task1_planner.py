@@ -18,8 +18,9 @@ on its own, and plans small re-plans itself. Without an ack within
 remote_plan_timeout the runner plans every leg itself (the Pi alone).
 
 It also serves /setup_obstacles (`pixi run setup`, Foxglove SETUP): the layout
-file HERE (config/tasks.yaml on the laptop) published on /obstacle_setup, as the
-tablet's DONE would. The runner on the Pi then serves none.
+file HERE (config/tasks.yaml on the laptop) - task 1's set on /obstacle_setup, as
+the tablet's DONE would, and task 2's known layout on /task2_setup. The runner on
+the Pi then serves none.
 """
 import json
 import threading
@@ -50,22 +51,36 @@ class Task1Planner(Node):
         self.lock = threading.Lock()
         self.layout = self.declare_parameter('layout', '').value
         self.setup_pub = self.create_publisher(String, '/obstacle_setup', 10)
+        self.task2_setup_pub = self.create_publisher(String, '/task2_setup', 10)
         self.create_service(Trigger, '/setup_obstacles', self.setup_obstacles)
-        self.get_logger().info('PLANNER   ready - planning task 1 legs for the car')
+        self.get_logger().info("PLANNER   ready - waiting for the car's plan requests")
 
     def setup_obstacles(self, request, response):
-        """/setup_obstacles: this machine's layout file, as if the tablet sent it."""
+        """/setup_obstacles: this machine's layout file, as if the tablet sent it -
+        task 1's set on /obstacle_setup AND task 2's on /task2_setup (the laptop
+        does not know which task the car runs; its runner takes its own)."""
+        sent = []
         try:
             obstacles = obstacle_layout.load(self.layout) if self.layout else []
         except (OSError, ValueError, KeyError) as exc:
             obstacles = []
-            self.get_logger().warn(f"SETUP     {self.layout}: {exc}")
-        if not obstacles:
-            response.success, response.message = False, f'no task 1 obstacles in {self.layout or "(no layout)"}'
-            return response
-        self.setup_pub.publish(String(data=obstacle_layout.setup_string(obstacles)))
-        self.get_logger().info(f"SETUP     sent {obstacle_layout.describe(obstacles)}")
-        response.success, response.message = True, f'{len(obstacles)} obstacles from {self.layout} (laptop)'
+            self.get_logger().warn(f"SETUP     task 1 {self.layout}: {exc}")
+        if obstacles:
+            self.setup_pub.publish(String(data=obstacle_layout.setup_string(obstacles)))
+            self.get_logger().info(f"SETUP     task 1 sent {obstacle_layout.describe(obstacles)}")
+            sent.append(f'task 1: {len(obstacles)} obstacles')
+        try:
+            task2 = obstacle_layout.task2_setup_string(self.layout) if self.layout else ''
+        except (OSError, ValueError, KeyError) as exc:
+            task2 = ''
+            self.get_logger().warn(f"SETUP     task 2 {self.layout}: {exc}")
+        if task2:
+            self.task2_setup_pub.publish(String(data=task2))
+            self.get_logger().info(f"SETUP     task 2 sent {task2}")
+            sent.append('task 2 layout')
+        response.success = bool(sent)
+        response.message = (f"{', '.join(sent)} from {self.layout} (laptop)" if sent
+                            else f'no layout in {self.layout or "(no layout)"}')
         return response
 
     def send(self, data: dict):
