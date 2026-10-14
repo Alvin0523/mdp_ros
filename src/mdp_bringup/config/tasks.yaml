@@ -49,5 +49,5 @@ task2:
     d1: 0.60            # carpark opening -> obstacle 1's near face, 0.60-1.50 m
     d2: 0.60            # obstacle 1's far face -> obstacle 2's near face, 0.60-1.50 m
     arrow_1: LEFT       # LEFT / RIGHT - which way round each obstacle
-    arrow_2: RIGHT
+    arrow_2: LEFT
     side_walls: true    # walls side_wall_clearance out from obstacle 2's ends
