@@ -43,7 +43,7 @@
 
     <!-- The carpark walls, both obstacles (with their arrows) and the optional
          side walls: inserted here by mdp.launch.py from mdp_bringup/config/tasks.yaml
-         (task2, its `sim` layout). -->
+         (task2, its `setup` layout). -->
     <!-- OBSTACLES -->
 
   </world>

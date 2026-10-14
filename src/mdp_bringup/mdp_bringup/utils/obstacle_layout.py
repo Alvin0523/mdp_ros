@@ -3,8 +3,9 @@
   task1  obstacles by tablet CELL (cell_x, cell_y: 0..19, 10 cm each, (0, 0)
          the bottom-left cell) plus the image side. Metres (`x:`/`y:`) are
          still accepted and snapped to the cell they fall in.
-  task2  the course rules (carpark, obstacle sizes) - `load_task2()` - and a
-         sim-only layout (distances, arrows) - `task2_sim()`.
+  task2  the course rules (carpark, obstacle sizes) - `load_task2()` - and the
+         `setup` layout (distances, arrows): what `pixi run setup` sends the real
+         car as known, and what the Gazebo arena is built from - `task2_setup()`.
 
 From one list:
   * `setup_string()`  - the /obstacle_setup message bluetooth_bridge_node
@@ -39,6 +40,9 @@ class LayoutObstacle:
     facing: str                    # N/E/S/W: the side with the image
     size: Tuple[float, float, float] = TASK1_SIZE
     symbol: Optional[str] = None   # models/symbols/<symbol>.obj, sim only
+    # More symbols, sim only: (face N/E/S/W, offset along that face in m, symbol) -
+    # task 2's bullseyes on the sides and edge blocks.
+    extra_symbols: Tuple[Tuple[str, float, str], ...] = ()
 
     @property
     def cell(self) -> Tuple[int, int]:
@@ -50,7 +54,7 @@ def _cell_centre(c: int) -> float:
 
 
 def load(path: str, task: str = 'task1') -> List[LayoutObstacle]:
-    """Task 1's obstacles (task 2 has load_task2 / task2_sim)."""
+    """Task 1's obstacles (task 2 has load_task2 / task2_setup)."""
     assert task == 'task1', task
     with open(path) as f:
         entries = ((yaml.safe_load(f) or {}).get('task1') or {}).get('obstacles') or []
@@ -109,6 +113,7 @@ TASK2_BACK_WALL_X = 0.10         # inside face of the carpark's back wall
 TASK2_SIDE_WALL_LENGTH = 1.20    # sim side walls, centred on obstacle 2
 TASK2_SIDE_WALL_HEIGHT = 0.30
 ARROW_SYMBOL = {'LEFT': '39_ArrowLeft', 'RIGHT': '38_ArrowRight'}
+BULLSEYE_SYMBOL = '99_Bullseye'
 
 
 @dataclass(frozen=True)
@@ -162,22 +167,28 @@ def load_task2(path: str) -> Task2Arena:
                       float(t['side_wall_clearance']))
 
 
-def task2_sim(path: str):
-    """The sim-only layout: (obstacles with their arrows, walls) as LayoutObstacles
-    for world_sdf(), and (obstacle_1_x, obstacle_2_x) centres."""
+def task2_setup(path: str):
+    """tasks.yaml task2 `setup` layout: (obstacles with their arrows, walls) as
+    LayoutObstacles for world_sdf(), and (obstacle_1_x, obstacle_2_x) centres."""
     arena = load_task2(path)
     with open(path) as f:
-        sim = (yaml.safe_load(f) or {})['task2']['sim']
+        layout = (yaml.safe_load(f) or {})['task2']['setup']
     s1, s2 = arena.obstacle_1_size, arena.obstacle_2_size
-    x1 = arena.opening_x + float(sim['d1']) + s1[0] / 2.0
-    x2 = x1 + s1[0] / 2.0 + float(sim['d2']) + s2[0] / 2.0
+    x1 = arena.opening_x + float(layout['d1']) + s1[0] / 2.0
+    x2 = x1 + s1[0] / 2.0 + float(layout['d2']) + s2[0] / 2.0
     cy = TASK2_CENTRE_Y
+    # Bullseyes as on the course (2026-10-14): obstacle 1's two sides; obstacle 2's
+    # two ends, and its front and back faces on the edge-most 10 cm block each side.
+    edge = s2[1] / 2.0 - 0.05
     obstacles = [
-        LayoutObstacle(1, x1, cy, 'W', s1, ARROW_SYMBOL[str(sim['arrow_1']).upper()]),
-        LayoutObstacle(2, x2, cy, 'W', s2, ARROW_SYMBOL[str(sim['arrow_2']).upper()]),
+        LayoutObstacle(1, x1, cy, 'W', s1, ARROW_SYMBOL[str(layout['arrow_1']).upper()],
+                       (('N', 0.0, BULLSEYE_SYMBOL), ('S', 0.0, BULLSEYE_SYMBOL))),
+        LayoutObstacle(2, x2, cy, 'W', s2, ARROW_SYMBOL[str(layout['arrow_2']).upper()],
+                       tuple((face, along, BULLSEYE_SYMBOL) for face in ('W', 'E') for along in (-edge, edge))
+                       + (('N', 0.0, BULLSEYE_SYMBOL), ('S', 0.0, BULLSEYE_SYMBOL))),
     ]
     rects = [(r, arena.wall_height) for r in arena.carpark_walls()]
-    if sim.get('side_walls'):
+    if layout.get('side_walls'):
         rects += [(r, TASK2_SIDE_WALL_HEIGHT) for r in arena.side_walls(x2)]
     walls = [LayoutObstacle(100 + i, (x0 + x1_) / 2.0, (y0 + y1) / 2.0, 'W', (x1_ - x0, y1 - y0, h))
              for i, ((x0, y0, x1_, y1), h) in enumerate(rects)]
@@ -185,12 +196,12 @@ def task2_sim(path: str):
 
 
 def task2_setup_string(path: str) -> str:
-    """`pixi run setup` for task 2: the sim layout as known obstacles, on /task2_setup -
+    """`pixi run setup` for task 2: the setup layout as known obstacles, on /task2_setup -
     '1:<x1>,<arrow 1>|2:<x2>,<arrow 2>' (centres in metres along the course, LEFT/RIGHT)."""
-    _, _, (x1, x2) = task2_sim(path)
+    _, _, (x1, x2) = task2_setup(path)
     with open(path) as f:
-        sim = (yaml.safe_load(f) or {})['task2']['sim']
-    arrows = [str(sim[k]).strip().upper() for k in ('arrow_1', 'arrow_2')]
+        layout = (yaml.safe_load(f) or {})['task2']['setup']
+    arrows = [str(layout[k]).strip().upper() for k in ('arrow_1', 'arrow_2')]
     for a in arrows:
         if a not in ARROW_SYMBOL:
             raise ValueError(f"{path}: task2 arrow {a!r} is not LEFT/RIGHT")
@@ -229,16 +240,21 @@ _FACING_DIR = {'N': (0.0, 1.0), 'S': (0.0, -1.0), 'E': (1.0, 0.0), 'W': (-1.0, 0
 def model_sdf(o: LayoutObstacle, sdf_root: bool = False) -> str:
     """One obstacle as an SDF <model> (sdf_root: wrapped in <sdf>, for spawning)."""
     sx, sy, sz = o.size
+    symbols = ([(o.facing, 0.0, o.symbol)] if o.symbol else []) + list(o.extra_symbols)
     decal = ''
-    if o.symbol:
-        fx, fy = _FACING_DIR[o.facing]
+    for k, (face, along, symbol) in enumerate(symbols):
+        fx, fy = _FACING_DIR[face]
         dx, dy = fx * (sx / 2.0 + 0.0015), fy * (sy / 2.0 + 0.0015)
-        decal = f'''
-        <visual name="symbol">
-          <pose>{dx:.4f} {dy:.4f} {sz / 2.0 - SYMBOL_M / 2.0:.4f} 0 0 {_DECAL_YAW[o.facing]}</pose>
+        if fx:
+            dy += along                    # E / W face: along it is y
+        else:
+            dx += along
+        decal += f'''
+        <visual name="symbol{'_%d' % k if k else ''}">
+          <pose>{dx:.4f} {dy:.4f} {sz / 2.0 - SYMBOL_M / 2.0:.4f} 0 0 {_DECAL_YAW[face]}</pose>
           <geometry>
             <mesh>
-              <uri>model://mdp_description/models/symbols/{o.symbol}.obj</uri>
+              <uri>model://mdp_description/models/symbols/{symbol}.obj</uri>
               <scale>1 1 1</scale>
             </mesh>
           </geometry>

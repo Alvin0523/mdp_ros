@@ -292,7 +292,7 @@ def generate_launch_description(argv=None):
         # with (see obstacle_layout.py).
         world_name = 'task2_arena' if task == '2' else 'task1_arena'
         if task == '2':
-            blocks, walls, _ = obstacle_layout.task2_sim(layout)   # the sim-only layout
+            blocks, walls, _ = obstacle_layout.task2_setup(layout)   # tasks.yaml task2 setup
             models = blocks + walls
         elif obstacles == 'tablet':
             models = []   # an empty arena: the blocks appear when the tablet sends its layout
