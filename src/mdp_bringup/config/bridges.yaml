@@ -26,8 +26,8 @@ serial_bridge_node:            # STM32 (real robot only)
     # The STM32 sends raw (mean of 8 conversions); these curves are what the car uses.
     # mdp_stm32 src/ir.c IR*_DISPLAY_* is a copy for its OLED only - update it too
     # if the OLED should read the same as /ir and /ir2.
-    ir1_curve: [6.23, 1.210]   # IR1, /ir, PC2 (rear)
-    ir2_curve: [6.53, 1.157]   # IR2, /ir2, PC1 (front)
+    ir1_curve: [6.23, 1.210]   # IR1, /ir, PC2 - task 2: right side (task 1: left, rear)
+    ir2_curve: [6.53, 1.157]   # IR2, /ir2, PC1 - task 2: left side (task 1: left, front)
     ir_min_cm: 4.0             # clamp (Sharp readings are unreliable below ~7 cm)
     ir_max_cm: 80.0
 
