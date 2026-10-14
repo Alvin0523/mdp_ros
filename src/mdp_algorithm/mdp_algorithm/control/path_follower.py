@@ -124,6 +124,10 @@ class PathFollower:
         self._seg = 0                  # segment being driven
         self._near_idx = 0             # path point nearest the car (only moves forward)
         self.speed_cap = math.inf      # m/s, set by the caller (task 1: creep onto the block)
+        # Task 2: a forward-only path is never reversed on by the follower itself (compute_cmd);
+        # with the target behind it steers full lock toward it at behind_speed instead.
+        self.forward_only = False
+        self.behind_speed = 0.3        # m/s, set by the caller (task2_runner: path_speed)
 
     def on_last_segment(self) -> bool:
         """Driving the path's last same-gear stretch (the one into the goal)."""
@@ -405,7 +409,20 @@ class PathFollower:
         tx, ty, gear = target
         x, y, yaw = self.current_pose
         local_x = (tx - x) * math.cos(yaw) + (ty - y) * math.sin(yaw)
-        if gear >= 0 and local_x < -GEAR_FLIP_M:
+        local_y = -(tx - x) * math.sin(yaw) + (ty - y) * math.cos(yaw)
+        behind = gear >= 0 and local_x < -GEAR_FLIP_M
+        if behind and self.forward_only:
+            # A forward-only path (task 2) never reverses on its own: full lock toward
+            # the target at behind_speed instead. The task 1 rule below (reverse when
+            # the target ends up behind) backed the car up after checkpoint 1 (car
+            # 2026-10-14); task2_runner allows reversing again only when stuck.
+            self.speed = min(self.behind_speed, self.speed_cap)
+            steering = self.max_steering_left if local_y >= 0.0 else -self.max_steering_right
+            self.last_target = (tx, ty, gear)
+            self._last_cmd = (self.speed, self.speed * math.tan(steering) / self.wheelbase)
+            self.steer_est += (steering - self.steer_est) * min(1.0, CONTROL_DT / max(self.steer_tau, CONTROL_DT))
+            return self._last_cmd
+        if behind:
             gear = -1
         elif gear < 0 and local_x > GEAR_FLIP_M:
             gear = 1

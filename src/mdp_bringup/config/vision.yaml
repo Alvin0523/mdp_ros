@@ -24,3 +24,13 @@ yolo_detector:
     # closest (all symbols are one size). Foxglove's annotated image marks it SENT.
     min_confidence: 0.5
     edge_margin_px: 3
+
+# Task 2's bullseyes by template matching (mdp_vision bullseye_matcher) until YOLO
+# has a bullseye class: boxes on /bullseye_detections, like /yolo_detections.
+bullseye_matcher:
+  ros__parameters:
+    min_px: 14.0               # bullseye sizes searched (px): ~17 px at 2.1 m (the farthest the runner uses,
+                               # 0.6 m before checkpoint 1), ~100 px at 0.5 m. 10: false 10 px matches on the
+                               # walls' texture in every frame (sim 2026-10-14)
+    max_px: 140.0
+    threshold: 0.6             # TM_CCOEFF_NORMED score for a match

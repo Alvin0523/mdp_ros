@@ -17,11 +17,16 @@ one being planned. Nothing is sent while the car drives: it follows the paths
 on its own, and plans small re-plans itself. Without an ack within
 remote_plan_timeout the runner plans every leg itself (the Pi alone).
 
+Task 2 sends the same request with a "task2" entry - its course (obstacle 1,
+the bar and its width, the margin) instead of obstacles_cm - for one leg no
+clean shape or route table covers (task2_runner.hybrid_leg); answered the same way.
+
 It also serves /setup_obstacles (`pixi run setup`, Foxglove SETUP): the layout
 file HERE (config/tasks.yaml on the laptop) - task 1's set on /obstacle_setup, as
 the tablet's DONE would, and task 2's known layout on /task2_setup. The runner on
 the Pi then serves none.
 """
+import dataclasses
 import json
 import threading
 import traceback
@@ -33,6 +38,7 @@ from std_srvs.srv import Trigger
 
 from mdp_algorithm.planning.planner import build_costmap, plan_leg
 from mdp_algorithm.utils import params as planner_params
+from mdp_bringup.tasks import task2_routes
 from mdp_bringup.utils import obstacle_layout
 from mdp_bringup.utils.run import run
 
@@ -89,6 +95,10 @@ class Task1Planner(Node):
     def on_request(self, msg: String):
         req = json.loads(msg.data)
         self.send({'gen': req['gen'], 'ack': True})
+        if req.get('task2'):
+            self.get_logger().info("PLANNER   task 2 leg requested")
+            threading.Thread(target=self.plan_task2, args=(req,), daemon=True).start()
+            return
         if req.get('single'):
             # One leg planned again mid-run (task1_runner.replan_leg): beside any
             # full plan, which it must not stop.
@@ -108,6 +118,25 @@ class Task1Planner(Node):
             self.get_logger().info(f"PLANNER   replan {'sent' if path else 'NO PATH'}")
         except Exception:
             self.get_logger().error(f"replanning crashed:\n{traceback.format_exc()}")
+
+    def plan_task2(self, req: dict):
+        """One task 2 leg on the car's own course (task2_routes.course_costmap) with its
+        own margin round the obstacles (obstacle_padding)."""
+        try:
+            spec = req['task2']
+            arena = task2_routes.arena_from_dict(spec['arena'])
+            with self.lock:              # the settings are this process's: one plan at a time
+                planner_params.configure(dataclasses.replace(planner_params.from_flat(req['params']),
+                                                             footprint_padding=float(spec['padding'])))
+                costmap = task2_routes.course_costmap(arena, spec['x1'], spec['x2'], spec['bar_width'],
+                                                      spec['padding'])
+                path = plan_leg(costmap, tuple(req['start']), tuple(req['checkpoints'][0])) or []
+            self.send({'gen': req['gen'], 'idx': 0, 'start': req['start'],
+                       'path': [list(map(float, p[:3])) + [int(p[3])] for p in path]})
+            self.get_logger().info(f"PLANNER   task 2 leg {'sent' if path else 'NO PATH'}")
+        except Exception:
+            self.get_logger().error(f"task 2 planning crashed:\n{traceback.format_exc()}")
+            self.send({'gen': req['gen'], 'idx': 0, 'start': req['start'], 'path': []})
 
     def plan(self, req: dict):
         with self.lock:                  # one plan at a time; a newer gen stops this one

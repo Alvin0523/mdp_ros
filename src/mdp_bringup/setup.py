@@ -17,7 +17,7 @@ NODES = {
 }
 TOOLS = {'trigger': 'tools.trigger', 'publish_obstacles': 'tools.publish_obstacles',
          'around_obstacle': 'tools.around_obstacle', 'calib': 'tools.calib.cli',
-         'capture': 'tools.capture'}
+         'capture': 'tools.capture', 'task2_table': 'tools.task2_table'}
 
 setup(
     name=package_name,
@@ -27,7 +27,7 @@ setup(
         ('share/ament_index/resource_index/packages', ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
         ('share/' + package_name + '/launch', glob('launch/*.launch.py')),
-        ('share/' + package_name + '/config', glob('config/*.yaml')),
+        ('share/' + package_name + '/config', glob('config/*.yaml') + glob('config/*.json.gz')),
     ],
     install_requires=['setuptools'],
     zip_safe=True,

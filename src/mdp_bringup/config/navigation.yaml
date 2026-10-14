@@ -203,11 +203,11 @@ task2_runner:
     # parallel to the centre line, lane_offset to the side.
     swerve_early_dist: 0.90    # m
     swerve_trigger_dist: 0.45  # m
-    lane_offset: 0.28          # m, checkpoint 1 (beside obstacle 1) out from the centre line. Was 0.25:
-                               # planned 9.6 cm past obstacle 1, the car cut ~3 cm more and IR1 read
-                               # it 8.5 cm away (car 2026-10-14); 0.28: 12.4 cm, and leg 1 (d2 = 0.6)
-                               # no longer reverses. 0.30: 14 cm but 2.7 s to plan; 0.33 squeezes the bar
-    side_clearance: 0.28       # m, checkpoints 2 and 3 out from obstacle 2's ends (was 0.25, as lane_offset)
+    lane_offset: 0.25          # m, checkpoint 1 (beside obstacle 1) out from the centre line. 0.28 was
+                               # tried (car 2026-10-14: at 0.25 the car cut ~3 cm inside the plan and
+                               # leg 1 reversed); back to 0.25 with the smooth S, which the car follows
+                               # closely, and forward-only legs (no reverse) - task2-cp1
+    side_clearance: 0.25       # m, checkpoints 2 and 3 out from obstacle 2's ends (as lane_offset)
     home_stop_dist: 0.12       # m, ultrasonic reading of the carpark's back wall = stop
     home_straight_dist: 0.45   # m, on the centre line before home: the car lines up this far out
     home_margin: 0.08          # m of extra room either side on the way home (it passes obstacle 1;
@@ -217,14 +217,30 @@ task2_runner:
                                # layouts, in an offline search 2026-09-30; the rest use Hybrid A*)
     brake_decel: 1.20          # m/s^2 the speed profile brakes at, for curves, gear changes and path ends
     ir_pass_speed: 0.60        # m/s while an IR passes obstacle 1's side / a bar end (enough readings for a fix)
-    max_lateral_accel: 1.50    # m/s^2: curve speed = sqrt(this x radius), path_speed..straight_speed
+    max_lateral_accel: 1.00    # m/s^2: curve speed = sqrt(this x radius), path_speed..straight_speed.
+                               # 1.5: the tightest turn (~33 cm) at 0.70 m/s overshot the straighten-up
+                               # into checkpoint 1, 30 deg off (car 2026-10-14); 1.0: 0.57 m/s there
     path_tracking: lqr         # pure_pursuit | lqr (task1_runner follower.* has the lqr weights)
     pose_latency: 0.09         # s, the EKF pose's delay the follower allows for (task 1: 0.06)
                                # (sim 2026-10-10 with these four: 8.4-10.8 s, closest gap 8.8 cm over 4 layouts)
-    ir_fix: true               # IR position fixes past obstacle 1's side and the bar's ends (live;
-                               # false = dead reckoning only, e.g. to test without the IRs)
+    ir_fix: false              # IR position fixes past obstacle 1's side and the bar's ends (live;
+                               # false = dead reckoning only). Off by default: CP1 -> CP2 is now placed
+                               # from the bar as the car sees it at checkpoint 1 (bullseye + ultrasonic)
     obstacle_padding: 0.06     # m kept between the car's outline and the obstacles when planning,
                                # task 2 only (task 1: costmap.footprint_padding)
+    # Forward only: the legs are planned without reversing, and the follower never reverses
+    # on its own (it backed up after checkpoint 1, car 2026-10-14). Only when the car has
+    # not moved for stuck_time s while told to drive may it reverse.
+    stuck_time: 1.0            # s
+    # The bar's width at checkpoint 1: a bullseye on the bar's near end (YOLO class 99, or
+    # the laptop's bullseye_matcher until YOLO knows bullseyes) + the ultrasonic + the pose.
+    camera_hfov: 1.089         # rad, the camera's horizontal view (Pi camera v2 full sensor ~62 deg;
+                               # the sim camera is the same, URDF)
+    bar_wait_dist: 0.10        # m past checkpoint 1 the car rolls straight on for a bullseye still
+                               # coming (YOLO's latency); then the usual width (tasks.yaml)
+    # Hybrid A* for a leg no clean shape and no route table covers: on the laptop with one
+    # (role:=pi, task1_planner), here if it does not answer within this.
+    remote_plan_timeout: 2.0   # s
 
 # The tablet's arrow buttons (f b fl fr bl br): a short burst, then stop.
 # Every node loading this file gets them - manual_drive (task 0) and

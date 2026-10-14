@@ -28,6 +28,8 @@ def generate_launch_description():
         DeclareLaunchArgument('yolo', default_value='true',
                               description='start YOLO (false: the laptop runs it - `pixi run pi` / `laptop`)'),
         DeclareLaunchArgument('camera_topic', default_value='/image_raw', description='image topic YOLO reads'),
+        DeclareLaunchArgument('bullseye', default_value='false',
+                              description='task 2: bullseyes by template matching too (bullseye_matcher)'),
         DeclareLaunchArgument('use_sim_time', default_value='false'),
         DeclareLaunchArgument('log_level', default_value='info'),
         Node(package='mdp_vision', executable='rpi_cam_publisher', output='screen',
@@ -36,4 +38,7 @@ def generate_launch_description():
              condition=IfCondition(arg('yolo')),
              parameters=[config, {'model_path': arg('model'), 'camera_topic': arg('camera_topic')}, common],
              ros_arguments=ros_args),
+        Node(package='mdp_vision', executable='bullseye_matcher', output='screen',
+             condition=IfCondition(arg('bullseye')),
+             parameters=[config, {'camera_topic': arg('camera_topic')}, common], ros_arguments=ros_args),
     ])
