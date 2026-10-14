@@ -13,7 +13,8 @@
  *                                   2026-10-08 the tablet sent the cell's corner in cm.)
  *   DONE                            publish the set on /obstacle_setup (metres,
  *                                   at the CELL CENTRE = (col + 0.5) * 10 cm)
- *   BEGIN                           call /start_run
+ *   START                           call /start_run (= `pixi run go`, Foxglove GO);
+ *                                   BEGIN, its old name, still works
  *   STOP                            call /stop_run
  *   RESET                           call /reset_pose (car back at the start pose,
  *                                   like `pixi run reset`)
@@ -22,7 +23,8 @@
  *
  * ROS -> tablet: every String on /bluetooth_tx is written as a line. The latest
  * ROBOT / PLAN / RESET / STATUS line is remembered and resent when the link
- * comes up (and ROBOT again on CLEAR).
+ * comes up (and ROBOT again on CLEAR). DONE (from the runner, either task) =
+ * the run is complete and its timer stopped - not sent after a STOP.
  *
  * Creating the device (not done here): e.g. `sudo rfcomm listen /dev/rfcomm0 1`
  * after pairing. The node keeps retrying to open it, so start order does not
@@ -346,7 +348,7 @@ private:
       handleObstacle(f);
     } else if (cmd == "DONE" && f.size() == 1) {
       publishSetup();
-    } else if (cmd == "BEGIN" && f.size() == 1) {
+    } else if ((cmd == "START" || cmd == "BEGIN") && f.size() == 1) {
       callTrigger(start_client_, "/start_run");
     } else if (cmd == "STOP" && f.size() == 1) {
       callTrigger(stop_client_, "/stop_run");

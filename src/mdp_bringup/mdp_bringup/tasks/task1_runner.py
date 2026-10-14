@@ -491,7 +491,7 @@ class Task1Runner(RunnerBase):
         self.detected_target_id = Counter(self.scan_detections).most_common(1)[0][0]
 
     def start_run_callback(self, request, response):
-        """/start_run (tablet BEGIN, `pixi run go`): only from WAITING_FOR_GO with
+        """/start_run (tablet START, `pixi run go`): only from WAITING_FOR_GO with
         the plan done and the pose reset; otherwise says why not."""
         not_ready = {
             State.WAITING_FOR_SETUP: "Not ready: no obstacle setup received yet.",
@@ -919,7 +919,7 @@ class Task1Runner(RunnerBase):
         If the last stop does an IR creep, the car still moves: the time stops at FINISHED."""
         idx = self.current_target_idx
         if idx == len(self.visiting_order) - 1 and not self.ir_active(idx) and self.run_end is None:
-            self.end_run()
+            self.end_run(done=True)
             self.get_logger().info(f"TIMER     stopped at {self.run_time():.1f} s - "
                                    f"the car stopped at the last obstacle")
 
@@ -1086,7 +1086,7 @@ class Task1Runner(RunnerBase):
         if self.current_target_idx >= len(self.visiting_order):
             scan_s = self.now() - self.state_start
             self.set_state(State.FINISHED)
-            self.end_run()
+            self.end_run(done=True)        # DONE to the tablet here unless the timer stopped already
             self.get_logger().info(f"FINISHED  all obstacles visited in {self.run_time():.1f} s "
                                    f"(+{scan_s:.1f} s last scan)")
         else:

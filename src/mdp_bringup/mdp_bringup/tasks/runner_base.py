@@ -87,10 +87,13 @@ class RunnerBase(Node):
             return 0.0
         return (self.run_end if self.run_end is not None else self.now()) - self.run_start
 
-    def end_run(self):
-        """FINISHED / STOP: freeze the run time."""
+    def end_run(self, done: bool = False):
+        """FINISHED / STOP: freeze the run time. done: the run is complete (not a STOP) -
+        the tablet gets DONE, once, when the timer stops."""
         if self.run_start is not None and self.run_end is None:
             self.run_end = self.now()
+            if done:
+                self.send_bt('DONE')
 
     @staticmethod
     def fmt(pose) -> str:

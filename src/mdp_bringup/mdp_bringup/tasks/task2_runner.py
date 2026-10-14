@@ -1005,7 +1005,7 @@ class Task2Runner(RunnerBase):
         self.send_cmd(0.0, 0.0)
         self.follower.set_path([])
         self.set_state(State.FINISHED)
-        self.end_run()
+        self.end_run(done=True)            # DONE to the tablet
         self.get_logger().info(f"FINISHED  in the carpark at {self.fmt(self.current_pose)} ({why}) "
                                f"in {self.run_time():.1f} s")
         self.publish_waypoints()

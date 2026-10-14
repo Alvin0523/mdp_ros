@@ -462,7 +462,7 @@ def generate_launch_description(argv=None):
                             parameters=[navigation, sim_time]))
     elif task == '1':
         # Idle in WAITING_FOR_SETUP until the tablet's DONE, plans, then holds
-        # for `go` (tablet BEGIN / pixi run go).
+        # for `go` (tablet START / pixi run go).
         actions.append(Node(
             package='mdp_bringup', executable='task1_runner', output='screen',
             parameters=[navigation,
