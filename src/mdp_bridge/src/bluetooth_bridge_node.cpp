@@ -13,8 +13,7 @@
  *                                   2026-10-08 the tablet sent the cell's corner in cm.)
  *   DONE                            publish the set on /obstacle_setup (metres,
  *                                   at the CELL CENTRE = (col + 0.5) * 10 cm)
- *   START                           call /start_run (= `pixi run start`, Foxglove START);
- *                                   BEGIN, its old name, still works
+ *   START                           call /start_run (= `pixi run start`, Foxglove START)
  *   STOP                            call /stop_run - the EMERGENCY stop (run stopped,
  *                                   zero velocity, reset before the next run)
  *   RESET                           call /reset_pose (car back at the start pose,
@@ -349,7 +348,7 @@ private:
       handleObstacle(f);
     } else if (cmd == "DONE" && f.size() == 1) {
       publishSetup();
-    } else if ((cmd == "START" || cmd == "BEGIN") && f.size() == 1) {
+    } else if (cmd == "START" && f.size() == 1) {
       callTrigger(start_client_, "/start_run");
     } else if (cmd == "STOP" && f.size() == 1) {
       callTrigger(stop_client_, "/stop_run");
