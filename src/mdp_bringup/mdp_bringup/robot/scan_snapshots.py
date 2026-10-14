@@ -5,7 +5,7 @@ Keeps the newest annotated frame (/yolo_result/image_annotated) for each id
 YOLO sent on /yolo_result. When the runner reports TARGET,<obstacle>,<id> to the
 tablet (/bluetooth_tx), the newest frame of that id - the one the scan counted -
 is saved with "OBSTACLE n -> X (ID id)" on top; UNKNOWN gets the newest frame.
-A new folder each GO: snapshots/<date_time>/obstacle_<n>.jpg and collage.jpg,
+A new folder each START: snapshots/<date_time>/obstacle_<n>.jpg and collage.jpg,
 the collage rewritten after every obstacle (parameter `dir`).
 """
 import os
@@ -69,7 +69,7 @@ class ScanSnapshots(Node):
             self.by_id[msg.data.strip()] = self.frame
 
     def on_status(self, msg: RunStatus):
-        if self.state == 'WAITING_FOR_GO' and msg.state in DRIVING:
+        if self.state == 'WAITING_FOR_START' and msg.state in DRIVING:
             self.folder, self.shots, self.by_id = None, {}, {}
         self.state = msg.state
 

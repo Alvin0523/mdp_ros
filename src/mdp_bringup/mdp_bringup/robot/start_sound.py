@@ -1,8 +1,8 @@
-"""Play a sound on the laptop's speakers when a run starts (GO from the tablet,
-Foxglove or `pixi run go`) - `pixi run laptop` runs it.
+"""Play a sound on the laptop's speakers when a run starts (START from the tablet,
+Foxglove or `pixi run start`) - `pixi run laptop` runs it.
 
-Watches /run_status: the state turning from WAITING_FOR_GO to driving (task 1 or 2) is GO. The
-sound is sounds/go.mp3 in the repo (parameter `sound`); any file ffplay can play.
+Watches /run_status: the state turning from WAITING_FOR_START to driving (task 1 or 2) is START. The
+sound is sounds/start.mp3 in the repo (parameter `sound`); any file ffplay can play.
 Played in the background, so a long file never holds anything up.
 """
 import os
@@ -18,21 +18,21 @@ DRIVING = ('NAVIGATING_TO_TARGET', 'PAUSE_FOR_SCAN',   # task 1
            'TO_CHECKPOINT_1', 'APPROACH_1')              # task 2 (planned at home / measuring on the way)
 
 
-class GoSound(Node):
+class StartSound(Node):
     def __init__(self):
-        super().__init__('go_sound')
+        super().__init__('start_sound')
         root = os.environ.get('PIXI_PROJECT_ROOT', os.getcwd())
-        self.sound = self.declare_parameter('sound', os.path.join(root, 'sounds', 'go.mp3')).value
+        self.sound = self.declare_parameter('sound', os.path.join(root, 'sounds', 'start.mp3')).value
         self.player = shutil.which('ffplay')
         self.state = None
         self.create_subscription(RunStatus, '/run_status', self.on_status, 10)
         if not os.path.isfile(self.sound):
-            self.get_logger().warn(f"SOUND     no {self.sound} - nothing will play at GO")
+            self.get_logger().warn(f"SOUND     no {self.sound} - nothing will play at START")
         elif self.player is None:
-            self.get_logger().warn("SOUND     ffplay not found - nothing will play at GO")
+            self.get_logger().warn("SOUND     ffplay not found - nothing will play at START")
 
     def on_status(self, msg: RunStatus):
-        if self.state == 'WAITING_FOR_GO' and msg.state in DRIVING:
+        if self.state == 'WAITING_FOR_START' and msg.state in DRIVING:
             self.play()
         self.state = msg.state
 
@@ -44,7 +44,7 @@ class GoSound(Node):
 
 
 def main(args=None):
-    run(GoSound, args=args)
+    run(StartSound, args=args)
 
 
 if __name__ == '__main__':

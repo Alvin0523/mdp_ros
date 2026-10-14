@@ -8,10 +8,10 @@ known in advance, so the car measures them with the front ultrasonic:
   Four checkpoints: 1 beside obstacle 1 (arrow 1's side), 2 beside obstacle 2's
   end on arrow 2's side, 3 beside its other end (round the back), 4 = home.
 
-  WAITING_FOR_GO   standing in the carpark: the ultrasonic measures obstacle 1,
+  WAITING_FOR_START   standing in the carpark: the ultrasonic measures obstacle 1,
                    YOLO reads arrow 1 -> checkpoint 1 (heading as at home) and the
-                   path to it are planned before GO
-  TO_CHECKPOINT_1  GO: that path - turn out early, a straight diagonal, straighten
+                   path to it are planned before START
+  TO_CHECKPOINT_1  START: that path - turn out early, a straight diagonal, straighten
                    up at checkpoint 1. Arriving (pointing straight, level with
                    obstacle 1) the ultrasonic measures obstacle 2 (a wide bar on the
                    centre line) and YOLO reads arrow 2
@@ -32,7 +32,7 @@ in Foxglove like task 1.
 
 `pixi run setup` (Foxglove SETUP): tasks.yaml's task2 `sim` layout arrives on
 /task2_setup - both obstacles and arrows KNOWN, so no ultrasonic measuring and
-no YOLO: checkpoint 1 is planned before GO and checkpoints 2-4 at checkpoint 1
+no YOLO: checkpoint 1 is planned before START and checkpoints 2-4 at checkpoint 1
 from the known bar. Kept across resets, like task 1's set. Served by the
 laptop's task1_planner (role:=pi) or by this node (serve_setup).
 """
@@ -87,7 +87,7 @@ NO_BAR_LIMIT_M = 0.35         # m past obstacle 1's centre without obstacle 2 se
 
 
 class State(Enum):
-    WAITING_FOR_GO = auto()
+    WAITING_FOR_START = auto()
     TO_CHECKPOINT_1 = auto()
     APPROACH_1 = auto()
     SWERVE_OUT = auto()
@@ -115,6 +115,8 @@ class Task2Runner(RunnerBase):
         # (x1, x2, arrow 1, arrow 2) from `pixi run setup`, None = measure them. Not
         # cleared by reset_run(): a reset readies the same layout for the next run.
         self.known_layout = None
+        self.reset_done = False          # RESET:DONE to the tablet: a reset since the last run
+        self._last_sent, self._last_heartbeat = {}, 0.0
         self.create_subscription(String, '/task2_setup', self.task2_setup_callback, 10)
         self.task2_setup_pub = self.create_publisher(String, '/task2_setup', 10)
         # With a laptop (role:=pi) its task1_planner serves /setup_obstacles from the
@@ -144,15 +146,15 @@ class Task2Runner(RunnerBase):
         self.us_offset = None            # base_link -> ultrasonic_link, m ahead (TF, from the URDF)
         self.reset_run()
         self.publish_map()
-        self.get_logger().info("READY     waiting for GO")
+        self.get_logger().info("READY     waiting for START")
 
     def reset_run(self):
-        self.set_state(State.WAITING_FOR_GO)
-        self.go_received = False
+        self.set_state(State.WAITING_FOR_START)
+        self.start_received = False
         self.run_start = self.run_end = None
         self.current_pose = (0.0, 0.0, 0.0)
         self.pose_offset = (0.0, 0.0)    # the IR fixes of the last run
-        self.have_pose = False           # GO waits for the first EKF pose
+        self.have_pose = False           # START waits for the first EKF pose
         self.us_range = None             # (range m, time s) - latest valid ultrasonic reading
         self.us_trigger_count = 0
         self.arrow_counts = [Counter(), Counter()]   # per obstacle
@@ -166,7 +168,7 @@ class Task2Runner(RunnerBase):
         self.leg_paths = []
         self.leg = 0
         self.costmap = None
-        # The path start -> beside obstacle 1, planned before GO from self.start. With the
+        # The path start -> beside obstacle 1, planned before START from self.start. With the
         # setup layout it stays planned across resets (a reset only puts the pose back).
         pre = getattr(self, 'pre', None)
         self.pre = pre if self.known_layout and pre and pre.get('path') else None
@@ -320,7 +322,7 @@ class Task2Runner(RunnerBase):
             return
         # Arrow 1 until the car turns out for checkpoint 1; arrow 2 once it is level
         # with obstacle 1 (its face out of view) and at checkpoint 1.
-        if self.state in (State.WAITING_FOR_GO, State.APPROACH_1):
+        if self.state in (State.WAITING_FOR_START, State.APPROACH_1):
             i = 0
         elif self.state == State.CHECKPOINT_1 or (self.state == State.TO_CHECKPOINT_1 and self.level_with_1()):
             i = 1
@@ -332,22 +334,23 @@ class Task2Runner(RunnerBase):
             self.arrow_counts[i][side] += 1
 
     def start_run_callback(self, request, response):
-        response.success = self.state == State.WAITING_FOR_GO and not self.go_received and self.have_pose
+        response.success = self.state == State.WAITING_FOR_START and not self.start_received and self.have_pose
         if not self.have_pose:
             response.message = "Not ready: no pose from the EKF yet."
-            self.get_logger().warn(f"`go` rejected: {response.message}")
+            self.get_logger().warn(f"`start` rejected: {response.message}")
             return response
         if response.success and self.known() and not (self.pre and self.pre.get('legs')):
-            # Without the plan GO would drive APPROACH_1: straight on until the ultrasonic sees obstacle 1.
+            # Without the plan START would drive APPROACH_1: straight on until the ultrasonic sees obstacle 1.
             response.success, response.message = False, "Not ready: the setup layout's 4 legs are not planned yet."
-            self.get_logger().warn(f"`go` rejected: {response.message}")
+            self.get_logger().warn(f"`start` rejected: {response.message}")
             return response
         if response.success:
-            self.go_received = True
+            self.start_received = True
+            self.reset_done = False          # the car is leaving the start
             response.message = "Run started - task 2" + (" (setup layout)." if self.known() else ".")
         else:
             response.message = f"Ignored: {self.state.name} - reset (pixi run reset) to run again."
-            self.get_logger().warn(f"`go` rejected: {response.message}")
+            self.get_logger().warn(f"`start` rejected: {response.message}")
         return response
 
     def setup_obstacles_callback(self, request, response):
@@ -364,7 +367,7 @@ class Task2Runner(RunnerBase):
 
     def task2_setup_callback(self, msg: String):
         """Both obstacles and arrows known (pixi run setup): no measuring this run."""
-        if self.state not in (State.WAITING_FOR_GO, State.FINISHED, State.STOPPED):
+        if self.state not in (State.WAITING_FOR_START, State.FINISHED, State.STOPPED):
             self.get_logger().warn(f"SETUP     ignored during the run ({self.state.name})")
             return
         try:
@@ -388,7 +391,7 @@ class Task2Runner(RunnerBase):
         self.set_state(State.STOPPED)
         self.send_cmd(0.0, 0.0)
         self.end_run()
-        self.get_logger().info(f"STOP      at {self.fmt(self.current_pose)} after {self.run_time():.1f} s"
+        self.get_logger().info(f"E-STOP    at {self.fmt(self.current_pose)} after {self.run_time():.1f} s"
                                f" - reset before the next run")
         response.success, response.message = True, "Stopped."
         return response
@@ -396,22 +399,63 @@ class Task2Runner(RunnerBase):
     def set_pose_callback(self, msg):
         """A pose reset (car back in the carpark) readies the next run; during a
         run it stops it first."""
-        if self.state not in (State.FINISHED, State.STOPPED, State.WAITING_FOR_GO):
+        if self.state not in (State.FINISHED, State.STOPPED, State.WAITING_FOR_START):
             self.send_cmd(0.0, 0.0)
             self.get_logger().warn("RESET     during a run - stopping it")
         self.reset_run()
+        self.reset_done = True
         self.publish_map()
         if self.pre:                     # the setup layout's plan, kept: show it again
             self.waypoints = list(self.pre.get('waypoints', []))
             self.path_pub.publish(markers.route_path([self.pre['path']] + self.pre.get('legs', []), self.stamp()))
             self.publish_waypoints()
-        self.get_logger().info("RESET     ready - waiting for GO" + (" (planned)" if self.pre else ""))
+        self.get_logger().info("RESET     ready - waiting for START" + (" (planned)" if self.pre else ""))
 
     # -------------------------------------------------------------- control ----
 
+    # -------------------------------------------------------- tablet lines ----
+
+    def plan_state(self) -> str:
+        """PLAN: as task 1's - DONE once the run can START (the setup layout: all 4 legs;
+        measuring: the path to checkpoint 1), PLANNING while that is being planned."""
+        planning = self.leg_paths and any(p is None for p in self.leg_paths)
+        if planning or (self.pre and self.pre.get('planning')):
+            return 'PLANNING'
+        if self.pre and self.pre.get('path') and (self.pre.get('legs') or not self.known()):
+            return 'DONE'
+        return 'WAITING'
+
+    def status_text(self) -> str:
+        """STATUS: as task 1's: Waiting / Ready / Going to checkpoint n / Finished / Stopped."""
+        if self.state == State.STOPPED:
+            return 'Stopped'
+        if self.state == State.FINISHED:
+            return 'Finished'
+        if self.state == State.WAITING_FOR_START:
+            return 'Ready' if self.plan_state() == 'DONE' and self.reset_done else 'Waiting'
+        if self.state == State.FOLLOW and self.leg < len(self.waypoints):
+            return f'Going to checkpoint {self.leg + 2}'
+        return 'Going to checkpoint 1'
+
+    def sync_indicators(self):
+        """PLAN / RESET / STATUS to the tablet when they change, and every 2 s (a bridge
+        that came up later) - the same lines as task 1."""
+        now = self.now()
+        if now - self._last_heartbeat >= 2.0:
+            self._last_heartbeat = now
+            self._last_sent.clear()
+        lines = {'PLAN': f'PLAN:{self.plan_state()}',
+                 'RESET': f'RESET:{"DONE" if self.reset_done else "WAITING"}',
+                 'STATUS': f'STATUS:{self.status_text()}'}
+        for key, line in lines.items():
+            if self._last_sent.get(key) != line:
+                self._last_sent[key] = line
+                self.send_bt(line)
+
     def control_loop(self):
+        self.sync_indicators()
         handler = {
-            State.WAITING_FOR_GO: self.waiting,
+            State.WAITING_FOR_START: self.waiting,
             State.TO_CHECKPOINT_1: self.to_checkpoint_1,
             State.APPROACH_1: self.approach_1,
             State.SWERVE_OUT: self.swerve_out,
@@ -426,7 +470,7 @@ class Task2Runner(RunnerBase):
 
     def waiting(self):
         self.send_cmd(0.0, 0.0)
-        if not self.go_received:
+        if not self.start_received:
             self.show_obstacle_1()
             self.preplan()
             return
@@ -438,14 +482,14 @@ class Task2Runner(RunnerBase):
             self.lane_waypoint = pre['goal']
             self.follower.set_path(pre['path'])
             self.watch_obstacle_1()
-            self.get_logger().info(f"GO        arrow 1 {pre['arrow']}, obstacle 1 at "
+            self.get_logger().info(f"START     arrow 1 {pre['arrow']}, obstacle 1 at "
                                    f"({markers.cell(self.x1)},{markers.cell(TASK2_CENTRE_Y)}) -> beside it "
                                    f"{self.fmt(pre['goal'])}")
             self.publish_map()
             self.set_state(State.TO_CHECKPOINT_1)
             self.publish_waypoints()
             return
-        self.get_logger().info(f"GO        from {self.fmt(self.current_pose)}, arrow 1 not read at home - "
+        self.get_logger().info(f"START     from {self.fmt(self.current_pose)}, arrow 1 not read at home - "
                                f"driving on until it is")
         self.set_state(State.APPROACH_1)
 
@@ -472,7 +516,7 @@ class Task2Runner(RunnerBase):
         """Before GO: once obstacle 1 and arrow 1 are known (setup, or the ultrasonic
         and YOLO), plan start -> beside obstacle 1 (again if either changes). With the
         setup layout obstacle 2 is known too: the legs to checkpoints 2, 3, 4 as well,
-        all before GO - planned at checkpoint 1 at 0.9 m/s, the Hybrid A* leg came too
+        all before START - planned at checkpoint 1 at 0.9 m/s, the Hybrid A* leg came too
         late on the busy Pi and the car rolled 0.5 m into the bar (car 2026-10-14)."""
         arrow, x1 = self.arrow(0), self.home_x1()
         if arrow is None or x1 is None:
@@ -503,7 +547,7 @@ class Task2Runner(RunnerBase):
                 self.publish_waypoints()
                 if not known:
                     self.get_logger().info(f"PLAN      start -> beside obstacle 1 {self.fmt(goal)} (arrow 1 {arrow})"
-                                           f" - ready for GO ({time.monotonic() - t0:.1f} s)")
+                                           f" - ready for START ({time.monotonic() - t0:.1f} s)")
                     return
                 x2, arrow2 = known[1], known[3]
                 waypoints = self.bar_waypoints(x2, arrow2)
@@ -522,7 +566,7 @@ class Task2Runner(RunnerBase):
                 self.path_pub.publish(markers.route_path([pre['path']] + legs, self.stamp()))
                 self.publish_waypoints()
                 self.get_logger().info(f"PLAN      all 4 legs (setup layout, arrows {arrow} / {arrow2})"
-                                       f" - ready for GO ({time.monotonic() - t0:.1f} s)")
+                                       f" - ready for START ({time.monotonic() - t0:.1f} s)")
             except Exception:
                 self.get_logger().error(f"PLAN      crashed:\n{traceback.format_exc()}")
             finally:
@@ -833,13 +877,13 @@ class Task2Runner(RunnerBase):
 
     def follow_setup_legs(self):
         """At checkpoint 1 with the setup layout: checkpoints 2-4 and their legs were
-        all planned before GO (preplan) - nothing to compute while rolling."""
+        all planned before START (preplan) - nothing to compute while rolling."""
         x2, arrow2 = self.pre['x2'], self.pre['arrow2']
         self.x2, self.arrows[1] = x2, arrow2
         self.waypoints = list(self.pre['waypoints'])
         self.leg_paths = list(self.pre['legs'])
         self.get_logger().info(f"OBSTACLE 2 at ({markers.cell(x2)},{markers.cell(TASK2_CENTRE_Y)}), arrow 2 {arrow2}"
-                               f" (setup) -> legs to checkpoints 2, 3, 4 planned before GO")
+                               f" (setup) -> legs to checkpoints 2, 3, 4 planned before START")
         self.build_costmap()
         self.publish_map()
         self.watch_bar_ends()
@@ -1005,7 +1049,7 @@ class Task2Runner(RunnerBase):
         self.send_cmd(0.0, 0.0)
         self.follower.set_path([])
         self.set_state(State.FINISHED)
-        self.end_run()
+        self.end_run(done=True)            # FINISHED to the tablet
         self.get_logger().info(f"FINISHED  in the carpark at {self.fmt(self.current_pose)} ({why}) "
                                f"in {self.run_time():.1f} s")
         self.publish_waypoints()
@@ -1098,8 +1142,7 @@ class Task2Runner(RunnerBase):
         msg = RunStatus()
         msg.header.stamp, msg.header.frame_id = self.stamp(), 'map'
         msg.state = self.state.name
-        planning = self.leg_paths and any(p is None for p in self.leg_paths)
-        msg.plan_state = 'PLANNING' if planning else ('DONE' if self.leg_paths else 'WAITING')
+        msg.plan_state, msg.reset_done = self.plan_state(), bool(self.reset_done)
         msg.x, msg.y, msg.yaw = (float(v) for v in self.current_pose)
         msg.leg_count = 4
         msg.dist_to_checkpoint = float('nan')

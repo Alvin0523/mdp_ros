@@ -65,7 +65,7 @@ class RunnerBase(Node):
         self.pose_offset = (0.0, 0.0)    # m, map frame: sensor fixes (shift_pose), on top of the EKF
         self.state = None
         self.state_start = self.now()
-        self.run_start = self.run_end = None  # GO and FINISHED/STOP times, for run_time
+        self.run_start = self.run_end = None  # START and FINISHED/STOP times, for run_time
         self._last_status = 0.0
         self._last_cmd = (0.0, 0.0)
 
@@ -82,15 +82,18 @@ class RunnerBase(Node):
         self.state_start = self.now()
 
     def run_time(self) -> float:
-        """Seconds since GO; frozen at FINISHED / STOP."""
+        """Seconds since START; frozen at FINISHED / STOP."""
         if self.run_start is None:
             return 0.0
         return (self.run_end if self.run_end is not None else self.now()) - self.run_start
 
-    def end_run(self):
-        """FINISHED / STOP: freeze the run time."""
+    def end_run(self, done: bool = False):
+        """FINISHED / STOP: freeze the run time. done: the run is complete (not a STOP) -
+        the tablet gets FINISHED, once, when the timer stops."""
         if self.run_start is not None and self.run_end is None:
             self.run_end = self.now()
+            if done:
+                self.send_bt('FINISHED')
 
     @staticmethod
     def fmt(pose) -> str:

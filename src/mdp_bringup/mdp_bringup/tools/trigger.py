@@ -1,7 +1,7 @@
 """
 Call a std_srvs/Trigger service on the runner and print the reply.
 
-    ros2 run mdp_bringup trigger /start_run     (pixi run go)
+    ros2 run mdp_bringup trigger /start_run     (pixi run start)
     ros2 run mdp_bringup trigger /stop_run      (pixi run stop)
     ros2 run mdp_bringup trigger /reset_pose    (pixi run reset)
 

@@ -4,9 +4,9 @@
 
 std_msgs/Header header
 
-string state          # WAITING_FOR_SETUP PLANNING_PATH WAITING_FOR_GO NAVIGATING_TO_TARGET PAUSE_FOR_SCAN FINISHED STOPPED
+string state          # WAITING_FOR_SETUP PLANNING_PATH WAITING_FOR_START NAVIGATING_TO_TARGET PAUSE_FOR_SCAN FINISHED STOPPED
 string plan_state     # WAITING PLANNING DONE (same as the tablet's PLAN line)
-float64 run_time      # s since GO (0 before it); stops counting at FINISHED / STOPPED
+float64 run_time      # s since START (0 before it); stops counting at FINISHED / STOPPED
 bool reset_done       # pose verified at the start (the tablet's RESET line)
 
 # Where it is going

@@ -263,8 +263,8 @@ def generate_launch_description(argv=None):
         # Foxglove's REC records here: bags land on the laptop, not the Pi's SD card.
         actions.append(Node(package='mdp_bringup', executable='bag_recorder', output='screen',
                             parameters=[sim_time]))
-        # A sound on this laptop's speakers at GO (sounds/go.mp3).
-        actions.append(Node(package='mdp_bringup', executable='go_sound', output='screen',
+        # A sound on this laptop's speakers at START (sounds/start.mp3).
+        actions.append(Node(package='mdp_bringup', executable='start_sound', output='screen',
                             parameters=[sim_time]))
         # Task 1: what YOLO saw at each obstacle + a collage, snapshots/<date_time>/.
         actions.append(Node(package='mdp_bringup', executable='scan_snapshots', output='screen',
@@ -462,7 +462,7 @@ def generate_launch_description(argv=None):
                             parameters=[navigation, sim_time]))
     elif task == '1':
         # Idle in WAITING_FOR_SETUP until the tablet's DONE, plans, then holds
-        # for `go` (tablet BEGIN / pixi run go).
+        # for START (tablet / pixi run start / Foxglove).
         actions.append(Node(
             package='mdp_bringup', executable='task1_runner', output='screen',
             parameters=[navigation,

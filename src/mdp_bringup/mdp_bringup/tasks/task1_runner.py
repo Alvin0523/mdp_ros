@@ -1,10 +1,10 @@
 """
 Task 1 runner: visit every obstacle, read its image, report it to the tablet.
 
-  WAITING_FOR_SETUP --/obstacle_setup--> PLANNING_PATH --> WAITING_FOR_GO
+  WAITING_FOR_SETUP --/obstacle_setup--> PLANNING_PATH --> WAITING_FOR_START
       --/start_run--> NAVIGATING_TO_TARGET <--> PAUSE_FOR_SCAN --> FINISHED
   /stop_run -> STOPPED from anywhere; a pose reset (/reset_pose -> /set_pose) goes back to
-  WAITING_FOR_GO, keeping the obstacles and the plan.
+  WAITING_FOR_START, keeping the obstacles and the plan.
 
 Planning (mdp_algorithm): the visiting order and checkpoints are computed at
 once; every leg's Hybrid A* path is then planned in a background thread, so
@@ -85,7 +85,7 @@ SLID_IR_MAX_M = 0.03    # a stop slid further than this along the face: no IR cr
 class State(Enum):
     WAITING_FOR_SETUP = auto()
     PLANNING_PATH = auto()
-    WAITING_FOR_GO = auto()       # planned; the car holds until /start_run
+    WAITING_FOR_START = auto()       # planned; the car holds until /start_run
     NAVIGATING_TO_TARGET = auto()
     PAUSE_FOR_SCAN = auto()
     FINISHED = auto()
@@ -491,7 +491,7 @@ class Task1Runner(RunnerBase):
         self.detected_target_id = Counter(self.scan_detections).most_common(1)[0][0]
 
     def start_run_callback(self, request, response):
-        """/start_run (tablet BEGIN, `pixi run go`): only from WAITING_FOR_GO with
+        """/start_run (tablet START, `pixi run start`, Foxglove START): only from WAITING_FOR_START with
         the plan done and the pose reset; otherwise says why not."""
         not_ready = {
             State.WAITING_FOR_SETUP: "Not ready: no obstacle setup received yet.",
@@ -499,18 +499,18 @@ class Task1Runner(RunnerBase):
             State.STOPPED: "Ignored: stopped - reset the pose first (pixi run reset).",
             State.FINISHED: "Not ready: run finished - put the car back and reset (pixi run reset).",
         }
-        if self.state == State.WAITING_FOR_GO and self.plan_state != 'DONE':
+        if self.state == State.WAITING_FOR_START and self.plan_state != 'DONE':
             reason = "Not ready: still planning the path."
-        elif self.state == State.WAITING_FOR_GO and not self.reset_done:
+        elif self.state == State.WAITING_FOR_START and not self.reset_done:
             reason = "Not ready: reset the pose first (pixi run reset)."
-        elif self.state != State.WAITING_FOR_GO:
+        elif self.state != State.WAITING_FOR_START:
             reason = not_ready.get(self.state, f"Ignored: run already in progress ({self.state.name}).")
         else:
             reason = None
         response.success = reason is None
         if reason:
             response.message = reason
-            self.get_logger().warn(f"`go` rejected: {reason}")
+            self.get_logger().warn(f"`start` rejected: {reason}")
         else:
             self.set_state(State.NAVIGATING_TO_TARGET)
             self.current_target_idx = 0
@@ -525,7 +525,7 @@ class Task1Runner(RunnerBase):
             self._heading_retried = set()
             self._off_path = {}
             response.message = "Run started - navigating to targets."
-            self.get_logger().info(f"GO        {' -> '.join(self.tablet_id(i) for i in self.visiting_order)}")
+            self.get_logger().info(f"START     {' -> '.join(self.tablet_id(i) for i in self.visiting_order)}")
             self.publish_checkpoints()
         self.sync_indicators()
         return response
@@ -550,7 +550,7 @@ class Task1Runner(RunnerBase):
         self.set_state(State.STOPPED)
         self.send_cmd(0.0, 0.0)
         self.end_run()
-        self.get_logger().info(f"STOP      at {self.fmt(self.current_pose)} after {self.run_time():.1f} s"
+        self.get_logger().info(f"E-STOP    at {self.fmt(self.current_pose)} after {self.run_time():.1f} s"
                                f" - reset before the next run")
         self.publish_checkpoints()
         self.sync_indicators()
@@ -572,7 +572,7 @@ class Task1Runner(RunnerBase):
         if self.state in (State.FINISHED, State.STOPPED):
             self.current_target_idx = 0
             if self.plan_state == 'DONE':
-                self.set_state(State.WAITING_FOR_GO)
+                self.set_state(State.WAITING_FOR_START)
             elif self.obstacles:
                 self._plan_gen += 1
                 self.leg_paths = []
@@ -611,7 +611,7 @@ class Task1Runner(RunnerBase):
             return f'Scanning obstacle {self.current_label()}'
         if self.state == State.FINISHED:
             return 'Finished'
-        if self.state == State.WAITING_FOR_GO and self.plan_state == 'DONE' and self.reset_done:
+        if self.state == State.WAITING_FOR_START and self.plan_state == 'DONE' and self.reset_done:
             return 'Ready'
         return 'Waiting'
 
@@ -658,7 +658,7 @@ class Task1Runner(RunnerBase):
                 self.finish_scan()
         elif self.state == State.STOPPED:
             self.send_cmd(0.0, 0.0)
-        elif self.state in (State.WAITING_FOR_GO, State.FINISHED):
+        elif self.state in (State.WAITING_FOR_START, State.FINISHED):
             self.send_cmd(0.0, 0.0)   # idle: hold the car still
 
     def configure_planner(self):
@@ -722,7 +722,7 @@ class Task1Runner(RunnerBase):
         self._heading_retried = set()
         self._off_path = {}
         self.current_target_idx = 0
-        self.set_state(State.WAITING_FOR_GO)
+        self.set_state(State.WAITING_FOR_START)
         self._obstacles_cm = obstacles_cm
         self._laptop_ok = False
         if self.get_parameter('remote_planner').value:
@@ -794,7 +794,7 @@ class Task1Runner(RunnerBase):
         if all(p is not None for p in self.leg_paths):
             self._remote = None
             self.plan_state = 'DONE'
-            self.get_logger().info(f"PLAN      done, {len(self.checkpoints)} legs - waiting for GO")
+            self.get_logger().info(f"PLAN      done, {len(self.checkpoints)} legs - waiting for START")
 
     def check_remote_plan(self):
         """control_loop: plan here when the laptop does not answer."""
@@ -830,7 +830,7 @@ class Task1Runner(RunnerBase):
                 pose = target
             if gen == self._plan_gen:
                 self.plan_state = 'DONE'
-                self.get_logger().info(f"PLAN      done, {len(checkpoints)} legs - waiting for GO")
+                self.get_logger().info(f"PLAN      done, {len(checkpoints)} legs - waiting for START")
         except Exception:
             self.get_logger().error(f"PLAN      crashed:\n{traceback.format_exc()}")
 
@@ -919,7 +919,7 @@ class Task1Runner(RunnerBase):
         If the last stop does an IR creep, the car still moves: the time stops at FINISHED."""
         idx = self.current_target_idx
         if idx == len(self.visiting_order) - 1 and not self.ir_active(idx) and self.run_end is None:
-            self.end_run()
+            self.end_run(done=True)
             self.get_logger().info(f"TIMER     stopped at {self.run_time():.1f} s - "
                                    f"the car stopped at the last obstacle")
 
@@ -1086,7 +1086,7 @@ class Task1Runner(RunnerBase):
         if self.current_target_idx >= len(self.visiting_order):
             scan_s = self.now() - self.state_start
             self.set_state(State.FINISHED)
-            self.end_run()
+            self.end_run(done=True)        # FINISHED to the tablet here unless the timer stopped already
             self.get_logger().info(f"FINISHED  all obstacles visited in {self.run_time():.1f} s "
                                    f"(+{scan_s:.1f} s last scan)")
         else:
