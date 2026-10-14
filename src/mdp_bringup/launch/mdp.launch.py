@@ -41,6 +41,9 @@ Arguments
              Task 2 without start_cell: in the carpark, facing out (+x).
   gui        sim only - Gazebo window                                 (default true)
   model      YOLO model file under mdp_vision/models/ (default best_v5.pt)
+  bullseye_matcher  task 2: true -> bullseyes also by template matching
+             (mdp_vision bullseye_matcher, wherever YOLO runs) - until YOLO
+             has a bullseye class                              (default true)
   serial_port, bluetooth_device  device paths    (default: config/bridges.yaml)
   log        quiet -> this terminal shows warnings/errors from everything, plus
                       the task runners and the tablet/STM32 bridges; Gazebo's
@@ -179,6 +182,7 @@ def generate_launch_description(argv=None):
     # PyTorch crashed on the Pi 4's CPU (SIGILL), so role:=solo on the real car
     # has no working YOLO model any more (the NCNN exports were removed 2026-10-08).
     model = arg('model', 'best_v5.pt')
+    matcher = _true(arg('bullseye_matcher', 'true'))
     quiet = arg('log', 'quiet') != 'full'
     serial_port = arg('serial_port', '')              # '' = config/bridges.yaml
     bluetooth_device = arg('bluetooth_device', '')
@@ -207,6 +211,8 @@ def generate_launch_description(argv=None):
         DeclareLaunchArgument('gui', default_value='true', description='sim: Gazebo window'),
         DeclareLaunchArgument('model', default_value='best_v5.pt',
                               description='YOLO model file under mdp_vision/models/, or a full path'),
+        DeclareLaunchArgument('bullseye_matcher', default_value='true',
+                              description='task 2: bullseyes by template matching too, where YOLO runs'),
         DeclareLaunchArgument('serial_port', default_value='config/bridges.yaml', description='real: STM32 USART3 device'),
         DeclareLaunchArgument('bluetooth_device', default_value='config/bridges.yaml', description='tablet RFCOMM device'),
         DeclareLaunchArgument('log', default_value='quiet',
@@ -251,6 +257,7 @@ def generate_launch_description(argv=None):
         actions.append(IncludeLaunchDescription(
             PythonLaunchDescriptionSource(os.path.join(pkg_bringup, 'launch', 'vision.launch.py')),
             launch_arguments={'model': model, 'camera': 'false', 'yolo': 'true',
+                              'bullseye': str(matcher).lower(),   # the laptop does not know the task
                               'camera_topic': '/camera/image_raw' if sim else '/image_raw/compressed',
                               'use_sim_time': str(sim).lower(),
                               'log_level': 'info'}.items()))   # one startup line each: model + GPU/CPU, camera mode
@@ -292,7 +299,7 @@ def generate_launch_description(argv=None):
         # with (see obstacle_layout.py).
         world_name = 'task2_arena' if task == '2' else 'task1_arena'
         if task == '2':
-            blocks, walls, _ = obstacle_layout.task2_setup(layout)   # tasks.yaml task2 setup
+            blocks, walls, _, _ = obstacle_layout.task2_setup(layout)   # tasks.yaml task2 setup
             models = blocks + walls
         elif obstacles == 'tablet':
             models = []   # an empty arena: the blocks appear when the tablet sends its layout
@@ -423,6 +430,7 @@ def generate_launch_description(argv=None):
             PythonLaunchDescriptionSource(os.path.join(pkg_bringup, 'launch', 'vision.launch.py')),
             launch_arguments={'model': model, 'camera': str(not sim).lower(), 'camera_topic': camera_topic,
                               'yolo': str(role != 'pi').lower(),
+                              'bullseye': str(matcher and role != 'pi' and task == '2').lower(),
                               'use_sim_time': str(sim).lower(),
                               'log_level': 'info'}.items()))   # one startup line each: model + GPU/CPU, camera mode
 
@@ -473,6 +481,7 @@ def generate_launch_description(argv=None):
         actions.append(Node(
             package='mdp_bringup', executable='task2_runner', output='screen',
             parameters=[navigation, {'layout': layout, 'serve_setup': role != 'pi', 'start_x': start_x,
-                                     'start_y': start_y, 'start_yaw': start_yaw}, sim_time]))
+                                     'start_y': start_y, 'start_yaw': start_yaw,
+                                     'remote_planner': role == 'pi'}, sim_time]))
 
     return LaunchDescription(declared + actions)

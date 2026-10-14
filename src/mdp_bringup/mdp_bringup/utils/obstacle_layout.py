@@ -124,8 +124,9 @@ class Task2Arena:
     wall: float
     wall_height: float
     obstacle_1_size: Tuple[float, float, float]
-    obstacle_2_size: Tuple[float, float, float]
+    obstacle_2_size: Tuple[float, float, float]   # [1] (across): the usual bar width - unmeasured
     side_wall_clearance: float
+    obstacle_2_width_range: Tuple[float, float] = (0.30, 1.20)   # m, the bar widths a course may have
 
     @property
     def opening_x(self) -> float:
@@ -149,9 +150,12 @@ class Task2Arena:
                 (b, cy + w, self.opening_x, cy + w + t),                  # left side
                 (b, cy - w - t, self.opening_x, cy - w)]                  # right side
 
-    def side_walls(self, obstacle_2_x: float) -> List[Tuple[float, float, float, float]]:
-        """The walls that MAY stand side_wall_clearance out from obstacle 2's ends."""
-        y = self.obstacle_2_size[1] / 2.0 + self.side_wall_clearance
+    def side_walls(self, obstacle_2_x: float, bar_width: Optional[float] = None
+                   ) -> List[Tuple[float, float, float, float]]:
+        """The walls that MAY stand side_wall_clearance out from obstacle 2's ends
+        (bar_width: measured, else the usual obstacle_2 size)."""
+        width = self.obstacle_2_size[1] if bar_width is None else bar_width
+        y = width / 2.0 + self.side_wall_clearance
         x0, x1 = obstacle_2_x - TASK2_SIDE_WALL_LENGTH / 2.0, obstacle_2_x + TASK2_SIDE_WALL_LENGTH / 2.0
         cy, t = TASK2_CENTRE_Y, self.wall
         return [(x0, cy + y, x1, cy + y + t), (x0, cy - y - t, x1, cy - y)]
@@ -164,16 +168,20 @@ def load_task2(path: str) -> Task2Arena:
     return Task2Arena(float(c['width']), float(c['depth']), float(c['wall']), float(c['height']),
                       tuple(float(v) for v in t['obstacle_1']['size']),
                       tuple(float(v) for v in t['obstacle_2']['size']),
-                      float(t['side_wall_clearance']))
+                      float(t['side_wall_clearance']),
+                      tuple(float(v) for v in t['obstacle_2'].get('width_range', (0.30, 1.20))))
 
 
 def task2_setup(path: str):
     """tasks.yaml task2 `setup` layout: (obstacles with their arrows, walls) as
-    LayoutObstacles for world_sdf(), and (obstacle_1_x, obstacle_2_x) centres."""
+    LayoutObstacles for world_sdf(), (obstacle_1_x, obstacle_2_x) centres and the
+    bar's width (setup bar_width, else the usual obstacle_2 size)."""
     arena = load_task2(path)
     with open(path) as f:
         layout = (yaml.safe_load(f) or {})['task2']['setup']
     s1, s2 = arena.obstacle_1_size, arena.obstacle_2_size
+    width = float(layout.get('bar_width', s2[1]))
+    s2 = (s2[0], width, s2[2])
     x1 = arena.opening_x + float(layout['d1']) + s1[0] / 2.0
     x2 = x1 + s1[0] / 2.0 + float(layout['d2']) + s2[0] / 2.0
     cy = TASK2_CENTRE_Y
@@ -189,33 +197,36 @@ def task2_setup(path: str):
     ]
     rects = [(r, arena.wall_height) for r in arena.carpark_walls()]
     if layout.get('side_walls'):
-        rects += [(r, TASK2_SIDE_WALL_HEIGHT) for r in arena.side_walls(x2)]
+        rects += [(r, TASK2_SIDE_WALL_HEIGHT) for r in arena.side_walls(x2, width)]
     walls = [LayoutObstacle(100 + i, (x0 + x1_) / 2.0, (y0 + y1) / 2.0, 'W', (x1_ - x0, y1 - y0, h))
              for i, ((x0, y0, x1_, y1), h) in enumerate(rects)]
-    return obstacles, walls, (x1, x2)
+    return obstacles, walls, (x1, x2), width
 
 
 def task2_setup_string(path: str) -> str:
     """`pixi run setup` for task 2: the setup layout as known obstacles, on /task2_setup -
-    '1:<x1>,<arrow 1>|2:<x2>,<arrow 2>' (centres in metres along the course, LEFT/RIGHT)."""
-    _, _, (x1, x2) = task2_setup(path)
+    '1:<x1>,<arrow 1>|2:<x2>,<arrow 2>,<bar width>' (centres and width in metres along
+    the course, LEFT/RIGHT)."""
+    _, _, (x1, x2), width = task2_setup(path)
     with open(path) as f:
         layout = (yaml.safe_load(f) or {})['task2']['setup']
     arrows = [str(layout[k]).strip().upper() for k in ('arrow_1', 'arrow_2')]
     for a in arrows:
         if a not in ARROW_SYMBOL:
             raise ValueError(f"{path}: task2 arrow {a!r} is not LEFT/RIGHT")
-    return f'1:{x1:.3f},{arrows[0]}|2:{x2:.3f},{arrows[1]}'
+    return f'1:{x1:.3f},{arrows[0]}|2:{x2:.3f},{arrows[1]},{width:.3f}'
 
 
 def from_task2_setup(data: str):
-    """A /task2_setup message -> (x1, x2, arrow 1, arrow 2); ValueError if malformed."""
+    """A /task2_setup message -> (x1, x2, arrow 1, arrow 2, bar width or None);
+    ValueError if malformed. (A message without the width - older laptops - is fine.)"""
     items = dict(item.split(':', 1) for item in data.strip().split('|'))
-    (x1, a1), (x2, a2) = (items['1'].split(','), items['2'].split(','))
+    (x1, a1), bar = items['1'].split(','), items['2'].split(',')
+    (x2, a2), width = bar[:2], (float(bar[2]) if len(bar) > 2 else None)
     a1, a2 = a1.strip().upper(), a2.strip().upper()
     if a1 not in ARROW_SYMBOL or a2 not in ARROW_SYMBOL:
         raise ValueError(f"arrows {a1!r} / {a2!r} are not LEFT/RIGHT")
-    return float(x1), float(x2), a1, a2
+    return float(x1), float(x2), a1, a2, width
 
 
 # ---------------------------------------------------------------- Gazebo ----
