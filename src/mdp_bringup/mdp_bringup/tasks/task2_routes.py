@@ -200,10 +200,10 @@ class RouteTable:
     def lookup(self, d2: float, bar_width: float, arrow_1: str, arrow_2: str) -> Tuple[Optional[list], str]:
         """(route in CP1's frame ending exactly d2 ahead, why-not). bar_width must be
         one of the table's (round_width())."""
-        # Up to a step outside: the nearest route, its straight adjusted - the course's
+        # Up to 1.5 steps outside: the nearest route, its straight adjusted - the course's
         # d2 is 0.60-1.50 m, a reading a few cm outside is the ultrasonic / pose's error
-        # (sim 2026-10-14: 0.57 m for 0.60).
-        if not (self.d2s[0] - STEP_M <= d2 <= self.d2s[-1] + STEP_M):
+        # (sim 2026-10-14: 0.57 m for 0.60, 1.55-1.56 m for 1.50).
+        if not (self.d2s[0] - 1.5 * STEP_M <= d2 <= self.d2s[-1] + 1.5 * STEP_M):
             return None, f'd2 {d2:.2f} m outside the table'
         if bar_width not in self.widths:
             return None, f'bar width {bar_width:.2f} m not in the table'

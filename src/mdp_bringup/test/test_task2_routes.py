@@ -68,6 +68,7 @@ def test_lookup_refuses_outside_the_table(table):
     assert table.lookup(2.0, 0.6, 'LEFT', 'LEFT')[0] is None
     assert table.lookup(0.50, 0.6, 'LEFT', 'LEFT')[0] is None
     assert table.lookup(0.57, 0.6, 'LEFT', 'LEFT')[0] is not None   # a few cm short of the course's 0.60
+    assert table.lookup(1.56, 0.6, 'LEFT', 'LEFT')[0] is not None   # the ultrasonic's long reading at 1.5 m
     assert table.lookup(1.0, 0.62, 'LEFT', 'LEFT')[0] is None      # not a table width
 
 
