@@ -13,9 +13,10 @@
  *                                   2026-10-08 the tablet sent the cell's corner in cm.)
  *   DONE                            publish the set on /obstacle_setup (metres,
  *                                   at the CELL CENTRE = (col + 0.5) * 10 cm)
- *   START                           call /start_run (= `pixi run go`, Foxglove GO);
+ *   START                           call /start_run (= `pixi run start`, Foxglove START);
  *                                   BEGIN, its old name, still works
- *   STOP                            call /stop_run
+ *   STOP                            call /stop_run - the EMERGENCY stop (run stopped,
+ *                                   zero velocity, reset before the next run)
  *   RESET                           call /reset_pose (car back at the start pose,
  *                                   like `pixi run reset`)
  *   CLEAR                           resend the current ROBOT line
@@ -23,7 +24,7 @@
  *
  * ROS -> tablet: every String on /bluetooth_tx is written as a line. The latest
  * ROBOT / PLAN / RESET / STATUS line is remembered and resent when the link
- * comes up (and ROBOT again on CLEAR). DONE (from the runner, either task) =
+ * comes up (and ROBOT again on CLEAR). FINISHED (from the runner, either task) =
  * the run is complete and its timer stopped - not sent after a STOP.
  *
  * Creating the device (not done here): e.g. `sudo rfcomm listen /dev/rfcomm0 1`
@@ -435,7 +436,7 @@ private:
       RCLCPP_WARN(get_logger(), "BT        %s not available - is a task runner up?", name);
       return;
     }
-    // The runner logs the outcome (GO / `go` rejected / STOP / RESET done).
+    // The runner logs the outcome (START / `start` rejected / E-STOP / RESET done).
     client->async_send_request(std::make_shared<std_srvs::srv::Trigger::Request>());
   }
 

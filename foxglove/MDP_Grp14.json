@@ -452,22 +452,22 @@
     "CallService!go": {
       "serviceName": "/start_run",
       "requestPayload": "{}",
-      "buttonText": "GO",
+      "buttonText": "START",
       "buttonColor": "#2e7d32",
       "layout": "vertical",
       "editingMode": false,
       "timeoutSeconds": 10,
-      "foxglovePanelTitle": "Go"
+      "foxglovePanelTitle": "Start"
     },
     "CallService!stop": {
       "serviceName": "/stop_run",
       "requestPayload": "{}",
-      "buttonText": "STOP",
+      "buttonText": "E-STOP",
       "buttonColor": "#c62828",
       "layout": "vertical",
       "editingMode": false,
       "timeoutSeconds": 10,
-      "foxglovePanelTitle": "Stop"
+      "foxglovePanelTitle": "Emergency stop"
     },
     "CallService!rec": {
       "requestPayload": "{}",
@@ -972,22 +972,22 @@
     "CallService!t2_go": {
       "serviceName": "/start_run",
       "requestPayload": "{}",
-      "buttonText": "GO",
+      "buttonText": "START",
       "buttonColor": "#2e7d32",
       "layout": "vertical",
       "editingMode": false,
       "timeoutSeconds": 10,
-      "foxglovePanelTitle": "Go"
+      "foxglovePanelTitle": "Start"
     },
     "CallService!t2_stop": {
       "serviceName": "/stop_run",
       "requestPayload": "{}",
-      "buttonText": "STOP",
+      "buttonText": "E-STOP",
       "buttonColor": "#c62828",
       "layout": "vertical",
       "editingMode": false,
       "timeoutSeconds": 10,
-      "foxglovePanelTitle": "Stop"
+      "foxglovePanelTitle": "Emergency stop"
     },
     "CallService!t2_rec": {
       "requestPayload": "{}",
