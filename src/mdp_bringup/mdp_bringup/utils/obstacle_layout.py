@@ -40,6 +40,9 @@ class LayoutObstacle:
     facing: str                    # N/E/S/W: the side with the image
     size: Tuple[float, float, float] = TASK1_SIZE
     symbol: Optional[str] = None   # models/symbols/<symbol>.obj, sim only
+    # More symbols, sim only: (face N/E/S/W, offset along that face in m, symbol) -
+    # task 2's bullseyes on the sides and edge blocks.
+    extra_symbols: Tuple[Tuple[str, float, str], ...] = ()
 
     @property
     def cell(self) -> Tuple[int, int]:
@@ -110,6 +113,7 @@ TASK2_BACK_WALL_X = 0.10         # inside face of the carpark's back wall
 TASK2_SIDE_WALL_LENGTH = 1.20    # sim side walls, centred on obstacle 2
 TASK2_SIDE_WALL_HEIGHT = 0.30
 ARROW_SYMBOL = {'LEFT': '39_ArrowLeft', 'RIGHT': '38_ArrowRight'}
+BULLSEYE_SYMBOL = '99_Bullseye'
 
 
 @dataclass(frozen=True)
@@ -173,9 +177,15 @@ def task2_setup(path: str):
     x1 = arena.opening_x + float(layout['d1']) + s1[0] / 2.0
     x2 = x1 + s1[0] / 2.0 + float(layout['d2']) + s2[0] / 2.0
     cy = TASK2_CENTRE_Y
+    # Bullseyes as on the course (2026-10-14): obstacle 1's two sides; obstacle 2's
+    # two ends, and its front and back faces on the edge-most 10 cm block each side.
+    edge = s2[1] / 2.0 - 0.05
     obstacles = [
-        LayoutObstacle(1, x1, cy, 'W', s1, ARROW_SYMBOL[str(layout['arrow_1']).upper()]),
-        LayoutObstacle(2, x2, cy, 'W', s2, ARROW_SYMBOL[str(layout['arrow_2']).upper()]),
+        LayoutObstacle(1, x1, cy, 'W', s1, ARROW_SYMBOL[str(layout['arrow_1']).upper()],
+                       (('N', 0.0, BULLSEYE_SYMBOL), ('S', 0.0, BULLSEYE_SYMBOL))),
+        LayoutObstacle(2, x2, cy, 'W', s2, ARROW_SYMBOL[str(layout['arrow_2']).upper()],
+                       tuple((face, along, BULLSEYE_SYMBOL) for face in ('W', 'E') for along in (-edge, edge))
+                       + (('N', 0.0, BULLSEYE_SYMBOL), ('S', 0.0, BULLSEYE_SYMBOL))),
     ]
     rects = [(r, arena.wall_height) for r in arena.carpark_walls()]
     if layout.get('side_walls'):
@@ -230,16 +240,21 @@ _FACING_DIR = {'N': (0.0, 1.0), 'S': (0.0, -1.0), 'E': (1.0, 0.0), 'W': (-1.0, 0
 def model_sdf(o: LayoutObstacle, sdf_root: bool = False) -> str:
     """One obstacle as an SDF <model> (sdf_root: wrapped in <sdf>, for spawning)."""
     sx, sy, sz = o.size
+    symbols = ([(o.facing, 0.0, o.symbol)] if o.symbol else []) + list(o.extra_symbols)
     decal = ''
-    if o.symbol:
-        fx, fy = _FACING_DIR[o.facing]
+    for k, (face, along, symbol) in enumerate(symbols):
+        fx, fy = _FACING_DIR[face]
         dx, dy = fx * (sx / 2.0 + 0.0015), fy * (sy / 2.0 + 0.0015)
-        decal = f'''
-        <visual name="symbol">
-          <pose>{dx:.4f} {dy:.4f} {sz / 2.0 - SYMBOL_M / 2.0:.4f} 0 0 {_DECAL_YAW[o.facing]}</pose>
+        if fx:
+            dy += along                    # E / W face: along it is y
+        else:
+            dx += along
+        decal += f'''
+        <visual name="symbol{'_%d' % k if k else ''}">
+          <pose>{dx:.4f} {dy:.4f} {sz / 2.0 - SYMBOL_M / 2.0:.4f} 0 0 {_DECAL_YAW[face]}</pose>
           <geometry>
             <mesh>
-              <uri>model://mdp_description/models/symbols/{o.symbol}.obj</uri>
+              <uri>model://mdp_description/models/symbols/{symbol}.obj</uri>
               <scale>1 1 1</scale>
             </mesh>
           </geometry>
