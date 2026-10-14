@@ -20,19 +20,27 @@ ARROW_IDS = {'39': 'LEFT', '38': 'RIGHT'}
 BULLSEYE_ID = '99'
 # A box's range from its size must agree with the geometry's within this ratio: a
 # bullseye elsewhere (obstacle 1's sides) or a false match is a different size.
-RANGE_RATIO = (0.65, 1.5)
+RANGE_RATIO = (0.75, 1.33)
 MIN_ASPECT = 0.6              # w / h: a face seen nearly square-on (not the bar's end faces, edge-on)
 ARROW_2_MARGIN_M = 0.35       # an arrow this much further than obstacle 1's face is arrow 2 (d2 >= 0.6 m)
+# YOLO's arrow box is the arrow, not the whole printed card: 33 px where the card is
+# 44 (best_v5.pt, sim 2026-10-14). The runner measures it at home (obstacle 1's
+# distance known) - this until then. Read as the full card it put arrow 1 a third
+# further away: at d1 = 1.0 m arrow 1 was taken for arrow 2.
+ARROW_BOX_SCALE = 0.75
+CONFIDENT = 0.70              # a bullseye box this sure is used for the bar's distance
+MIN_BULLSEYE_PX = 16          # the bar's face is at most ~2.1 m away while measuring: >= 16 px
 
 
 def focal_px(image_w: float, hfov: float) -> float:
     return (image_w / 2.0) / math.tan(hfov / 2.0)
 
 
-def box_range(box, image_w: float, hfov: float) -> float:
-    """Distance along the camera's axis to a symbol from its box height (m)."""
+def box_range(box, image_w: float, hfov: float, scale: float = 1.0) -> float:
+    """Distance along the camera's axis to a symbol from its box height (m). scale:
+    the box's size as a share of the printed card (ARROW_BOX_SCALE for an arrow)."""
     h = max(1.0, box[5] - box[3])
-    return SYMBOL_M * focal_px(image_w, hfov) / h
+    return SYMBOL_M * scale * focal_px(image_w, hfov) / h
 
 
 def box_bearing(box, image_w: float, hfov: float) -> float:
@@ -49,7 +57,8 @@ def parse(data: str):
     return float(d['stamp']), float(d['w']), float(d['h']), boxes
 
 
-def classify_arrow(box, image_w: float, hfov: float, cam_x: float, obstacle_1_face_x: Optional[float]) -> int:
+def classify_arrow(box, image_w: float, hfov: float, cam_x: float, obstacle_1_face_x: Optional[float],
+                   scale: float = ARROW_BOX_SCALE) -> int:
     """0 = arrow 1 (obstacle 1's), 1 = arrow 2 (the bar's): arrow 2 is the one well
     beyond obstacle 1's face. Obstacle 1 unknown (or passed): arrow 1 if the camera
     is short of it."""
@@ -58,7 +67,12 @@ def classify_arrow(box, image_w: float, hfov: float, cam_x: float, obstacle_1_fa
     ahead = obstacle_1_face_x - cam_x
     if ahead <= 0.0:
         return 1                 # past obstacle 1's face: its arrow is out of view
-    return 1 if box_range(box, image_w, hfov) > ahead + ARROW_2_MARGIN_M else 0
+    return 1 if box_range(box, image_w, hfov, scale) > ahead + ARROW_2_MARGIN_M else 0
+
+
+def arrow_scale(box, image_w: float, hfov: float, distance: float) -> float:
+    """The arrow box's size as a share of the card, from one seen `distance` away."""
+    return (box[5] - box[3]) * distance / (SYMBOL_M * focal_px(image_w, hfov))
 
 
 def bullseye_position(box, image_w: float, hfov: float, cam: Tuple[float, float, float]):
@@ -99,6 +113,12 @@ def bar_half_width(box, image_w: float, hfov: float, cam: Tuple[float, float, fl
         return None
     y = cy + t * math.sin(phi)
     return abs(y - centre_y) + block_m / 2.0
+
+
+def confident(box) -> bool:
+    """A bullseye box sure and big enough to place the bar by (the matcher's
+    smallest-size matches on textures were all false, sim 2026-10-14)."""
+    return box[1] >= CONFIDENT and box[5] - box[3] >= MIN_BULLSEYE_PX
 
 
 def median(values: List[float]) -> Optional[float]:

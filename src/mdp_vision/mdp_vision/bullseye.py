@@ -6,7 +6,10 @@ The template is the printed bullseye itself (mdp_description
 models/symbols/99_Bullseye.png - concentric squares). It is matched at every
 size from min_px to max_px: small sizes with the template shrunk on the full
 frame, big ones with the FRAME shrunk instead (the template kept at BASE_PX),
-so each size costs about the same.
+so each size costs about the same. Every box found is then refined around
+itself in 2 % size steps: the sizes searched are 12 % apart, and the runner
+reads distance from the size (sim 2026-10-14: a 12 % step left the bar 5-6 cm
+short at 0.6 m).
 """
 
 from typing import List, Tuple
@@ -60,7 +63,31 @@ def find_bullseyes(gray: np.ndarray, template: np.ndarray, min_px: float = 10.0,
             kept.append(b)
             if len(kept) >= max_boxes:
                 break
-    return kept
+    return [refine(gray, template, b) for b in kept]
+
+
+def refine(gray: np.ndarray, template: np.ndarray, box, span: float = SCALE_STEP, step: float = 1.02):
+    """The box re-matched at full resolution around itself, sizes within `span`
+    of its own every `step` - the best (score, x1, y1, x2, y2)."""
+    _, x1, y1, x2, y2 = box
+    size = x2 - x1
+    pad = size * (span - 1.0) + 3
+    h, w = gray.shape[:2]
+    rx0, ry0 = int(max(0, x1 - pad)), int(max(0, y1 - pad))
+    rx1, ry1 = int(min(w, x2 + pad)), int(min(h, y2 + pad))
+    roi = gray[ry0:ry1, rx0:rx1]
+    best = box
+    s = size / span
+    while s <= size * span + 1e-6:
+        t = int(round(s))
+        if 4 <= t <= min(roi.shape[:2]):
+            score = cv2.matchTemplate(roi, cv2.resize(template, (t, t), interpolation=cv2.INTER_AREA),
+                                      cv2.TM_CCOEFF_NORMED)
+            _, mx, _, (px, py) = cv2.minMaxLoc(score)
+            if mx > best[0]:
+                best = (float(mx), rx0 + px, ry0 + py, rx0 + px + t, ry0 + py + t)
+        s *= step
+    return best
 
 
 def _iou(a, b) -> float:

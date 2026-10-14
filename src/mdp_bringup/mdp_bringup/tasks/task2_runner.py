@@ -215,6 +215,7 @@ class Task2Runner(RunnerBase):
         self.passes = []                 # (sensor name, FacePass) - faces the IRs are watching for
         self._plan_gen = getattr(self, '_plan_gen', 0) + 1
         self.bullseyes = []              # (frame time, box, image w, camera pose) seen near checkpoint 1
+        self.arrow_scales = getattr(self, 'arrow_scales', [])   # YOLO arrow box / card, measured at home
         self.bar_width = None            # m, the bar's width the run plans with (nearest 5 cm), once known
         self.cp1_planned = False         # lane_waypoint is the planned checkpoint 1 (not a swerve's end)
         self._stuck_since = None
@@ -338,12 +339,21 @@ class Task2Runner(RunnerBase):
         arrows = [b for b in boxes if b[0] in task2_vision.ARROW_IDS]
         if arrows:
             if self.state in (State.WAITING_FOR_START, State.APPROACH_1):
-                # Before turning out: the biggest (nearest) arrow is obstacle 1's.
-                self.count_arrow(0, task2_vision.ARROW_IDS[max(arrows, key=lambda b: b[5] - b[3])[0]])
+                # Before turning out: the biggest (nearest) arrow is obstacle 1's - and,
+                # obstacle 1's distance known (ultrasonic), how big YOLO boxes an arrow.
+                near = max(arrows, key=lambda b: b[5] - b[3])
+                self.count_arrow(0, task2_vision.ARROW_IDS[near[0]])
+                x1 = self.home_x1() if self.state == State.WAITING_FOR_START else None
+                if x1 is not None:
+                    d = x1 - self.arena.obstacle_1_size[0] / 2.0 - cam[0]
+                    if d > 0.2:
+                        self.arrow_scales.append(task2_vision.arrow_scale(near, w, hfov, d))
+                        del self.arrow_scales[:-20]
             else:
                 face1 = self.x1 - self.arena.obstacle_1_size[0] / 2.0 if self.x1 is not None else None
+                scale = task2_vision.median(self.arrow_scales) or task2_vision.ARROW_BOX_SCALE
                 for b in arrows:
-                    i = task2_vision.classify_arrow(b, w, hfov, cam[0], face1)
+                    i = task2_vision.classify_arrow(b, w, hfov, cam[0], face1, scale)
                     if i == 1 or self.level_with_1():
                         self.count_arrow(1, task2_vision.ARROW_IDS[b[0]])
         # Bullseyes from the end of the S into checkpoint 1 on: the bar is near and big in
@@ -369,6 +379,8 @@ class Task2Runner(RunnerBase):
         lo, hi = self.arena.obstacle_2_width_range
         widths = []
         for _, box, w, cam in self.bullseyes:
+            if not task2_vision.confident(box):
+                continue
             half = task2_vision.bar_half_width(box, w, hfov, cam, face_x, TASK2_CENTRE_Y)
             if half is not None and lo - 0.05 <= 2.0 * half <= hi + 0.05:
                 widths.append(2.0 * half)
@@ -539,8 +551,9 @@ class Task2Runner(RunnerBase):
         counts = self.arrow_counts[i]
         return counts.most_common(1)[0][0] if counts else None
 
-    def need_arrow(self, i: int) -> bool:
-        """Arrow i known -> True. Not yet: stop, wait up to ARROW_WAIT_S, then guess."""
+    def need_arrow(self, i: int, guess: str = None) -> bool:
+        """Arrow i known -> True. Not yet: stop, wait up to ARROW_WAIT_S, then guess
+        (`guess`, else LEFT for arrow 1, RIGHT for arrow 2)."""
         if self.arrows[i] is None:
             self.arrows[i] = self.arrow(i)
         if self.arrows[i] is not None:
@@ -551,7 +564,7 @@ class Task2Runner(RunnerBase):
         if self.now() - self._arrow_wait_since < ARROW_WAIT_S:
             self.get_logger().warn(f"ARROW {i + 1}   not read yet - waiting", throttle_duration_sec=1.0)
             return False
-        self.arrows[i] = 'LEFT' if i == 0 else 'RIGHT'
+        self.arrows[i] = guess or ('LEFT' if i == 0 else 'RIGHT')
         self._arrow_wait_since = None
         self.get_logger().warn(f"ARROW {i + 1}   never read - guessing {self.arrows[i]}")
         return True
@@ -971,9 +984,11 @@ class Task2Runner(RunnerBase):
             face = x2 - self.arena.obstacle_2_size[0] / 2.0
             if face - (x + self.car.footprint_front) > ARROW_2_DEADLINE_M:
                 return self.hedge()
-            self.arrows[1] = 'LEFT' if self.side > 0 else 'RIGHT'
-            self.get_logger().warn(f"ARROW 2   not read {ARROW_2_DEADLINE_M:.1f} m from the bar - "
-                                   f"taking the nearer end ({self.arrows[1]})")
+            # Stop and wait for it (then the nearer end): a guess is the wrong side half
+            # the time - a failed run. At d2 = 0.6 m the deadline is checkpoint 1 itself, and
+            # from there arrow 2 is near the picture's edge (sim 2026-10-14: 3 of 12 guessed).
+            if not self.need_arrow(1, 'LEFT' if self.side > 0 else 'RIGHT'):
+                return
         if not self.decide_bar_width(x2):
             return self.hold_heading(max(abs(self._last_cmd[0]), float(self.p('path_speed'))), 0.0)
         if why:
@@ -1017,6 +1032,8 @@ class Task2Runner(RunnerBase):
         far1 = self.x1 + self.arena.obstacle_1_size[0] / 2.0
         faces = []
         for _, box, w, cam in self.bullseyes:
+            if not task2_vision.confident(box):
+                continue
             bx, _ = task2_vision.bullseye_position(box, w, hfov, cam)
             if far1 + task2_routes.D2_RANGE[0] - 0.15 <= bx <= far1 + task2_routes.D2_RANGE[1] + 0.3:
                 faces.append(bx)
@@ -1025,16 +1042,30 @@ class Task2Runner(RunnerBase):
 
     def choose_bar_x(self, x2_us, x2_cam):
         """The ultrasonic's distance to the bar - more precise - unless the camera's
-        disagrees by more than BAR_X_AGREE_M: then the ultrasonic missed the bar (a bar
-        narrower than the lane is wide: it looks straight past the end). (x2, note)."""
+        disagrees by more than BAR_X_AGREE_M. Then whichever the bullseyes agree with:
+        at the right distance their sizes match their directions (task2_vision
+        .bar_half_width's check), at a wrong one they don't. The ultrasonic misses a
+        bar narrower than the lane is wide - it looks straight past the end (sim
+        2026-10-14: 25 cm too far); the camera can be fooled by false matches. (x2, note)."""
         if x2_cam is None:
             return x2_us, ''
         if x2_us is None:
             return x2_cam, f"from the camera only ({markers.cell(x2_cam)}) - no ultrasonic reading"
-        if abs(x2_us - x2_cam) > BAR_X_AGREE_M:
-            return x2_cam, (f"ultrasonic {x2_us - x2_cam:+.2f} m off the camera's - it missed the bar, "
-                            f"using the camera's")
-        return x2_us, ''
+        if abs(x2_us - x2_cam) <= BAR_X_AGREE_M:
+            return x2_us, ''
+        n_us, n_cam = self.bullseyes_fitting(x2_us), self.bullseyes_fitting(x2_cam)
+        if n_cam > n_us:
+            return x2_cam, (f"ultrasonic {x2_us - x2_cam:+.2f} m off the camera's, the bullseyes fit the camera's "
+                            f"({n_cam} / {n_us}) - it missed the bar, using the camera's")
+        return x2_us, (f"camera {x2_cam - x2_us:+.2f} m off the ultrasonic's, the bullseyes fit the "
+                       f"ultrasonic's ({n_us} / {n_cam}) - keeping it")
+
+    def bullseyes_fitting(self, x2: float) -> int:
+        """How many confident bullseyes fit a bar face at x2 (size vs direction)."""
+        face_x = x2 - self.arena.obstacle_2_size[0] / 2.0
+        hfov = float(self.p('camera_hfov'))
+        return sum(1 for _, box, w, cam in self.bullseyes if task2_vision.confident(box)
+                   and task2_vision.bar_half_width(box, w, hfov, cam, face_x, TASK2_CENTRE_Y) is not None)
 
     def decide_bar_width(self, x2: float) -> bool:
         """The bar's width for the rest of the run, from the bullseyes seen on the way
@@ -1247,7 +1278,19 @@ class Task2Runner(RunnerBase):
             # rolls straight on and turns for obstacle 2 once it is planned.
             if self.state != State.TO_CHECKPOINT_1:
                 v = min(v, reachable(v_min, dist))
-        return max(v_min, min(v_max, v, self.ir_pass_limit(a_brake, margin)))
+        return max(v_min, min(v_max, v, self.ir_pass_limit(a_brake, margin), self.arrow_2_limit(a_brake, margin)))
+
+    def arrow_2_limit(self, a_brake: float, margin: float) -> float:
+        """path_speed on the way into checkpoint 1 while arrow 2 is still unread: YOLO
+        gets more frames while it is in view (it is near the picture's edge there, and
+        out of view on the S before - sim 2026-10-14)."""
+        if self.state != State.TO_CHECKPOINT_1 or self.x1 is None or self.arrow(1) is not None:
+            return float('inf')
+        v_slow = float(self.p('path_speed'))
+        d = (self.x1 - 2 * LEVEL_X_M) - self.current_pose[0]          # to the straight bit
+        if d <= 0.0:
+            return v_slow
+        return math.sqrt(v_slow ** 2 + 2.0 * a_brake * max(0.0, d - margin))
 
     def ir_pass_limit(self, a_brake: float, margin: float) -> float:
         """ir_pass_speed while an IR passes a face it is watching (and braking for one
