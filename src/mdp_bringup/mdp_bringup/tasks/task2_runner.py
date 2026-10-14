@@ -30,7 +30,7 @@ utils/obstacle_layout.py. The course rules (carpark, obstacle sizes) come from
 config/tasks.yaml task2. Settings: config/navigation.yaml task2_runner. Drawn
 in Foxglove like task 1.
 
-`pixi run setup` (Foxglove SETUP): tasks.yaml's task2 `sim` layout arrives on
+`pixi run setup` (Foxglove SETUP): tasks.yaml's task2 `setup` layout arrives on
 /task2_setup - both obstacles and arrows KNOWN, so no ultrasonic measuring and
 no YOLO: checkpoint 1 is planned before START and checkpoints 2-4 at checkpoint 1
 from the known bar. Kept across resets, like task 1's set. Served by the

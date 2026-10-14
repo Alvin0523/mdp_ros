@@ -3,8 +3,9 @@
   task1  obstacles by tablet CELL (cell_x, cell_y: 0..19, 10 cm each, (0, 0)
          the bottom-left cell) plus the image side. Metres (`x:`/`y:`) are
          still accepted and snapped to the cell they fall in.
-  task2  the course rules (carpark, obstacle sizes) - `load_task2()` - and a
-         sim-only layout (distances, arrows) - `task2_sim()`.
+  task2  the course rules (carpark, obstacle sizes) - `load_task2()` - and the
+         `setup` layout (distances, arrows): what `pixi run setup` sends the real
+         car as known, and what the Gazebo arena is built from - `task2_setup()`.
 
 From one list:
   * `setup_string()`  - the /obstacle_setup message bluetooth_bridge_node
@@ -50,7 +51,7 @@ def _cell_centre(c: int) -> float:
 
 
 def load(path: str, task: str = 'task1') -> List[LayoutObstacle]:
-    """Task 1's obstacles (task 2 has load_task2 / task2_sim)."""
+    """Task 1's obstacles (task 2 has load_task2 / task2_setup)."""
     assert task == 'task1', task
     with open(path) as f:
         entries = ((yaml.safe_load(f) or {}).get('task1') or {}).get('obstacles') or []
@@ -162,22 +163,22 @@ def load_task2(path: str) -> Task2Arena:
                       float(t['side_wall_clearance']))
 
 
-def task2_sim(path: str):
-    """The sim-only layout: (obstacles with their arrows, walls) as LayoutObstacles
-    for world_sdf(), and (obstacle_1_x, obstacle_2_x) centres."""
+def task2_setup(path: str):
+    """tasks.yaml task2 `setup` layout: (obstacles with their arrows, walls) as
+    LayoutObstacles for world_sdf(), and (obstacle_1_x, obstacle_2_x) centres."""
     arena = load_task2(path)
     with open(path) as f:
-        sim = (yaml.safe_load(f) or {})['task2']['sim']
+        layout = (yaml.safe_load(f) or {})['task2']['setup']
     s1, s2 = arena.obstacle_1_size, arena.obstacle_2_size
-    x1 = arena.opening_x + float(sim['d1']) + s1[0] / 2.0
-    x2 = x1 + s1[0] / 2.0 + float(sim['d2']) + s2[0] / 2.0
+    x1 = arena.opening_x + float(layout['d1']) + s1[0] / 2.0
+    x2 = x1 + s1[0] / 2.0 + float(layout['d2']) + s2[0] / 2.0
     cy = TASK2_CENTRE_Y
     obstacles = [
-        LayoutObstacle(1, x1, cy, 'W', s1, ARROW_SYMBOL[str(sim['arrow_1']).upper()]),
-        LayoutObstacle(2, x2, cy, 'W', s2, ARROW_SYMBOL[str(sim['arrow_2']).upper()]),
+        LayoutObstacle(1, x1, cy, 'W', s1, ARROW_SYMBOL[str(layout['arrow_1']).upper()]),
+        LayoutObstacle(2, x2, cy, 'W', s2, ARROW_SYMBOL[str(layout['arrow_2']).upper()]),
     ]
     rects = [(r, arena.wall_height) for r in arena.carpark_walls()]
-    if sim.get('side_walls'):
+    if layout.get('side_walls'):
         rects += [(r, TASK2_SIDE_WALL_HEIGHT) for r in arena.side_walls(x2)]
     walls = [LayoutObstacle(100 + i, (x0 + x1_) / 2.0, (y0 + y1) / 2.0, 'W', (x1_ - x0, y1 - y0, h))
              for i, ((x0, y0, x1_, y1), h) in enumerate(rects)]
@@ -185,12 +186,12 @@ def task2_sim(path: str):
 
 
 def task2_setup_string(path: str) -> str:
-    """`pixi run setup` for task 2: the sim layout as known obstacles, on /task2_setup -
+    """`pixi run setup` for task 2: the setup layout as known obstacles, on /task2_setup -
     '1:<x1>,<arrow 1>|2:<x2>,<arrow 2>' (centres in metres along the course, LEFT/RIGHT)."""
-    _, _, (x1, x2) = task2_sim(path)
+    _, _, (x1, x2) = task2_setup(path)
     with open(path) as f:
-        sim = (yaml.safe_load(f) or {})['task2']['sim']
-    arrows = [str(sim[k]).strip().upper() for k in ('arrow_1', 'arrow_2')]
+        layout = (yaml.safe_load(f) or {})['task2']['setup']
+    arrows = [str(layout[k]).strip().upper() for k in ('arrow_1', 'arrow_2')]
     for a in arrows:
         if a not in ARROW_SYMBOL:
             raise ValueError(f"{path}: task2 arrow {a!r} is not LEFT/RIGHT")

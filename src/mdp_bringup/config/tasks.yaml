@@ -43,9 +43,10 @@ task2:
   obstacle_2: {size: [0.10, 0.60, 0.20]}   # the bar, centred on the centre line
   side_wall_clearance: 0.50                # walls may stand this far out from obstacle 2's ends
 
-  # TEST LAYOUT - builds the Gazebo arena, and `pixi run setup` sends it to
-  # task2_runner as known (no measuring); without setup the run measures d1, d2 and the arrows.
-  sim:
+  # THE LAYOUT `pixi run setup` SENDS THE CAR (real or Gazebo) as known - no
+  # measuring; the Gazebo arena is built from it too. Without setup the run
+  # measures d1, d2 and the arrows itself.
+  setup:
     d1: 0.60            # carpark opening -> obstacle 1's near face, 0.60-1.50 m
     d2: 0.60            # obstacle 1's far face -> obstacle 2's near face, 0.60-1.50 m
     arrow_1: LEFT       # LEFT / RIGHT - which way round each obstacle
