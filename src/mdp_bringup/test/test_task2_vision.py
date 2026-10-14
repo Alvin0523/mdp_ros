@@ -77,3 +77,21 @@ def test_bullseye_position_from_its_box(ahead, across):
     x, y = V.bullseye_position(project(cam, point), W, HFOV, cam)
     assert x == pytest.approx(point[0], abs=0.03 * ahead + 0.005)
     assert y == pytest.approx(point[1], abs=0.02)
+
+
+def test_arrow_1_at_1_m_is_not_arrow_2():
+    # YOLO's arrow box is ~75 % of the card: read as the full card, arrow 1 at
+    # d1 = 1.0 m looked a third further and was taken for arrow 2 (sim 2026-10-14).
+    cam_x, face1 = 0.50, 1.60
+    near = project((cam_x, CY, 0.0), (face1, CY), size=SYMBOL_M * V.ARROW_BOX_SCALE)
+    far = project((cam_x, CY, 0.0), (face1 + 0.1 + 0.6, CY), size=SYMBOL_M * V.ARROW_BOX_SCALE)
+    assert V.classify_arrow(near, W, HFOV, cam_x, face1, scale=1.0) == 1      # the old reading: wrong
+    assert V.classify_arrow(near, W, HFOV, cam_x, face1) == 0
+    assert V.classify_arrow(far, W, HFOV, cam_x, face1) == 1
+    assert V.arrow_scale(near, W, HFOV, face1 - cam_x) == pytest.approx(V.ARROW_BOX_SCALE, rel=0.01)
+
+
+def test_confident_bullseyes_only():
+    assert V.confident(['99', 0.8, 0, 0, 20, 20])
+    assert not V.confident(['99', 0.65, 0, 0, 20, 20])     # the textures' false matches scored 0.64-0.67
+    assert not V.confident(['99', 0.9, 0, 0, 14, 14])      # smaller than the bar can be while measuring
