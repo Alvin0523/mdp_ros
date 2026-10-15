@@ -41,7 +41,8 @@ Arguments
   start_dir  N / E / S / W, the way the car faces at start   (default N)
              Task 2 without start_cell: in the carpark, facing out (+x).
   gui        sim only - Gazebo window                                 (default true)
-  model      YOLO model file under mdp_vision/models/ (default best_v5.pt)
+  model      YOLO model file under mdp_vision/models/ (default best_v5.pt;
+             task:=2 task2_yolo26s.pt)
   bullseye_matcher  task 2: true -> bullseyes also by template matching
              (mdp_vision bullseye_matcher, wherever YOLO runs) - until YOLO
              has a bullseye class                              (default true)
@@ -179,10 +180,12 @@ def generate_launch_description(argv=None):
         raise ValueError(f"obstacles:={obstacles} - expected yaml or tablet")
     layout = arg('layout', os.path.join(pkg_bringup, 'config', 'tasks.yaml'))
     gui = _true(arg('gui', 'true'))
-    # YOLO model: best_v5.pt (PyTorch). YOLO runs on the laptop (role:=laptop, sim);
-    # PyTorch crashed on the Pi 4's CPU (SIGILL), so role:=solo on the real car
-    # has no working YOLO model any more (the NCNN exports were removed 2026-10-08).
-    model = arg('model', 'best_v5.pt')
+    # YOLO model: best_v5.pt (PyTorch); task 2: task2_yolo26s.pt (Arrow Left / Right +
+    # Bullseye, 2026-10-15), as CoreML when its .mlpackage is there. YOLO runs on the
+    # laptop (role:=laptop, sim); PyTorch crashed on the Pi 4's CPU (SIGILL), so
+    # role:=solo on the real car has no working YOLO model any more (the NCNN exports
+    # were removed 2026-10-08).
+    model = arg('model', 'task2_yolo26s.pt' if task == '2' else 'best_v5.pt')
     matcher = _true(arg('bullseye_matcher', 'true'))
     quiet = arg('log', 'quiet') != 'full'
     serial_port = arg('serial_port', '')              # '' = config/bridges.yaml
@@ -211,7 +214,8 @@ def generate_launch_description(argv=None):
         DeclareLaunchArgument('start_dir', default_value=DEFAULT_START_DIR, description='N/E/S/W facing at start'),
         DeclareLaunchArgument('gui', default_value='true', description='sim: Gazebo window'),
         DeclareLaunchArgument('model', default_value='best_v5.pt',
-                              description='YOLO model file under mdp_vision/models/, or a full path'),
+                              description='YOLO model file under mdp_vision/models/, or a full path '
+                                          '(task:=2: task2_yolo26s.pt)'),
         DeclareLaunchArgument('bullseye_matcher', default_value='true',
                               description='task 2: bullseyes by template matching too, where YOLO runs'),
         DeclareLaunchArgument('serial_port', default_value='config/bridges.yaml', description='real: STM32 USART3 device'),
