@@ -48,7 +48,7 @@ def test_lookup_ends_at_checkpoint_2_and_is_clear(table, arrows, d2, width):
     assert local, why
     x1 = ARENA.opening_x + 0.9 + ARENA.obstacle_1_size[0] / 2.0
     x2 = R.bar_x(ARENA, x1, d2)
-    cp1 = R.checkpoint_1(x1, a1, SETTINGS['lane_offset'])
+    cp1 = R.checkpoint_1(x1, a1, SETTINGS['lane_offset'], SETTINGS['cp1_back'])
     cp2 = R.bar_checkpoints(x2, a2, width, SETTINGS['side_clearance'])[0]
     path = task2_paths.to_world(cp1, local)
     assert path[-1][:2] == pytest.approx(cp2[:2], abs=0.005)

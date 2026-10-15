@@ -206,6 +206,12 @@ task2_runner:
     lane_offset: 0.30          # m, checkpoint 1 (beside obstacle 1) out from the centre line: the car's
                                # side 15.5 cm from obstacle 1 - room for obstacle_padding 0.10 + the
                                # clean shapes' 4 cm spare beside it (0.25: 10.5 cm, every route failed)
+    cp1_back: 0.40             # m, checkpoint 1 this far BEHIND obstacle 1's centre: the camera (17.1 cm
+                               # ahead of the rear axle, URDF) 23 cm short of it - arrow 2 in view (19 deg at
+                               # d2 = 0.6, half view 31; 23 with the real car's ~17 cm overshoot) and obstacle
+                               # 1 not (it comes in > 33 cm before its near face); level with it the camera
+                               # saw nothing (bag 2026-10-15 20:38). No room for the S at d1 0.6 / 0.7: then
+                               # 10 cm nearer at a time (task2_runner cp1_lined_up).
     side_clearance: 0.25       # m, checkpoints 2 and 3 out from obstacle 2's ends (as lane_offset)
     home_stop_dist: 0.12       # m, ultrasonic reading of the carpark's back wall = stop
     home_straight_dist: 0.45   # m, on the centre line before home: the car lines up this far out
