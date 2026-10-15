@@ -42,7 +42,7 @@ from mdp_bringup.utils.obstacle_layout import TASK2_AREA_M, TASK2_CENTRE_Y, Task
 SIDE = {'LEFT': 1.0, 'RIGHT': -1.0}       # +y = left
 STEP_M = 0.05
 D2_RANGE = (0.60, 1.50)                   # m, the course rules
-TABLE_VERSION = 2       # how routes are built (shapes, walls): a table from another version is rebuilt
+TABLE_VERSION = 3       # how routes are built (shapes, walls): a table from another version is rebuilt
 TABLE_FILE = 'task2_routes.json.gz'    # gzip: ~2.5 MB of JSON otherwise
 
 # The settings a route depends on (navigation.yaml task2_runner): with the car's
