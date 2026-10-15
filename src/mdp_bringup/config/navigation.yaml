@@ -236,17 +236,21 @@ task2_runner:
                                # and obstacles alike: the car's inside rear corner cut ~8 cm into it
                                # turning right just past obstacle 1 and passed it at 2.1 cm (sim
                                # 2026-10-14, d2 0.6 L/R)
+    obstacle_1_padding: 0.15   # m kept before and behind obstacle 1 (beside it: obstacle_padding, the
+                               # lane): leg 1 crossing behind it toward arrow 2's side passed its
+                               # corner 0-5 cm off and hit it once (bags 2026-10-15)
     wall_padding: 0.06         # m kept from the walls (carpark, the side walls by the bar)
     # Forward only: the legs are planned without reversing, and the follower never reverses
     # on its own (it backed up after checkpoint 1, car 2026-10-14). Only when the car has
     # not moved for stuck_time s while told to drive may it reverse.
     stuck_time: 1.0            # s
-    # The bar's width at checkpoint 1: a bullseye on the bar's near end (YOLO class 99, or
-    # the laptop's bullseye_matcher until YOLO knows bullseyes) + the ultrasonic + the pose.
+    # The bar's width at checkpoint 1: arrow 2 (mid-bar) and the bullseye on the bar's near
+    # end in one frame (YOLO class 99, or the laptop's bullseye_matcher) x the ultrasonic.
     camera_hfov: 1.089         # rad, the camera's horizontal view (Pi camera v2 full sensor ~62 deg;
                                # the sim camera is the same, URDF)
-    bar_wait_dist: 0.10        # m past checkpoint 1 the car rolls straight on for a bullseye still
-                               # coming (YOLO's latency); then the usual width (tasks.yaml)
+    cp1_speed: 0.50            # m/s on the straight into checkpoint 1 (line_up_dist): steady while the
+                               # ultrasonic and the camera read obstacle 2 - at 0.9 it arrived still
+                               # turning and wiggled +-15 deg (bags 2026-10-15). Tune on the car
     # Hybrid A* for a leg no clean shape and no route table covers: on the laptop with one
     # (role:=pi, task1_planner), here if it does not answer within this.
     remote_plan_timeout: 2.0   # s

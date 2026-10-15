@@ -153,20 +153,15 @@ def bar_half_width_gap(arrow_box, bullseye_box, image_w: float, hfov: float, z: 
 
 def gap_widths(frames, hfov: float, side: float, block_m: float = 0.10):
     """The bar's widths from frames [(arrow 2 box or None, [bullseye boxes], image w, z, yaw)]:
-    [(bullseye box height, width)]. Both ends in a frame: the gap between them (no
-    arrow needed); else one end and arrow 2: twice its gap. Bullseyes on the car's
-    side (`side` +1 left / -1 right) first - the far end's only if none."""
+    [(bullseye box height, width)]: one end and arrow 2 (mid-bar) - twice their gap.
+    Bullseyes on the car's side (`side` +1 left / -1 right) first - the far end's only
+    if none. (Both ends' gap without the arrow: dropped 2026-10-15, arrow + bullseye only.)"""
     near, far = [], []
     for arrow, boxes, w, z, yaw in frames:
         boxes = [b for b in boxes if confident(b) and plausible_bullseye(b, w, hfov, z, yaw)]
         if not boxes:
             continue
         xs = sorted((lateral(b, w, hfov, z, yaw), b) for b in boxes)
-        (y_r, b_r), (y_l, b_l) = xs[0], xs[-1]
-        size = max(b_r[5] - b_r[3], b_l[5] - b_l[3])
-        if y_l - y_r > 0.15 and (arrow is None or y_r < lateral(arrow, w, hfov, z, yaw) < y_l):
-            near.append((size, y_l - y_r + block_m))
-            continue
         if arrow is None:
             continue
         ya = lateral(arrow, w, hfov, z, yaw)

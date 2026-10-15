@@ -32,8 +32,9 @@ TASK1_SIZE = (0.10, 0.10, 0.15)    # the task 1 block: 10 x 10 cm, 15 cm tall
 SYMBOL_M = 0.061                   # printed symbol, square
 # The bullseye's outer WHITE square - what YOLO and the matcher box: the card's black
 # edge is lost against the black obstacle. 0.75 of the card in models/symbols/
-# 99_Bullseye.png (the real print, photographed). TODO: measure the real print.
-BULLSEYE_RIM_M = 0.046
+# 99_Bullseye.png (the real print, photographed); measured on the real card 2026-10-15:
+# 4.4 cm of its 6 cm.
+BULLSEYE_RIM_M = 0.044
 
 
 @dataclass(frozen=True)

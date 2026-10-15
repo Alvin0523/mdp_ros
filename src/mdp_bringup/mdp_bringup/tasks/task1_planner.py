@@ -96,7 +96,6 @@ class Task1Planner(Node):
         req = json.loads(msg.data)
         self.send({'gen': req['gen'], 'ack': True})
         if req.get('task2'):
-            self.get_logger().info("PLANNER   task 2 leg requested")
             threading.Thread(target=self.plan_task2, args=(req,), daemon=True).start()
             return
         if req.get('single'):
@@ -129,11 +128,13 @@ class Task1Planner(Node):
                 planner_params.configure(dataclasses.replace(planner_params.from_flat(req['params']),
                                                              footprint_padding=float(spec['padding'])))
                 costmap = task2_routes.course_costmap(arena, spec['x1'], spec['x2'], spec['bar_width'],
-                                                      spec['padding'], spec.get('wall_padding'))
+                                                      spec['padding'], spec.get('wall_padding'),
+                                                      spec.get('obstacle_1_padding'))
                 path = plan_leg(costmap, tuple(req['start']), tuple(req['checkpoints'][0])) or []
             self.send({'gen': req['gen'], 'idx': 0, 'start': req['start'],
                        'path': [list(map(float, p[:3])) + [int(p[3])] for p in path]})
-            self.get_logger().info(f"PLANNER   task 2 leg {'sent' if path else 'NO PATH'}")
+            if not path:
+                self.get_logger().warn("PLANNER   task 2 leg: NO PATH")
         except Exception:
             self.get_logger().error(f"task 2 planning crashed:\n{traceback.format_exc()}")
             self.send({'gen': req['gen'], 'idx': 0, 'start': req['start'], 'path': []})
