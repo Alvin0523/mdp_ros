@@ -112,6 +112,10 @@ US_VALID = (0.25, 2.2)        # m - lane readings outside this are not obstacle 
 # deg glance wiggled the car +-15 deg and 20-56 cm past checkpoint 1, off the route
 # table's start: leg 1 planned live, twice NO PATH (bags 2026-10-15).
 CP1_WAIT_S = 1.5
+# ...but first roll on straight this far past it at cp1_speed: YOLO's boxes come ~0.2 s
+# after the frame, and arrow 2 usually arrives within that (it stopped for 0.2-0.4 s in
+# most runs, 2026-10-16). Straight, so leg 1's table route still starts from here.
+CP1_ROLL_M = 0.15
 LEVEL_X_M = 0.30              # m before obstacle 1's centre (or the straight into checkpoint 1, if
                               # earlier: level_with_1()): straight in the lane from here, the
                               # ultrasonic and camera see past it (obstacle 2 and arrow 2) and
@@ -1063,8 +1067,8 @@ class Task2Runner(RunnerBase):
         """At checkpoint 1: arrow 2 (YOLO), obstacle 2's distance (the ultrasonic, read on
         the straight into it - checked by the camera) and the bar's width (arrow 2 + the
         near bullseye) -> checkpoints 2, 3, 4 and the path through them. All known on
-        arrival: on at once, rolling. Something missing: stop here and read up to
-        CP1_WAIT_S - then arrow 2 still unread: ARROW_WAIT_S more, then the nearer end;
+        arrival: on at once, rolling. Something missing: roll on straight CP1_ROLL_M,
+        then stop, reading up to CP1_WAIT_S in all - then arrow 2 still unread: ARROW_WAIT_S more, then the nearer end;
         no distance: the run stops; no width: the usual one."""
         if self.pre and self.pre.get('legs'):
             return self.follow_setup_legs()
@@ -1084,11 +1088,16 @@ class Task2Runner(RunnerBase):
             if self._cp1_wait_since is None:
                 self._cp1_wait_since = now
             if now - self._cp1_wait_since < CP1_WAIT_S:
-                self.send_cmd(0.0, 0.0)
-                note = ', '.join(missing)
+                cp1_x = self.lane_waypoint[0] if self.lane_waypoint else self.current_pose[0]
+                rolling = self.current_pose[0] - cp1_x < CP1_ROLL_M
+                if rolling:
+                    self.hold_heading(float(self.p('cp1_speed')), 0.0)
+                else:
+                    self.send_cmd(0.0, 0.0)
+                note = f"{'rolling' if rolling else 'stopped'} - reading {', '.join(missing)}"
                 if note != self._cp1_note:
                     self._cp1_note = note
-                    self.get_logger().info(f"CP1       stopped - reading {note}")
+                    self.get_logger().info(f"CP1       {note}")
                 return
         if x2 is None:
             self.send_cmd(0.0, 0.0)

@@ -42,8 +42,8 @@ task2:
   obstacle_1: {size: [0.10, 0.10, 0.20]}   # x (along), y (across), z - every obstacle 10 cm thick
   # The bar, centred on the centre line. Its width varies from course to course
   # (width_range): the car measures it at checkpoint 1 (a bullseye on its end +
-  # the ultrasonic) and assumes size[1] when it cannot.
-  obstacle_2: {size: [0.10, 0.60, 0.20], width_range: [0.30, 1.20]}
+  # the ultrasonic) and assumes size[1] when it cannot (0.70: 0.60 until 2026-10-16).
+  obstacle_2: {size: [0.10, 0.70, 0.20], width_range: [0.30, 1.20]}
   side_wall_clearance: 0.50                # walls may stand this far out from obstacle 2's ends
 
   # THE LAYOUT `pixi run setup` SENDS THE CAR (real or Gazebo) as known - no

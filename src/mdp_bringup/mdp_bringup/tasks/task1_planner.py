@@ -133,8 +133,11 @@ class Task1Planner(Node):
                 path = plan_leg(costmap, tuple(req['start']), tuple(req['checkpoints'][0])) or []
             self.send({'gen': req['gen'], 'idx': 0, 'start': req['start'],
                        'path': [list(map(float, p[:3])) + [int(p[3])] for p in path]})
-            if not path:
-                self.get_logger().warn("PLANNER   task 2 leg: NO PATH")
+            # Once until a leg is found again: the car retries every ~0.1 s while it is
+            # carried into place (a screenful of these, 2026-10-16).
+            if not path and not getattr(self, '_t2_no_path', False):
+                self.get_logger().warn("PLANNER   task 2 leg: NO PATH (the car keeps asking)")
+            self._t2_no_path = not path
         except Exception:
             self.get_logger().error(f"task 2 planning crashed:\n{traceback.format_exc()}")
             self.send({'gen': req['gen'], 'idx': 0, 'start': req['start'], 'path': []})
