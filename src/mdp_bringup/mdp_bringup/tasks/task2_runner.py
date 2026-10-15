@@ -871,8 +871,9 @@ class Task2Runner(RunnerBase):
         def plan(start=self.start):
             t0 = time.monotonic()
             try:
-                pre['path'] = (self.lined_up_path(start, goal, costmap, float(self.p('line_up_dist')))
-                               or self.hybrid_leg(costmap, start, goal, (x1, None)))
+                goal, path = self.cp1_lined_up(start, x1, arrow, costmap)
+                pre['goal'] = goal
+                pre['path'] = path or self.hybrid_leg(costmap, start, goal, (x1, None))
                 if not pre['path']:
                     self.get_logger().warn(f"PLAN      NO PATH start -> beside obstacle 1 from {self.fmt(start)} "
                                            f"after {time.monotonic() - t0:.1f} s - trying again")
@@ -932,6 +933,23 @@ class Task2Runner(RunnerBase):
             pose = target
         return paths
 
+    def cp1_lined_up(self, start, x1, arrow, costmap):
+        """(checkpoint 1, the lined-up path to it or None): cp1_back behind obstacle 1's
+        centre (the camera in front of it), else 10 cm nearer at a time - a short
+        course has no room for the S that far back (cp1_back 0.4: none at d1 0.6 /
+        0.7, offline check 2026-10-15). Leg 1's table route follows (table_route())."""
+        lane, back = float(self.p('lane_offset')), float(self.p('cp1_back'))
+        goal = None
+        while True:
+            goal = task2_routes.checkpoint_1(x1, arrow, lane, back)
+            path = self.lined_up_path(start, goal, costmap, float(self.p('line_up_dist')))
+            if path or back <= 0.0:
+                if path and back < float(self.p('cp1_back')):
+                    self.get_logger().warn(f"PLAN      checkpoint 1 {back * 100:.0f} cm behind obstacle 1's centre"
+                                           f" (no room for {float(self.p('cp1_back')) * 100:.0f})")
+                return goal, path
+            back = max(0.0, round(back - 0.10, 3))
+
     def lined_up_path(self, start, goal, costmap, straight, margin=0.04):
         """start -> goal (same heading), straight again `straight` before it (task2_paths.py)."""
         return task2_paths.stepped_lined_up_path(start, goal, costmap, self.shapes(), straight, margin)
@@ -989,11 +1007,10 @@ class Task2Runner(RunnerBase):
         arrow = self.arrow(0)
         if arrow is not None and r is not None and US_VALID[0] <= r <= US_VALID[1]:
             x1 = self.ahead_x(r, self.arena.obstacle_1_size[0])
-            goal = task2_routes.checkpoint_1(x1, arrow, float(self.p('lane_offset')), float(self.p('cp1_back')))
             if self.costmap is None or self.x1_seen is None or abs(self.x1_seen - x1) > 0.03:
                 self.x1_seen, self.costmap = x1, self.make_costmap(x1, None)
             x, y, _ = self.current_pose
-            path = self.lined_up_path((x, y, 0.0), goal, self.costmap, float(self.p('line_up_dist')))
+            goal, path = self.cp1_lined_up((x, y, 0.0), x1, arrow, self.costmap)
             if path:
                 self.arrows[0], self.x1, self.side, self.lane_waypoint = arrow, x1, SIDE[arrow], goal
                 self.cp1_planned = True
@@ -1328,7 +1345,10 @@ class Task2Runner(RunnerBase):
             self.get_logger().warn(f"ROUTES    the car is off checkpoint 1 ({(x - cp1[0]) * 100:+.0f} / "
                                    f"{(y - cp1[1]) * 100:+.0f} cm) - planning leg 1 live")
             return None
-        d2 = (self.x2 - self.arena.obstacle_2_size[0] / 2.0) - (self.x1 + self.arena.obstacle_1_size[0] / 2.0)
+        # d2 as the table's checkpoint 1 (cp1_back behind obstacle 1) sees the bar: right
+        # for a checkpoint 1 moved nearer (cp1_lined_up()) too.
+        d2 = ((self.x2 - self.arena.obstacle_2_size[0] / 2.0)
+              - (cp1[0] + float(self.p('cp1_back')) + self.arena.obstacle_1_size[0] / 2.0))
         local, why = self.routes.lookup(d2, self.bar_w(), self.arrows[0], self.arrows[1])
         if local is None:
             self.get_logger().warn(f"ROUTES    {why} - planning leg 1 live")
