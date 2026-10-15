@@ -1,5 +1,5 @@
 """Task 2: what the camera's boxes say (ROS-free) - which arrow is which, and the
-bar's width from a bullseye.
+bar's width from its bullseyes (and arrow 2) in the picture.
 
 Boxes come as YOLO publishes them on /yolo_detections (and the laptop's
 bullseye_matcher on /bullseye_detections, in the same format):
@@ -116,6 +116,119 @@ def bar_half_width(box, image_w: float, hfov: float, cam: Tuple[float, float, fl
         return None
     y = cy + t * math.sin(phi)
     return abs(y - centre_y) + block_m / 2.0
+
+
+def plausible_bullseye(box, image_w: float, hfov: float, z: float, yaw: float = 0.0) -> bool:
+    """A bullseye box seen square-on and the right size for a face z ahead (the
+    camera turned yaw off square to it)."""
+    w, h = box[4] - box[2], box[5] - box[3]
+    if w <= 0 or h <= 0 or w / h < MIN_ASPECT or z <= 0.05:
+        return False
+    theta = box_bearing(box, image_w, hfov)
+    if math.cos(yaw + theta) < 0.2:
+        return False
+    axial = z * math.cos(theta) / math.cos(yaw + theta)
+    return RANGE_RATIO[0] <= box_range(box, image_w, hfov, size=BULLSEYE_RIM_M) / axial <= RANGE_RATIO[1]
+
+
+def lateral(box, image_w: float, hfov: float, z: float, yaw: float = 0.0) -> float:
+    """Where a box's centre is across a face z ahead (m, + left of the camera), the
+    camera turned yaw (+ left) off square to the face."""
+    return z * math.tan(yaw + box_bearing(box, image_w, hfov))
+
+
+def bar_half_width_gap(arrow_box, bullseye_box, image_w: float, hfov: float, z: float, yaw: float = 0.0,
+                       block_m: float = 0.10) -> float:
+    """Half the bar's width from the gap between arrow 2 (the face's centre) and a
+    bullseye (mid its edge-most block) in the SAME frame, z = the face's distance
+    (ultrasonic). A heading error turns both the same, so the gap - and the width -
+    barely feels it, and the position across the course not at all. The heading
+    (yaw) only corrects perspective: 3 deg wrong is ~ z * 3 deg * (tan^2 of one's
+    angle off square to the face - the other's): ~2 cm of width at checkpoint 1,
+    d2 = 0.6 m (arrow 2 32 deg off), less further away; the ray from the pose
+    (bar_half_width()) 5 cm, and 2 cm per cm the position is off across."""
+    return abs(lateral(bullseye_box, image_w, hfov, z, yaw) - lateral(arrow_box, image_w, hfov, z, yaw)) \
+        + block_m / 2.0
+
+
+def gap_widths(frames, hfov: float, side: float, block_m: float = 0.10):
+    """The bar's widths from frames [(arrow 2 box or None, [bullseye boxes], image w, z, yaw)]:
+    [(bullseye box height, width)]. Both ends in a frame: the gap between them (no
+    arrow needed); else one end and arrow 2: twice its gap. Bullseyes on the car's
+    side (`side` +1 left / -1 right) first - the far end's only if none."""
+    near, far = [], []
+    for arrow, boxes, w, z, yaw in frames:
+        boxes = [b for b in boxes if confident(b) and plausible_bullseye(b, w, hfov, z, yaw)]
+        if not boxes:
+            continue
+        xs = sorted((lateral(b, w, hfov, z, yaw), b) for b in boxes)
+        (y_r, b_r), (y_l, b_l) = xs[0], xs[-1]
+        size = max(b_r[5] - b_r[3], b_l[5] - b_l[3])
+        if y_l - y_r > 0.15 and (arrow is None or y_r < lateral(arrow, w, hfov, z, yaw) < y_l):
+            near.append((size, y_l - y_r + block_m))
+            continue
+        if arrow is None:
+            continue
+        ya = lateral(arrow, w, hfov, z, yaw)
+        for y, b in xs[:1] if len(xs) == 1 else (xs[0], xs[-1]):
+            est = (b[5] - b[3], 2.0 * bar_half_width_gap(arrow, b, w, hfov, z, yaw, block_m))
+            (near if (y - ya) * side > 0 else far).append(est)
+    return near or far
+
+
+def pick_width(sized, width_range):
+    """(width or None, widths used) from [(bullseye box height, width)]: plausible ones,
+    the nearest half (biggest boxes - a far frame's pixel is more of the width; sim
+    2026-10-14: up to 9 cm off at d2 = 1.5 with every frame), median, clamped."""
+    lo, hi = width_range
+    sized = sorted((s for s in sized if lo - 0.05 <= s[1] <= hi + 0.05), reverse=True)
+    widths = [wd for _, wd in sized[:max(1, (len(sized) + 1) // 2)]]
+    width = median(widths)
+    return (None if width is None else min(hi, max(lo, width))), widths
+
+
+def merge_duplicates(boxes):
+    """One box per bullseye: YOLO's (task2_yolo26s.pt boxes them too) and the
+    matcher's of the same frame overlap - YOLO's kept ('yolo' as the box's 7th item),
+    then the more confident."""
+    kept = []
+    for b in sorted(boxes, key=lambda b: (len(b) > 6 and b[6] == 'yolo', b[1]), reverse=True):
+        u, v = (b[2] + b[4]) / 2.0, (b[3] + b[5]) / 2.0
+        if not any(k[2] <= u <= k[4] and k[3] <= v <= k[5] for k in kept):
+            kept.append(b)
+    return kept
+
+
+def bar_width(bullseyes, arrows_2, hfov: float, face_x: float, centre_y: float, side: float, width_range,
+              pair_s: float = 0.02):
+    """The bar's width from the frames seen near checkpoint 1: (width or None, widths,
+    'gap' / 'pose'). bullseyes [(stamp, box, image w, camera pose)], arrows_2 [(stamp,
+    box)] - YOLO's and the matcher's boxes of one frame carry the frame's stamp.
+    The gap method (gap_widths(): no position across, the heading only for
+    perspective) first; else
+    bar_half_width() from the camera's pose."""
+    frames = {}
+    for stamp, box, w, cam in bullseyes:
+        frames.setdefault(stamp, (w, cam, []))[2].append(box)
+    frames = {t: (w, cam, merge_duplicates(boxes)) for t, (w, cam, boxes) in frames.items()}
+    gap_frames = []
+    for stamp, (w, cam, boxes) in frames.items():
+        near = [a for t, a in arrows_2 if abs(t - stamp) <= pair_s]
+        arrow = max(near, key=lambda a: a[1]) if near else None
+        gap_frames.append((arrow, boxes, w, face_x - cam[0], cam[2]))
+    width, widths = pick_width(gap_widths(gap_frames, hfov, side), width_range)
+    if width is not None:
+        return width, widths, 'gap'
+    sized = []
+    for w, cam, boxes in frames.values():
+        for box in boxes:
+            if not confident(box):
+                continue
+            half = bar_half_width(box, w, hfov, cam, face_x, centre_y)
+            if half is not None:
+                sized.append((box[5] - box[3], 2.0 * half))
+    width, widths = pick_width(sized, width_range)
+    return width, widths, 'pose'
 
 
 def confident(box) -> bool:

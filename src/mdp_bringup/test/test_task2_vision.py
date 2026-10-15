@@ -95,3 +95,92 @@ def test_confident_bullseyes_only():
     assert V.confident(['99', 0.8, 0, 0, 20, 20])
     assert not V.confident(['99', 0.65, 0, 0, 20, 20])     # the textures' false matches scored 0.64-0.67
     assert not V.confident(['99', 0.9, 0, 0, 10, 10])      # smaller than the bar can be while measuring
+
+
+# ---- the bar's width from the gap between arrow 2 and a bullseye (bar_width) ----
+
+ARROW_PX = SYMBOL_M * V.ARROW_BOX_SCALE
+RANGE = (0.30, 1.20)
+
+
+def bar_frame(true_cam, believed_cam, width, face_x, stamp=1.0, ends=(1,), arrow=True):
+    """One frame of the bar seen from true_cam, logged with believed_cam (the pose
+    the car thinks it has): bullseyes on `ends` (+1 left / -1 right), arrow 2 at the centre."""
+    bulls = [(stamp, project(true_cam, (face_x, CY + e * (width / 2.0 - 0.05))), W, believed_cam) for e in ends]
+    a = project(true_cam, (face_x, CY), size=ARROW_PX)
+    a[0] = '39'
+    return bulls, ([(stamp, a)] if arrow else [])
+
+
+@pytest.mark.parametrize('d2, width, side', [(0.60, 0.40, 1), (1.00, 0.60, -1), (1.50, 0.80, 1), (1.00, 1.00, -1)])
+def test_gap_method_ignores_heading_and_position_error(d2, width, side):
+    face_x = 1.30 + d2
+    true_cam = (1.20, CY + side * 0.25, math.radians(-3.0 * side))   # yawed 3 deg toward the bar's centre
+    believed = (1.20, CY + side * 0.28, 0.0)                         # gyro / odometry: straight, 3 cm out
+    bulls, arrows = bar_frame(true_cam, believed, width, face_x, ends=(side,))
+    got, _, how = V.bar_width(bulls, arrows, HFOV, face_x, CY, side, RANGE)
+    assert how == 'gap' and got == pytest.approx(width, abs=0.01)
+    old, _, how = V.bar_width(bulls, [], HFOV, face_x, CY, side, RANGE)   # the pose method, same frame
+    assert how == 'pose' and abs(old - width) > 0.05
+
+
+def test_both_ends_in_one_frame():
+    face_x, true_cam = 2.30, (1.20, CY + 0.25, math.radians(3.0))
+    believed = (1.20, CY + 0.25, 0.0)
+    for arrow in (True, False):                                         # the two ends need no arrow
+        bulls, arrows = bar_frame(true_cam, believed, 0.60, face_x, ends=(1, -1), arrow=arrow)
+        got, widths, how = V.bar_width(bulls, arrows, HFOV, face_x, CY, 1, RANGE)
+        # 3 deg turns the far end (further off the axis) a little more than the near: 1-2 cm
+        assert how == 'gap' and len(widths) == 1 and got == pytest.approx(0.60, abs=0.02)
+
+
+def test_near_end_preferred():
+    face_x, cam = 2.30, (1.20, CY + 0.25, 0.0)
+    near, arrows = bar_frame(cam, cam, 0.60, face_x, stamp=1.0, ends=(1,))
+    far, arrows_far = bar_frame(cam, cam, 0.80, face_x, stamp=2.0, ends=(-1,))   # a wrong far-end reading
+    got, widths, _ = V.bar_width(near + far, arrows + arrows_far, HFOV, face_x, CY, 1, RANGE)
+    assert widths == [pytest.approx(0.60, abs=0.005)]
+    got, _, _ = V.bar_width(far, arrows_far, HFOV, face_x, CY, 1, RANGE)      # only the far end: used
+    assert got == pytest.approx(0.80, abs=0.01)
+
+
+def test_falls_back_to_the_pose_without_arrow_2_in_the_frame():
+    face_x, cam = 2.30, (1.20, CY + 0.25, 0.0)
+    bulls, arrows = bar_frame(cam, cam, 0.60, face_x, stamp=1.0)
+    late = [(1.1, a) for _, a in arrows]                                # another frame's arrow: not paired
+    got, _, how = V.bar_width(bulls, late, HFOV, face_x, CY, 1, RANGE)
+    assert how == 'pose' and got == pytest.approx(0.60, abs=0.005)
+    assert V.bar_width([], arrows, HFOV, face_x, CY, 1, RANGE) == (None, [], 'pose')
+
+
+def test_gap_refuses_a_wrong_sized_bullseye():
+    face_x, cam = 2.30, (1.20, CY + 0.25, 0.0)
+    bulls, arrows = bar_frame(cam, cam, 0.60, face_x)
+    big = project(cam, (face_x, CY + 0.25), size=BULLSEYE_RIM_M * 3)
+    got, _, how = V.bar_width([(1.0, big, W, cam)], arrows, HFOV, face_x, CY, 1, RANGE)
+    assert got is None
+
+
+def test_gap_method_at_the_checkpoint_1_glance():
+    # Checkpoint 1, d2 = 0.6 m: turned 15 deg toward the centre line so arrow 2 is in view.
+    # The gyro 3 deg off costs ~2 cm (arrow 2 is 32 deg off square to the face), the
+    # position 3 cm off nothing; the old ray method is off 11 cm with both.
+    face_x = 1.30 + 0.60
+    true_cam = (1.42, CY + 0.30, math.radians(-15.0))
+    believed = (1.42, CY + 0.33, math.radians(-12.0))
+    bulls, arrows = bar_frame(true_cam, believed, 0.60, face_x, ends=(1,))
+    got, _, how = V.bar_width(bulls, arrows, HFOV, face_x, CY, 1, RANGE)
+    assert how == 'gap' and got == pytest.approx(0.60, abs=0.025)
+    old, _, _ = V.bar_width(bulls, [], HFOV, face_x, CY, 1, RANGE)
+    assert old is None or abs(old - 0.60) > 0.08
+
+
+def test_a_bullseye_from_yolo_and_the_matcher_counts_once():
+    face_x, cam = 2.30, (1.20, CY + 0.25, 0.0)
+    bulls, arrows = bar_frame(cam, cam, 0.60, face_x)
+    t, box, w, c = bulls[0]
+    yolo = box + ['yolo']
+    matcher = [box[0], 0.95, box[2] + 1, box[3] - 1, box[4] + 1, box[5] - 1, 'matcher']
+    assert V.merge_duplicates([matcher, yolo]) == [yolo]
+    got, widths, how = V.bar_width([(t, matcher, w, c), (t, yolo, w, c)], arrows, HFOV, face_x, CY, 1, RANGE)
+    assert how == 'gap' and len(widths) == 1 and got == pytest.approx(0.60, abs=0.01)

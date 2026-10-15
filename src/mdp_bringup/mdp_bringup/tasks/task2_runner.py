@@ -17,8 +17,12 @@ known in advance, so the car measures them with the front ultrasonic:
                    arrow well beyond obstacle 1's face, task2_vision.py); on the
                    straight bit the ultrasonic measures obstacle 2 (a bar on the
                    centre line) and the camera sees a bullseye on its near end
-  CHECKPOINT_1     the bar's width from that bullseye + the ultrasonic + the pose
-                   (the usual 60 cm if none was seen), to the nearest 5 cm ->
+  CHECKPOINT_1     arrow 2 still unread: a glance (15 deg toward the centre line and
+                   back, rolling - glance()). The bar's width from the gap between
+                   arrow 2 and that bullseye in one frame x the ultrasonic's
+                   distance (a heading error barely matters; else
+                   bullseye + ultrasonic + pose; the usual 60 cm if none was seen),
+                   to the nearest 5 cm ->
                    checkpoints 2, 3, 4; leg 1 (CP1 -> CP2) from the route table
                    built offline (task2_routes.py), the others clean geometry
                    (milliseconds). Hybrid A* - on the laptop with one - only for
@@ -94,6 +98,15 @@ US_VALID = (0.25, 2.2)        # m - lane readings outside this are not obstacle 
 # is as near to either end of the bar as anywhere) until both are known.
 HEDGE_RAD = math.radians(7.0)
 HEDGE_CENTRE_M = 0.10         # m off the centre line: straight on from there
+# Arrow 2 still unread there: a glance - full lock GLANCE_RAD toward the centre line,
+# held GLANCE_HOLD_S (a few camera frames), full lock straight again, rolling. From
+# checkpoint 1 arrow 2 is ~32 deg off the camera's axis, its half view 31 deg (bag
+# 2026-10-15, d2 = 0.6 m); 15 deg in, arrow 2 and the near bullseye are both in view.
+# ~4 cm toward the centre line, within the route table's CP1 window (6 cm).
+GLANCE_RAD = math.radians(15.0)
+GLANCE_WAIT_S = 0.3           # s after it for YOLO's boxes of its frames (latency) - rolling on
+ARROW_2_SURE = 3              # reads of arrow 2 before checkpoint 1 that make the glance unneeded
+GLANCE_HOLD_S = 0.15
 ARROW_2_DEADLINE_M = 0.60     # m from the bar's face with arrow 2 still unread: the nearer end
 LEVEL_X_M = 0.30              # m before obstacle 1's centre: straight in the lane from here, the
                               # ultrasonic and camera see past it (obstacle 2 and arrow 2) and
@@ -166,7 +179,7 @@ class Task2Runner(RunnerBase):
 
         # Every box YOLO sees (arrows, bullseyes), and the laptop's bullseye_matcher's
         # bullseyes in the same format until YOLO knows them (task2_vision.py).
-        self.create_subscription(String, '/yolo_detections', self.detections_callback, 10)
+        self.create_subscription(String, '/yolo_detections', lambda m: self.detections_callback(m, 'yolo'), 10)
         self.create_subscription(String, '/bullseye_detections', self.detections_callback, 10)
         self.boxes_seen_at = None        # when any box list last arrived (YOLO / matcher running)
         self.poses = deque()             # (time s, pose) - where the car was when a frame was taken
@@ -198,6 +211,8 @@ class Task2Runner(RunnerBase):
         self.arrow_counts = [Counter(), Counter()]   # per obstacle
         self.arrows = [None, None]
         self._arrow_wait_since = None
+        self._glance = None              # None / 'turn' / 'hold' / 'back' / 'done' (glance())
+        self._glance_since = None
         self.side = 0.0                  # +1 left / -1 right, the lane beside obstacle 1
         self.x1 = self.x2 = None         # obstacle centres (m, along the course)
         self.lane_readings = []
@@ -215,6 +230,7 @@ class Task2Runner(RunnerBase):
         self.passes = []                 # (sensor name, FacePass) - faces the IRs are watching for
         self._plan_gen = getattr(self, '_plan_gen', 0) + 1
         self.bullseyes = []              # (frame time, box, image w, camera pose) seen near checkpoint 1
+        self.arrows_2 = []               # (frame time, box) arrow 2's boxes there (the bar's width, gap method)
         self.arrow_scales = getattr(self, 'arrow_scales', [])   # YOLO arrow box / card, measured at home
         self.bar_width = None            # m, the bar's width the run plans with (nearest 5 cm), once known
         self.cp1_planned = False         # lane_waypoint is the planned checkpoint 1 (not a swerve's end)
@@ -320,7 +336,7 @@ class Task2Runner(RunnerBase):
             return None
         return min(self.poses, key=lambda tp: abs(tp[0] - t))[1]
 
-    def detections_callback(self, msg: String):
+    def detections_callback(self, msg: String, source: str = 'matcher'):
         """/yolo_detections, /bullseye_detections: every box of a frame. Arrows ->
         arrow 1 or 2 by their distance (task2_vision.classify_arrow); bullseyes near
         checkpoint 1 -> kept for the bar's width (measure_bar())."""
@@ -356,15 +372,20 @@ class Task2Runner(RunnerBase):
                     i = task2_vision.classify_arrow(b, w, hfov, cam[0], face1, scale)
                     if i == 1 or self.level_with_1():
                         self.count_arrow(1, task2_vision.ARROW_IDS[b[0]])
+                        if self.near_checkpoint_1(pose):
+                            self.arrows_2.append((stamp, b))
         # Bullseyes from the end of the S into checkpoint 1 on: the bar is near and big in
         # the picture there (sim 2026-10-14: 0.2-0.3 cm off from checkpoint 1; from the
         # carpark up to 7 cm). The camera's pose comes with the frame, so a few degrees of
         # turn left are fine; only within 10 deg of straight left one frame a run.
-        if (self.state in (State.TO_CHECKPOINT_1, State.CHECKPOINT_1) and self.x1 is not None
-                and pose[0] >= self.x1 - 2 * LEVEL_X_M and abs(pose[2]) < math.radians(20.0)):
+        if self.near_checkpoint_1(pose):
             for b in boxes:
                 if b[0] == task2_vision.BULLSEYE_ID:
-                    self.bullseyes.append((stamp, b, w, cam))
+                    self.bullseyes.append((stamp, b + [source], w, cam))   # merged per frame (bar_width)
+
+    def near_checkpoint_1(self, pose) -> bool:
+        return (self.state in (State.TO_CHECKPOINT_1, State.CHECKPOINT_1) and self.x1 is not None
+                and pose[0] >= self.x1 - 2 * LEVEL_X_M and abs(pose[2]) < math.radians(25.0))
 
     def count_arrow(self, i: int, side: str):
         if self.arrows[i] is None:
@@ -373,23 +394,11 @@ class Task2Runner(RunnerBase):
             self.arrow_counts[i][side] += 1
 
     def measure_bar(self, x2: float):
-        """The bar's width from the bullseyes seen near checkpoint 1 (median), or None."""
+        """The bar's width from the frames seen near checkpoint 1: (width or None,
+        widths, 'gap' / 'pose') - arrow 2 to bullseye in one frame, else from the pose."""
         face_x = x2 - self.arena.obstacle_2_size[0] / 2.0
-        hfov = float(self.p('camera_hfov'))
-        lo, hi = self.arena.obstacle_2_width_range
-        sized = []                       # (box height, width)
-        for _, box, w, cam in self.bullseyes:
-            if not task2_vision.confident(box):
-                continue
-            half = task2_vision.bar_half_width(box, w, hfov, cam, face_x, TASK2_CENTRE_Y)
-            if half is not None and lo - 0.05 <= 2.0 * half <= hi + 0.05:
-                sized.append((box[5] - box[3], 2.0 * half))
-        # The nearest half only (the biggest boxes): a far frame's pixel of error is more
-        # of the width (sim 2026-10-14: up to 9 cm off at d2 = 1.5 with every frame).
-        sized.sort(reverse=True)
-        widths = [wd for _, wd in sized[:max(1, (len(sized) + 1) // 2)]]
-        width = task2_vision.median(widths)
-        return (None if width is None else min(hi, max(lo, width))), widths
+        return task2_vision.bar_width(self.bullseyes, self.arrows_2, float(self.p('camera_hfov')), face_x,
+                                      TASK2_CENTRE_Y, self.side, self.arena.obstacle_2_width_range)
 
     def bar_w(self) -> float:
         """The bar's width planned with: measured (nearest 5 cm), set up, or the usual one."""
@@ -976,7 +985,7 @@ class Task2Runner(RunnerBase):
         if self.pre and self.pre.get('legs'):
             return self.follow_setup_legs()
         self.read_obstacle_2()
-        if self.arrows[1] is None:
+        if self.arrows[1] is None and (self.known() or sum(self.arrow_counts[1].values()) >= ARROW_2_SURE):
             self.arrows[1] = self.arrow(1)
         x, y, _ = self.current_pose
         x2_us = statistics.median(self.lane_readings) if self.lane_readings else None
@@ -989,15 +998,24 @@ class Task2Runner(RunnerBase):
                 return
             return self.hedge()
         x2, why = self.choose_bar_x(x2_us, x2_cam)
-        if self.arrows[1] is None:
-            face = x2 - self.arena.obstacle_2_size[0] / 2.0
-            if face - (x + self.car.footprint_front) > ARROW_2_DEADLINE_M:
-                return self.hedge()
-            # Stop and wait for it (then the nearer end): a guess is the wrong side half
-            # the time - a failed run. At d2 = 0.6 m the deadline is checkpoint 1 itself, and
-            # from there arrow 2 is near the picture's edge (sim 2026-10-14: 3 of 12 guessed).
-            if not self.need_arrow(1, 'LEFT' if self.side > 0 else 'RIGHT'):
+        face = x2 - self.arena.obstacle_2_size[0] / 2.0
+        near = face - (x + self.car.footprint_front) <= ARROW_2_DEADLINE_M
+        if self.arrows[1] is None and not near:
+            return self.hedge()
+        # At d2 = 0.6 m the deadline is checkpoint 1 itself, and from there arrow 2 is
+        # just outside the picture (sim 2026-10-14: 3 of 12 guessed): glance at it - also
+        # when it is read but no frame had it with a bullseye yet (the width's gap
+        # method; bag 2026-10-15: 2 glimpses of arrow 2 past obstacle 1 in the S, then
+        # the pose method's 63 cm for 60). Once begun, it ends straight (leg 1 starts
+        # facing +x).
+        begun = self._glance not in (None, 'done')
+        if begun or (near and self._glance is None and (self.arrows[1] is None or self.gap_missing(x2))):
+            if self.glance():
                 return
+        # Still unread (YOLO's latency): stop and wait for it (then the nearer end) - a
+        # guess is the wrong side half the time, a failed run.
+        if self.arrows[1] is None and not self.need_arrow(1, 'LEFT' if self.side > 0 else 'RIGHT'):
+            return
         if not self.decide_bar_width(x2):
             return self.hold_heading(max(abs(self._last_cmd[0]), float(self.p('path_speed'))), 0.0)
         if why:
@@ -1076,20 +1094,31 @@ class Task2Runner(RunnerBase):
         return sum(1 for _, box, w, cam in self.bullseyes if task2_vision.confident(box)
                    and task2_vision.bar_half_width(box, w, hfov, cam, face_x, TASK2_CENTRE_Y) is not None)
 
+    def gap_missing(self, x2: float) -> bool:
+        """The bar's width still to be measured, and no frame for the gap method yet."""
+        if self.bar_width is not None or (self.known() and self.known()[4] is not None):
+            return False
+        width, _, how = self.measure_bar(x2)
+        return width is None or how != 'gap'
+
     def decide_bar_width(self, x2: float) -> bool:
         """The bar's width for the rest of the run, from the bullseyes seen on the way
         into checkpoint 1. None seen yet while boxes still come: False - roll straight
         on up to bar_wait_dist past checkpoint 1 (YOLO's latency); then the usual width."""
         if self.bar_width is not None or (self.known() and self.known()[4] is not None):
             return True
-        width, widths = self.measure_bar(x2)
+        width, widths, how = self.measure_bar(x2)
+        boxes_alive = self.boxes_seen_at is not None and self.now() - self.boxes_seen_at < 1.0
+        if (how != 'gap' and boxes_alive and self._glance == 'done'
+                and self.now() - self._glance_since < GLANCE_WAIT_S):
+            self.get_logger().info("BAR       waiting for the glance's boxes - rolling on", throttle_duration_sec=1.0)
+            return False
         if width is not None:
             self.bar_width = self.round_bar_width(width)
             each = ' '.join(f'{w * 100:.0f}' for w in widths[:8])
-            self.get_logger().info(f"BAR       {width * 100:.1f} cm wide (bullseyes: {each}) -> planned as "
+            self.get_logger().info(f"BAR       {width * 100:.1f} cm wide ({how}: {each}) -> planned as "
                                    f"{self.bar_width * 100:.0f} cm")
             return True
-        boxes_alive = self.boxes_seen_at is not None and self.now() - self.boxes_seen_at < 1.0
         cp1_x = self.lane_waypoint[0] if self.lane_waypoint else self.current_pose[0]
         if boxes_alive and self.current_pose[0] < cp1_x + float(self.p('bar_wait_dist')):
             self.get_logger().info("BAR       no bullseye yet - rolling on", throttle_duration_sec=1.0)
@@ -1139,6 +1168,38 @@ class Task2Runner(RunnerBase):
         self.set_state(State.FOLLOW)
         self.publish_waypoints()
         self.path_pub.publish(markers.route_path(self.leg_paths, self.stamp()))
+
+    def glance(self) -> bool:
+        """Turn GLANCE_RAD toward the centre line and straight back, rolling at
+        path_speed - arrow 2 and the near bullseye in one frame (the bar's width,
+        gap method). True while it lasts; once only."""
+        if self._glance == 'done':
+            return False
+        toward = -self.side                # +1 left
+        yaw = self.current_pose[2] * toward
+        v = float(self.p('path_speed'))
+        if self._glance is None:
+            self._glance = 'turn'
+            self.get_logger().info(f"GLANCE    arrow 2 not read - turning {math.degrees(GLANCE_RAD):.0f} deg "
+                                   f"{'left' if toward > 0 else 'right'} to see it")
+        if self._glance == 'turn':
+            if yaw < GLANCE_RAD - ARC_LEAD_RAD:
+                self.steer(v, toward * math.pi)          # full lock (clamped)
+                return True
+            self._glance, self._glance_since = 'hold', self.now()
+        if self._glance == 'hold':
+            if self.now() - self._glance_since < GLANCE_HOLD_S:
+                self.hold_heading(v, toward * GLANCE_RAD)
+                return True
+            self._glance = 'back'
+        if self._glance == 'back':
+            if yaw > ARC_LEAD_RAD:
+                self.steer(v, -toward * math.pi)
+                return True
+            self._glance, self._glance_since = 'done', self.now()
+            self.get_logger().info(f"GLANCE    straight again at {self.fmt(self.current_pose)}, arrow 2 "
+                                   f"{self.arrow(1) or 'still not read'}")
+        return False
 
     def hedge(self):
         """Roll on at path_speed, angled HEDGE_RAD toward the centre line (straight
