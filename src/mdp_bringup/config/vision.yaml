@@ -22,7 +22,7 @@ yolo_detector:
     # min_confidence (Ultralytics' default was 0.25), not cut off by the frame edge
     # (edge_margin_px; used only if nothing else is seen), and the BIGGEST = the
     # closest (all symbols are one size). Foxglove's annotated image marks it SENT.
-    min_confidence: 0.5
+    min_confidence: 0.3        # 0.5 until 2026-10-16 (task 2 bullseyes still need 0.70 for the width)
     edge_margin_px: 3
 
 # Task 2's bullseyes by template matching (mdp_vision bullseye_matcher) until YOLO
