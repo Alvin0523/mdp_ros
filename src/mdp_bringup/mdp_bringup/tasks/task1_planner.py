@@ -96,7 +96,6 @@ class Task1Planner(Node):
         req = json.loads(msg.data)
         self.send({'gen': req['gen'], 'ack': True})
         if req.get('task2'):
-            self.get_logger().info("PLANNER   task 2 leg requested")
             threading.Thread(target=self.plan_task2, args=(req,), daemon=True).start()
             return
         if req.get('single'):
@@ -134,7 +133,8 @@ class Task1Planner(Node):
                 path = plan_leg(costmap, tuple(req['start']), tuple(req['checkpoints'][0])) or []
             self.send({'gen': req['gen'], 'idx': 0, 'start': req['start'],
                        'path': [list(map(float, p[:3])) + [int(p[3])] for p in path]})
-            self.get_logger().info(f"PLANNER   task 2 leg {'sent' if path else 'NO PATH'}")
+            if not path:
+                self.get_logger().warn("PLANNER   task 2 leg: NO PATH")
         except Exception:
             self.get_logger().error(f"task 2 planning crashed:\n{traceback.format_exc()}")
             self.send({'gen': req['gen'], 'idx': 0, 'start': req['start'], 'path': []})

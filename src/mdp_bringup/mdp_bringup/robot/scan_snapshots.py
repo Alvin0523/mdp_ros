@@ -1,4 +1,4 @@
-"""Task 1: a snapshot of what YOLO saw at every obstacle, and one picture of
+"""Tasks 1 and 2: a snapshot of what YOLO saw at every obstacle, and one picture of
 them all - `pixi run laptop` runs it.
 
 Keeps the newest annotated frame (/yolo_result/image_annotated) for each id
@@ -7,7 +7,14 @@ tablet (/bluetooth_tx), the newest frame of that id - the one the scan counted -
 is saved with "OBSTACLE n -> X (ID id)" on top; UNKNOWN gets the newest frame.
 A new folder each START: snapshots/<date_time>/obstacle_<n>.jpg and collage.jpg,
 the collage rewritten after every obstacle (parameter `dir`).
+
+Task 2: the runner names the frames itself on /task2_snapshot ({"obstacle": 1 | 2,
+"stamp": the frame's time, "caption": ...}) - arrow 1's at START (a new folder,
+snapshots/<date_time>_task2/), the one the bar's width came from at checkpoint 1.
+The annotated frame with that stamp (or the newest) is saved the same way.
 """
+import json
+from collections import deque
 import os
 import time
 
@@ -59,9 +66,24 @@ class ScanSnapshots(Node):
         self.create_subscription(String, '/yolo_result', self.on_result, 10)
         self.create_subscription(String, '/bluetooth_tx', self.on_tx, 10)
         self.create_subscription(RunStatus, '/run_status', self.on_status, 10)
+        self.recent = deque(maxlen=90)  # (stamp s, JPEG) - ~6 s of annotated frames, for task 2
+        self.create_subscription(String, '/task2_snapshot', self.on_task2, 10)
 
     def on_frame(self, msg: CompressedImage):
         self.frame = bytes(msg.data)
+        self.recent.append((msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9, self.frame))
+
+    def on_task2(self, msg: String):
+        try:
+            note = json.loads(msg.data)
+            obs, stamp, text = str(note['obstacle']), float(note['stamp']), str(note['caption'])
+        except (ValueError, KeyError, TypeError):
+            return
+        if obs == '1':
+            self.folder, self.shots = None, {}
+        near = min(self.recent, key=lambda f: abs(f[0] - stamp), default=None)
+        jpeg = near[1] if near and abs(near[0] - stamp) < 0.2 else self.frame
+        self.save(obs, jpeg, text, '_task2')
 
     def on_result(self, msg: String):
         # Published right after the frame it was picked on.
@@ -80,13 +102,16 @@ class ScanSnapshots(Node):
         obs, target_id = parts[1], parts[2]
         jpeg = self.by_id.get(target_id, self.frame)
         self.by_id = {}
+        self.save(obs, jpeg, caption(obs, target_id))
+
+    def save(self, obs: str, jpeg, text: str, suffix: str = ''):
         if jpeg is None:
             self.get_logger().warn(f"SNAPSHOT  #{obs}: no YOLO image (is YOLO running?)")
             return
         img = cv2.imdecode(np.frombuffer(jpeg, np.uint8), cv2.IMREAD_COLOR)
-        put_caption(img, caption(obs, target_id), 0.9)
+        put_caption(img, text, 0.9 if len(text) < 30 else 0.6)
         if self.folder is None:
-            self.folder = os.path.join(self.base, time.strftime('%Y%m%d_%H%M%S'))
+            self.folder = os.path.join(self.base, time.strftime('%Y%m%d_%H%M%S') + suffix)
             os.makedirs(self.folder, exist_ok=True)
         cv2.imwrite(os.path.join(self.folder, f'obstacle_{obs}.jpg'), img)
         self.shots[obs] = img

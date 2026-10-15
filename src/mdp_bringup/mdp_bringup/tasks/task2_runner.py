@@ -162,6 +162,9 @@ class Task2Runner(RunnerBase):
         # step:=true - one checkpoint per /step (module docstring).
         self.step = bool(self.declare_parameter('step', False).value)
         self.create_service(Trigger, '/step', self.step_callback)
+        # What YOLO saw at each obstacle - the laptop's scan_snapshots saves those frames.
+        self.snap_pub = self.create_publisher(String, '/task2_snapshot', 10)
+        self._ready_note = None          # the last READY / plan-failure line (each logged once)
         self.car =planner_params.ACTIVE          # URDF + navigation.yaml (robot.*, follower.*)
         car_centre_ahead = (self.car.footprint_front - self.car.footprint_rear) / 2.0
         self.home = self.arena.car_pose_centred(car_centre_ahead, math.pi)
@@ -227,7 +230,10 @@ class Task2Runner(RunnerBase):
         self._looks = 0                  # step:=true: looks done at checkpoint 1 (the first is STEP_LOOK_S)
         self._preview = None             # step:=true: (x2, why, arrow 2, bar width) planned at checkpoint 1
         self._home_look_since = None     # step:=true: arrow 1's reads at home counted since
-        self._bar_note = 'setup'         # step:=true: how the previewed bar width was measured
+        self._bar_info = (None, 'setup')  # (measured width m or None, how) - for the OBSTACLE 2 line
+        self._preview_src = ''           # step:=true: where the previewed bar distance came from
+        self._leg1_note = ''             # leg 1: from the route table, or live and why
+        self._arrow1_stamp = 0.0         # the frame arrow 1 was last read in (snapshot)
         self.side = 0.0                 # +1 left / -1 right, the lane beside obstacle 1
         self.x1 = self.x2 = None         # obstacle centres (m, along the course)
         self.lane_readings = []
@@ -374,6 +380,7 @@ class Task2Runner(RunnerBase):
                 # obstacle 1's distance known (ultrasonic), how big YOLO boxes an arrow.
                 near = max(arrows, key=lambda b: b[5] - b[3])
                 self.count_arrow(0, task2_vision.ARROW_IDS[near[0]])
+                self._arrow1_stamp = stamp
                 x1 = self.home_x1() if self.state == State.WAITING_FOR_START else None
                 if x1 is not None:
                     d = x1 - self.arena.obstacle_1_size[0] / 2.0 - cam[0]
@@ -404,8 +411,6 @@ class Task2Runner(RunnerBase):
 
     def count_arrow(self, i: int, side: str):
         if self.arrows[i] is None:
-            if not self.arrow_counts[i]:
-                self.get_logger().info(f"ARROW {i + 1}   sees {side}")
             self.arrow_counts[i][side] += 1
 
     def measure_bar(self, x2: float):
@@ -699,8 +704,7 @@ class Task2Runner(RunnerBase):
         self.set_state(State.STOPPED)
         self.send_cmd(0.0, 0.0)
         self.end_run()
-        self.get_logger().info(f"E-STOP    at {self.fmt(self.current_pose)} after {self.run_time():.1f} s"
-                               f" - reset before the next run")
+        self.get_logger().info(f"E-STOP    {self.run_time():.1f} s")
         response.success, response.message = True, "Stopped."
         return response
 
@@ -712,6 +716,7 @@ class Task2Runner(RunnerBase):
             self.get_logger().warn("RESET     during a run - stopping it")
         self.reset_run()
         self.reset_done = True
+        self._ready_note = None          # READY again after a reset
         self.publish_map()
         if self.pre:                     # the setup layout's plan, kept: show it again
             self.waypoints = list(self.pre.get('waypoints', []))
@@ -791,15 +796,13 @@ class Task2Runner(RunnerBase):
             self.lane_waypoint, self.cp1_planned = pre['goal'], True
             self.set_path(pre['path'])
             self.watch_obstacle_1()
-            self.get_logger().info(f"START     arrow 1 {pre['arrow']}, obstacle 1 at "
-                                   f"({markers.cell(self.x1)},{markers.cell(TASK2_CENTRE_Y)}) -> beside it "
-                                   f"{self.fmt(pre['goal'])}")
+            self.get_logger().info("START")
+            self.snapshot(1, self._arrow1_stamp, f"OBSTACLE 1 -> {pre['arrow']}")
             self.publish_map()
             self.set_state(State.TO_CHECKPOINT_1)
             self.publish_waypoints()
             return
-        self.get_logger().info(f"START     from {self.fmt(self.current_pose)}, arrow 1 not read at home - "
-                               f"driving on until it is")
+        self.get_logger().info("START     arrow 1 not read yet - driving on until it is")
         self.set_state(State.APPROACH_1)
 
     def live_home(self):
@@ -867,15 +870,17 @@ class Task2Runner(RunnerBase):
                 pre['goal'] = goal
                 pre['path'] = path or self.hybrid_leg(costmap, start, goal, (x1, None))
                 if not pre['path']:
-                    self.get_logger().warn(f"PLAN      NO PATH start -> beside obstacle 1 from {self.fmt(start)} "
-                                           f"after {time.monotonic() - t0:.1f} s - trying again")
+                    self.ready_line("PLAN      no path to CP1 - trying again", warn=True)
                     return
                 self.lane_waypoint = goal
                 self.path_pub.publish(markers.route_path([pre['path']], self.stamp()))
                 self.publish_waypoints()
                 if not known:
-                    self.get_logger().info(f"PLAN      start -> beside obstacle 1 {self.fmt(goal)} (arrow 1 {arrow})"
-                                           f" - ready for START ({time.monotonic() - t0:.1f} s)")
+                    back, want = x1 - goal[0], float(self.p('cp1_back'))
+                    d1 = x1 - self.arena.obstacle_1_size[0] / 2.0 - self.arena.opening_x
+                    self.ready_line(f"READY     arrow 1 {arrow}, obstacle 1 at {d1 * 100:.0f} cm"
+                                    + (f", CP1 {back * 100:.0f} cm back (no room for {want * 100:.0f})"
+                                       if back < want - 0.01 else ''))
                     return
                 x2, arrow2 = known[1], known[3]
                 waypoints = self.bar_waypoints(x2, arrow2)
@@ -884,8 +889,7 @@ class Task2Runner(RunnerBase):
                 for idx, target in enumerate(waypoints):
                     path = self.geometric_leg(idx, pose, target, full) or self.hybrid_leg(full, pose, target, (x1, x2))
                     if not path:
-                        self.get_logger().warn(f"PLAN      NO PATH to {self.names[idx]} {self.fmt(target)} - "
-                                               f"trying again")
+                        self.ready_line(f"PLAN      no path to CP{idx + 2} - trying again", warn=True)
                         return
                     legs.append(path)
                     pose = target
@@ -893,8 +897,7 @@ class Task2Runner(RunnerBase):
                 self.waypoints = waypoints
                 self.path_pub.publish(markers.route_path([pre['path']] + legs, self.stamp()))
                 self.publish_waypoints()
-                self.get_logger().info(f"PLAN      all 4 legs (setup layout, arrows {arrow} / {arrow2})"
-                                       f" - ready for START ({time.monotonic() - t0:.1f} s)")
+                self.ready_line(f"READY     setup layout: arrows {arrow} / {arrow2}, all 4 legs planned")
             except Exception:
                 self.get_logger().error(f"PLAN      crashed:\n{traceback.format_exc()}")
             finally:
@@ -936,9 +939,6 @@ class Task2Runner(RunnerBase):
             goal = task2_routes.checkpoint_1(x1, arrow, lane, back)
             path = self.lined_up_path(start, goal, costmap, float(self.p('line_up_dist')))
             if path or back <= 0.0:
-                if path and back < float(self.p('cp1_back')):
-                    self.get_logger().warn(f"PLAN      checkpoint 1 {back * 100:.0f} cm behind obstacle 1's centre"
-                                           f" (no room for {float(self.p('cp1_back')) * 100:.0f})")
                 return goal, path
             back = max(0.0, round(back - 0.10, 3))
 
@@ -990,10 +990,9 @@ class Task2Runner(RunnerBase):
             self.send_cmd(0.0, 0.0)
             self.set_path([])
             self._look_since = self.now()
-            self.get_logger().info(f"CHECKPOINT 1 at {self.fmt(self.current_pose)} - stopped, looking "
-                                   f"{STEP_LOOK_S:.0f} s (step)")
+            self.get_logger().info(f"CP1       {self.cp1_offness()} - stopped, looking {STEP_LOOK_S:.0f} s")
         else:
-            self.get_logger().info(f"CHECKPOINT 1 at {self.fmt(self.current_pose)}")
+            self.get_logger().info(f"CP1       {self.cp1_offness()}")
         self.set_state(State.CHECKPOINT_1)
         self.checkpoint_1()
 
@@ -1015,9 +1014,8 @@ class Task2Runner(RunnerBase):
                 self.cp1_planned = True
                 self.set_path(path)
                 self.watch_obstacle_1()
-                self.get_logger().info(f"ARROW 1   {arrow} at {self.fmt(self.current_pose)}, obstacle 1 at "
-                                       f"({markers.cell(x1)},{markers.cell(TASK2_CENTRE_Y)}) -> beside it "
-                                       f"{self.fmt(goal)}")
+                self.get_logger().info(f"ARROW 1   {arrow} (read on the way)")
+                self.snapshot(1, self._arrow1_stamp, f"OBSTACLE 1 -> {arrow}")
                 self.path_pub.publish(markers.route_path([path], self.stamp()))
                 self.publish_map()
                 self.set_state(State.TO_CHECKPOINT_1)
@@ -1038,9 +1036,8 @@ class Task2Runner(RunnerBase):
         self.side = SIDE[self.arrows[0]]
         R = self.car.minimum_turning_radius_left + self.car.minimum_turning_radius_right
         self.swerve_angle = math.acos(max(-1.0, 1.0 - float(self.p('lane_offset')) / R))
-        self.get_logger().info(f"SWERVE    {self.arrows[0]} at {self.fmt(self.current_pose)}, obstacle 1 at "
-                               f"({markers.cell(self.x1)},{markers.cell(TASK2_CENTRE_Y)}), "
-                               f"{math.degrees(self.swerve_angle):.0f}deg each way")
+        self.get_logger().info(f"SWERVE    {self.arrows[0]}, {math.degrees(self.swerve_angle):.0f} deg each way")
+        self.snapshot(1, self._arrow1_stamp, f"OBSTACLE 1 -> {self.arrows[0]}")
         self.publish_map()
         self.set_state(State.SWERVE_OUT)
 
@@ -1074,9 +1071,7 @@ class Task2Runner(RunnerBase):
         self.read_obstacle_2()
         if self.arrows[1] is None:
             self.arrows[1] = self.arrow(1)
-        x2_us = statistics.median(self.lane_readings) if self.lane_readings else None
-        x2_cam = self.bar_x_from_camera()
-        x2, why = (None, '') if x2_us is None and x2_cam is None else self.choose_bar_x(x2_us, x2_cam)
+        x2, why, src = self.bar_distance()
         known_width = self.bar_width is not None or (self.known() and self.known()[4] is not None)
         measured = self.measure_bar(x2) if x2 is not None and not known_width else (None, [], '')
         missing = [name for name, gone in (('arrow 2', self.arrows[1] is None), ("obstacle 2's distance", x2 is None),
@@ -1091,11 +1086,11 @@ class Task2Runner(RunnerBase):
                 note = ', '.join(missing)
                 if note != self._cp1_note:
                     self._cp1_note = note
-                    self.get_logger().info(f"CHECKPOINT 1  stopped - reading {note}")
+                    self.get_logger().info(f"CP1       stopped - reading {note}")
                 return
         if x2 is None:
             self.send_cmd(0.0, 0.0)
-            self.get_logger().error("CHECKPOINT 1  obstacle 2 not seen by the ultrasonic or the camera - stopping")
+            self.get_logger().error("CP1       obstacle 2 not seen (ultrasonic or camera) - stopping")
             self.set_state(State.STOPPED)
             return
         # Still unread: wait for it (then the nearer end) - a guess is the wrong side half
@@ -1104,15 +1099,9 @@ class Task2Runner(RunnerBase):
             return
         if not known_width:
             width, widths, how = measured
-            if width is not None:
-                self.bar_width = self.round_bar_width(width)
-                each = ' '.join(f'{w * 100:.0f}' for w in widths[:8])
-                self.get_logger().info(f"BAR       {width * 100:.1f} cm wide ({how}: {each}) -> planned as "
-                                       f"{self.bar_width * 100:.0f} cm")
-            else:
-                self.bar_width = self.round_bar_width(self.arena.obstacle_2_size[1])
-                self.get_logger().warn(f"BAR       no bullseye seen - assuming the usual {self.bar_width * 100:.0f} cm")
-        self.plan_bar(x2, why)
+            self._bar_info = (width, how)
+            self.bar_width = self.round_bar_width(width if width is not None else self.arena.obstacle_2_size[1])
+        self.plan_bar(x2, why, src)
 
     def step_checkpoint_1(self):
         """step:=true at checkpoint 1: a live preview. Stand still collecting arrow 2's
@@ -1137,15 +1126,13 @@ class Task2Runner(RunnerBase):
             self.bullseyes = [b for b in self.bullseyes if b[0] >= t0]
             self.arrows_2 = [a for a in self.arrows_2 if a[0] >= t0]
         arrow2 = self.arrow(1)
-        x2_us = statistics.median(self.lane_readings) if self.lane_readings else None
-        x2_cam = self.bar_x_from_camera()
-        missing, x2, why, width = [], None, '', None
+        x2, why, src = self.bar_distance()
+        missing, width = [], None
         if arrow2 is None:
             missing.append('arrow 2')
-        if x2_us is None and x2_cam is None:
+        if x2 is None:
             missing.append("obstacle 2's distance")
         else:
-            x2, why = self.choose_bar_x(x2_us, x2_cam)
             if self.known() and self.known()[4] is not None:
                 width = self.known()[4]
             else:
@@ -1154,8 +1141,7 @@ class Task2Runner(RunnerBase):
                     missing.append('a bullseye (bar width)')
                 else:
                     width = self.round_bar_width(raw)
-                    each = ' '.join(f'{w * 100:.0f}' for w in widths[:8])
-                    self._bar_note = f"{raw * 100:.1f} cm ({how}: {each})"
+                    self._bar_info = (raw, how)
         self._looks += 1
         go = self.step_go
         self.step_go = False
@@ -1170,6 +1156,7 @@ class Task2Runner(RunnerBase):
                 self.get_logger().info("STEP      nothing planned yet - looking again")
             return
         self._step_note = None
+        self._preview_src = src
         self.preview_bar(x2, why, arrow2, width)
         if go:                                # SPACE came while it looked: this plan goes
             self.step_go = True
@@ -1191,10 +1178,9 @@ class Task2Runner(RunnerBase):
         last = self._preview
         if (last and last[2] == arrow2 and last[3] == width and abs(last[0] - x2) < 0.03):
             return
-        was = (f"  (was {markers.cell(last[0])}, {last[2]}, {last[3] * 100:.0f} cm)" if last else '')
         self._preview = (x2, why, arrow2, width)
         if why:
-            self.get_logger().warn(f"OBSTACLE 2 {why}")
+            self.get_logger().warn(f"LIVE      {why}")
         self.x2, self.bar_width = x2, width
         self.arrows[1] = arrow2              # for the route table and the drawing - cleared again below
         self.waypoints = self.bar_waypoints(x2, arrow2)
@@ -1208,10 +1194,7 @@ class Task2Runner(RunnerBase):
         start = self.lane_waypoint if first else (x, y, 0.0)
         self.leg_paths = [first] + [None] * (len(self.waypoints) - 1)
         self.path_pub.publish(markers.route_path([p for p in self.leg_paths if p], self.stamp()))
-        self.get_logger().info(f"LIVE      obstacle 2 at ({markers.cell(x2)},{markers.cell(TASK2_CENTRE_Y)}), "
-                               f"arrow 2 {arrow2}, {width * 100:.0f} cm wide [{self._bar_note}]"
-                               f" -> checkpoint 2 {self.fmt(self.waypoints[0])}  3 {self.fmt(self.waypoints[1])}"
-                               f"{was} - SPACE goes")
+        self.get_logger().info(f"LIVE      {self.obstacle_2_text(arrow2, x2, width, self._preview_src)} - SPACE")
         threading.Thread(target=self.plan_legs, daemon=True,
                          args=(start, self._plan_gen, self.leg_paths, list(self.waypoints), self.costmap,
                                list(self.leg_paths))).start()
@@ -1222,15 +1205,15 @@ class Task2Runner(RunnerBase):
         x2, why, arrow2, width = self._preview
         self.arrows[1], self.bar_width = arrow2, width
         self._plan_gen += 1                  # a preview's legs still being planned are dropped
-        self.get_logger().info(f"STEP      committed: arrow 2 {arrow2}, {width * 100:.0f} cm wide, obstacle 2 at "
-                               f"({markers.cell(x2)},{markers.cell(TASK2_CENTRE_Y)})")
-        self.plan_bar(x2, '')                # step_go stays set: follow() drives leg 1 once it is planned
+        self.get_logger().info("STEP      committed")
+        self.plan_bar(x2, '', self._preview_src)                # step_go stays set: follow() drives leg 1 once it is planned
 
-    def plan_bar(self, x2: float, why: str):
-        """Obstacle 2 at x2, arrow 2 and the bar's width known: checkpoints 2, 3, 4 and
-        their legs (leg 1 from the route table if it fits), then FOLLOW."""
+    def plan_bar(self, x2: float, why: str, src: str):
+        """Obstacle 2 at x2 (its distance from `src`), arrow 2 and the bar's width known:
+        checkpoints 2, 3, 4 and their legs (leg 1 from the route table if it fits), then
+        FOLLOW."""
         if why:
-            self.get_logger().warn(f"OBSTACLE 2 {why}")
+            self.get_logger().warn(f"OBSTACLE 2  {why}")
         self.x2 = x2
         cy = TASK2_CENTRE_Y
         self.waypoints = self.bar_waypoints(self.x2, self.arrows[1])
@@ -1240,9 +1223,9 @@ class Task2Runner(RunnerBase):
         x, y, _ = self.current_pose
         stopped = self.step or abs(self._last_cmd[0]) < 0.05
         start = (x, y, 0.0) if stopped else (x + abs(self._last_cmd[0]) * 0.15 + LIVE_PLAN_LEAD_M, y, 0.0)
-        self.get_logger().info(f"OBSTACLE 2 at ({markers.cell(self.x2)},{markers.cell(cy)}), arrow 2 {self.arrows[1]}"
-                               f", {self.bar_w() * 100:.0f} cm wide -> checkpoint 2 {self.fmt(self.waypoints[0])}"
-                               f"  3 {self.fmt(self.waypoints[1])}  4 {self.fmt(self.home)}")
+        text = self.obstacle_2_text(self.arrows[1], x2, self.bar_w(), src)
+        self.get_logger().info(f"OBSTACLE 2  {text}")
+        self.snapshot(2, self.width_frame_stamp(), f"OBSTACLE 2 -> {text}")
         self.build_costmap()
         self.publish_map()
         self.watch_bar_ends()
@@ -1259,8 +1242,6 @@ class Task2Runner(RunnerBase):
         self.leg_paths = [first] + [None] * (len(self.waypoints) - 1)
         if first:
             self.path_pub.publish(markers.route_path([first], self.stamp()))
-        self.get_logger().info(f"PLAN      {'leg 1 from the route table - ' if first else ''}"
-                               f"{'legs 2, 3' if first else 'legs 1, 2, 3'} planning")
         threading.Thread(target=self.plan_legs, daemon=True,
                          args=(start, self._plan_gen, self.leg_paths, list(self.waypoints), self.costmap,
                                list(self.leg_paths))).start()
@@ -1307,25 +1288,72 @@ class Task2Runner(RunnerBase):
         return sum(1 for _, box, w, cam in self.bullseyes if task2_vision.confident(box)
                    and task2_vision.bar_half_width(box, w, hfov, cam, face_x, TASK2_CENTRE_Y) is not None)
 
+    def ready_line(self, text: str, warn: bool = False):
+        """A READY / plan-failure line before START - only when it says something new
+        (the plan to checkpoint 1 is re-made on every reading change)."""
+        if text != self._ready_note:
+            self._ready_note = text
+            (self.get_logger().warn if warn else self.get_logger().info)(text)
+
+    def cp1_offness(self) -> str:
+        """'2 deg, +3 cm off the lane' at checkpoint 1."""
+        lane = self.lane_waypoint[1] if self.lane_waypoint else self.current_pose[1]
+        return (f"{math.degrees(self.current_pose[2]):+.0f} deg, "
+                f"{(self.current_pose[1] - lane) * 100:+.0f} cm off the lane")
+
+    def bar_distance(self):
+        """(obstacle 2's centre x or None, a disagreement note, 'ultrasonic' / 'camera')."""
+        x2_us = statistics.median(self.lane_readings) if self.lane_readings else None
+        x2_cam = self.bar_x_from_camera()
+        if x2_us is None and x2_cam is None:
+            return None, '', ''
+        if x2_us is None:
+            return x2_cam, '', 'camera'
+        x2, why = self.choose_bar_x(x2_us, x2_cam)
+        return x2, why, 'ultrasonic' if x2 == x2_us else 'camera'
+
+    def obstacle_2_text(self, arrow2, x2: float, width: float, src: str) -> str:
+        """'arrow LEFT, 47 cm -> 45 (gap), 1.02 m (ultrasonic)': the bar's distance from the
+        ultrasonic's face."""
+        raw, how = self._bar_info
+        w = (f"{raw * 100:.0f} cm -> {width * 100:.0f} ({how})" if raw is not None
+             else f"{width * 100:.0f} cm ({'setup' if how == 'setup' else 'usual - no bullseye'})")
+        face = x2 - self.arena.obstacle_2_size[0] / 2.0
+        d = face - (self.current_pose[0] + self.ultrasonic_offset())
+        return f"arrow {arrow2}, {w}, {d:.2f} m ({src or 'setup'})"
+
+    def width_frame_stamp(self) -> float:
+        """The newest frame with arrow 2 and a bullseye - where the width came from - for
+        the snapshot (else the newest with either; 0: the newest frame)."""
+        bulls = {b[0] for b in self.bullseyes}
+        pairs = [t for t, _ in self.arrows_2 if any(abs(t - b) <= 0.02 for b in bulls)]
+        stamps = pairs or list(bulls) + [t for t, _ in self.arrows_2]
+        return max(stamps) if stamps else 0.0
+
+    def snapshot(self, obstacle: int, stamp: float, caption: str):
+        """Ask scan_snapshots (the laptop) to save the annotated frame `stamp`."""
+        self.snap_pub.publish(String(data=json.dumps({'obstacle': obstacle, 'stamp': stamp, 'caption': caption})))
+
     def table_route(self):
         """Checkpoint 1 -> 2 from the route table, in the map frame, or None (then
         planned live): only from the planned checkpoint 1 (not a swerve's end), with
         the car still near it and the table built for these settings."""
         if not (self.cp1_planned and self.lane_waypoint and self.routes_ok()):
+            self._leg1_note = 'LIVE (no table route from here)'
             return None
         cp1 = self.lane_waypoint
         x, y, _ = self.current_pose
         if abs(y - cp1[1]) > 0.06 or not (CP1_WINDOW_M[0] < x - cp1[0] < CP1_WINDOW_M[1]):
-            self.get_logger().warn(f"ROUTES    the car is off checkpoint 1 ({(x - cp1[0]) * 100:+.0f} / "
-                                   f"{(y - cp1[1]) * 100:+.0f} cm) - planning leg 1 live")
+            self._leg1_note = f"LIVE (car {(x - cp1[0]) * 100:+.0f} / {(y - cp1[1]) * 100:+.0f} cm off CP1)"
             return None
         d2 = (self.x2 - self.arena.obstacle_2_size[0] / 2.0) - (self.x1 + self.arena.obstacle_1_size[0] / 2.0)
         # Checkpoint 1's own distance behind obstacle 1: cp1_back, or nearer on a short
         # course (cp1_lined_up()) - the table has routes for each (task2_routes.cp1_backs()).
         local, why = self.routes.lookup(d2, self.bar_w(), self.arrows[0], self.arrows[1], self.x1 - cp1[0])
         if local is None:
-            self.get_logger().warn(f"ROUTES    {why} - planning leg 1 live")
+            self._leg1_note = f"LIVE ({why})"
             return None
+        self._leg1_note = 'table'
         return task2_paths.to_world(cp1, [tuple(p) for p in local])
 
     def bar_waypoints(self, x2, arrow2):
@@ -1340,8 +1368,7 @@ class Task2Runner(RunnerBase):
         self.x2, self.arrows[1] = x2, arrow2
         self.waypoints = list(self.pre['waypoints'])
         self.leg_paths = list(self.pre['legs'])
-        self.get_logger().info(f"OBSTACLE 2 at ({markers.cell(x2)},{markers.cell(TASK2_CENTRE_Y)}), arrow 2 {arrow2}"
-                               f" (setup) -> legs to checkpoints 2, 3, 4 planned before START")
+        self.get_logger().info(f"OBSTACLE 2  arrow {arrow2} (setup layout, legs planned before START)")
         self.build_costmap()
         self.publish_map()
         self.watch_bar_ends()
@@ -1367,7 +1394,7 @@ class Task2Runner(RunnerBase):
                 return
             if not path:
                 self.send_cmd(0.0, 0.0)
-                self.get_logger().error(f"LEG {self.leg + 1}/3   NO PATH to {self.names[self.leg]} - stopping")
+                self.get_logger().error(f"LEG {self.leg + 1}/3   NO PATH - stopping")
                 self.set_state(State.STOPPED)
                 return
             if self.step and not self.step_go:     # step:=true: each leg waits for /step
@@ -1375,16 +1402,14 @@ class Task2Runner(RunnerBase):
                 note = f"leg {self.leg + 1}"
                 if note != self._step_note:
                     self._step_note = note
-                    self.get_logger().info(f"STEP      planned - SPACE for leg {self.leg + 1}/3 -> "
-                                           f"{self.names[self.leg]} {self.fmt(self.waypoints[self.leg])}")
+                    self.get_logger().info(f"STEP      SPACE for leg {self.leg + 1}/3")
                 return
             self.step_go = False
             self.set_path(self.trim_behind(path))
             gears = [pt[3] for pt in path]
             moves = ' '.join('fwd' if gears[i] >= 0 else 'REV'
                              for i in range(len(gears)) if i == 0 or gears[i] != gears[i - 1])
-            self.get_logger().info(f"LEG {self.leg + 1}/3   -> {self.names[self.leg]} "
-                                   f"{self.fmt(self.waypoints[self.leg])}  {moves}")
+            self.get_logger().info(f"LEG {self.leg + 1}/3" + (f"   {moves}" if 'REV' in moves else ''))
             self.publish_waypoints()
         # The whole car inside the carpark -> done (no creeping on to its middle).
         if self.leg == len(self.waypoints) - 1 and self.in_carpark():
@@ -1397,7 +1422,10 @@ class Task2Runner(RunnerBase):
         self.publish_leg()
         self.check_stuck()
         if self.follower_step(stop_at_end=self.next_leg() is None):
-            self.get_logger().info(f"ARRIVED   {self.names[self.leg]} at {self.fmt(self.current_pose)}")
+            wx, wy, _ = self.waypoints[self.leg]
+            off = math.hypot(self.current_pose[0] - wx, self.current_pose[1] - wy)
+            name = f"CP{self.leg + 2}" if self.leg + 1 < len(self.waypoints) else 'HOME'
+            self.get_logger().info(f"{name:<9} arrived {off * 100:.0f} cm off")
             self.leg += 1
             self.set_path([])
             if self.leg >= len(self.waypoints):
@@ -1543,8 +1571,8 @@ class Task2Runner(RunnerBase):
         self.set_path([])
         self.set_state(State.FINISHED)
         self.end_run(done=True)            # FINISHED to the tablet
-        self.get_logger().info(f"FINISHED  in the carpark at {self.fmt(self.current_pose)} ({why}) "
-                               f"in {self.run_time():.1f} s")
+        self.get_logger().info(f"FINISHED  {self.run_time():.1f} s" + (f" ({why})" if why != 'all of it in the carpark'
+                                                                           else ''))
         self.publish_waypoints()
 
     # -------------------------------------------------------------- planning ----
@@ -1574,10 +1602,11 @@ class Task2Runner(RunnerBase):
                 leg_paths[idx] = path
                 self.path_pub.publish(markers.route_path(leg_paths, self.stamp()))
                 if not path:
-                    self.get_logger().warn(f"PLAN      leg {idx + 1}/3 to {self.names[idx]}: NO PATH")
+                    self.get_logger().warn(f"PLAN      leg {idx + 1}/3 NO PATH")
                     return
                 pose = target
-            self.get_logger().info(f"PLAN      done, 3 legs in {time.monotonic() - t0:.1f} s")
+            first = 'leg 1 table, legs 2-3' if self._leg1_note == 'table' else f"leg 1 {self._leg1_note}, legs 1-3"
+            self.get_logger().info(f"PLAN      {first} in {time.monotonic() - t0:.1f} s")
         except Exception:
             self.get_logger().error(f"PLAN      crashed:\n{traceback.format_exc()}")
 
