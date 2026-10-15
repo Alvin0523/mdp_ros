@@ -115,7 +115,8 @@ CP1_WAIT_S = 1.5
 # ...but first roll on straight this far past it at cp1_speed: YOLO's boxes come ~0.2 s
 # after the frame, and arrow 2 usually arrives within that (it stopped for 0.2-0.4 s in
 # most runs, 2026-10-16). Straight, so leg 1's table route still starts from here.
-CP1_ROLL_M = 0.35             # (0.15 until 2026-10-16) - within the route table's CP1 window (0.40)
+CP1_ROLL_M = 0.0              # no roll: stop at checkpoint 1 (rolling on toward a near bar was too risky,
+                              # 2026-10-16; 0.15 / 0.35 tried)
 WEAK_WIDTH_DIST_M = 1.0       # m from the ultrasonic to the bar: further, its width is planned at least usual
 LEVEL_X_M = 0.30              # m before obstacle 1's centre (or the straight into checkpoint 1, if
                               # earlier: level_with_1()): straight in the lane from here, the
