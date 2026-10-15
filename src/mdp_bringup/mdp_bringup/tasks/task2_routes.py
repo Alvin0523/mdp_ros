@@ -48,7 +48,7 @@ TABLE_FILE = 'task2_routes.json.gz'    # gzip: ~2.5 MB of JSON otherwise
 # The settings a route depends on (navigation.yaml task2_runner): with the car's
 # outline and turning circles, the course sizes and the planner's margin, the
 # table's fingerprint.
-ROUTE_SETTINGS = ('lane_offset', 'side_clearance', 'line_up_dist', 'obstacle_padding', 'wall_padding',
+ROUTE_SETTINGS = ('lane_offset', 'cp1_back', 'side_clearance', 'line_up_dist', 'obstacle_padding', 'wall_padding',
                   'straight_speed', 'max_lateral_accel')
 
 
@@ -116,8 +116,10 @@ def _set_back(wall, d: float):
     return (x0 - d, y0, x1 - d, y1)            # across the centre line: the carpark's back wall
 
 
-def checkpoint_1(x1: float, arrow_1: str, lane_offset: float):
-    return (x1, TASK2_CENTRE_Y + SIDE[arrow_1] * lane_offset, 0.0)
+def checkpoint_1(x1: float, arrow_1: str, lane_offset: float, back: float = 0.0):
+    """Beside obstacle 1 (centre x1), lane_offset out on arrow 1's side, `back`
+    behind its centre (navigation.yaml cp1_back: the camera in front of it)."""
+    return (x1 - back, TASK2_CENTRE_Y + SIDE[arrow_1] * lane_offset, 0.0)
 
 
 def bar_checkpoints(x2: float, arrow_2: str, bar_width: float, side_clearance: float):
@@ -143,7 +145,7 @@ def build_route(arena: Task2Arena, car, settings: dict, d2: float, bar_width: fl
     shapes = task2_paths.Shapes.from_params(car, settings['straight_speed'], settings['max_lateral_accel'])
     x1 = arena.opening_x + D2_RANGE[0] + arena.obstacle_1_size[0] / 2.0     # d1 does not change this leg
     x2 = bar_x(arena, x1, d2)
-    cp1 = checkpoint_1(x1, arrow_1, float(settings['lane_offset']))
+    cp1 = checkpoint_1(x1, arrow_1, float(settings['lane_offset']), float(settings['cp1_back']))
     cp2 = bar_checkpoints(x2, arrow_2, bar_width, float(settings['side_clearance']))[0]
     costmap = course_costmap(arena, x1, x2, bar_width, float(settings['obstacle_padding']),
                              float(settings['wall_padding']))
