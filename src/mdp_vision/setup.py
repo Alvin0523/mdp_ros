@@ -35,6 +35,7 @@ setup(
             'rpi_cam_publisher = mdp_vision.rpi_cam_publisher:main',
             'yolo_detector = mdp_vision.yolo_detector:main',
             'bullseye_matcher = mdp_vision.bullseye_matcher:main',
+            'camera_relay = mdp_vision.camera_relay:main',
         ],
     },
 )
