@@ -41,7 +41,6 @@ from mdp_bringup.utils.obstacle_layout import TASK2_AREA_M, TASK2_CENTRE_Y, Task
 
 SIDE = {'LEFT': 1.0, 'RIGHT': -1.0}       # +y = left
 STEP_M = 0.05
-LONG_STRETCH_M = 0.30   # m a route's final straight may be lengthened past the table's longest d2
 D2_RANGE = (0.60, 1.50)                   # m, the course rules
 TABLE_VERSION = 4       # how routes are built (shapes, walls): a table from another version is rebuilt
 TABLE_FILE = 'task2_routes.json.gz'    # gzip: ~2.5 MB of JSON otherwise
@@ -249,12 +248,10 @@ class RouteTable:
         near = min(backs, key=lambda b: abs(b - back)) if backs else None
         if near is None or abs(near - back) > 0.02:
             return None, f'checkpoint 1 {back * 100:.0f} cm back not in the table'
-        # Outside the table: the nearest route, its final straight adjusted - the course's
+        # Up to 1.5 steps outside: the nearest route, its straight adjusted - the course's
         # d2 is 0.60-1.50 m, a reading a few cm outside is the ultrasonic / pose's error
-        # (sim 2026-10-14: 0.57 m for 0.60, 1.55-1.56 m for 1.50). Shorter: 1.5 steps at
-        # most (the S is fixed); longer only lengthens that straight - up to LONG_STRETCH_M
-        # (car 2026-10-16: d2 1.60 planned leg 1 live, a second late).
-        if not (self.d2s[0] - 1.5 * STEP_M <= d2 <= self.d2s[-1] + LONG_STRETCH_M):
+        # (sim 2026-10-14: 0.57 m for 0.60, 1.55-1.56 m for 1.50).
+        if not (self.d2s[0] - 1.5 * STEP_M <= d2 <= self.d2s[-1] + 1.5 * STEP_M):
             return None, f'd2 {d2:.2f} m outside the table'
         if bar_width not in self.widths:
             return None, f'bar width {bar_width:.2f} m not in the table'
