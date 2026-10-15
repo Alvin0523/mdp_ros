@@ -139,7 +139,7 @@ class RobotPoseFeedback(Node):
 
 
 def main(args=None):
-    run(RobotPoseFeedback, args=args)
+    run(RobotPoseFeedback, args=args, events=True)   # /tf + odometry: see run()
 
 
 if __name__ == '__main__':
