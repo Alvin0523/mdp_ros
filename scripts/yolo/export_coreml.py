@@ -18,9 +18,10 @@ MODELS = os.path.join(os.path.dirname(__file__), '..', '..', 'src', 'mdp_vision'
 
 
 def patch_int_cast():
-    """coremltools 9 + torch 2.8: YOLO26's attention block casts a 1-element shape
-    tensor to int, and coremltools only takes 0-d arrays there ("only 0-dimensional
-    arrays can be converted to Python scalars", task2_yolo26s.pt 2026-10-15). Same
+    """YOLO26's attention block casts a 1-element shape tensor to int, and numpy >= 2.4
+    (2.5 here) no longer turns a 1-element array into a scalar, so coremltools 9 fails
+    ("only 0-dimensional arrays can be converted to Python scalars", task2_yolo26s.pt
+    2026-10-15; Ultralytics wants numpy <= 2.3.5 for this, coremltools issue 2633). Same
     value via .item(); detections matched the .pt on all 27 test images (<= 1 px)."""
     import numpy as np
     from coremltools.converters.mil import Builder as mb
