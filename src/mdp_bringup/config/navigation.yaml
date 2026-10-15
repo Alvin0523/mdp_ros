@@ -215,7 +215,8 @@ task2_runner:
                                # 10 cm nearer at a time (task2_runner cp1_lined_up).
     side_clearance: 0.25       # m, checkpoints 2 and 3 out from obstacle 2's ends (as lane_offset): mid the
                                # 50 cm to a side wall (side_wall_clearance)
-    home_stop_dist: 0.12       # m, ultrasonic reading of the carpark's back wall = stop
+    home_stop_dist: 0.15       # m, ultrasonic reading of the carpark's back wall = stop (first rule;
+                               # 0.12 until 2026-10-16)
     home_straight_dist: 0.45   # m, on the centre line before home: the car lines up this far out
     home_margin: 0.08          # m of extra room either side on the way home (it passes obstacle 1;
                                # the other legs keep 0.04). 0.12 (2026-10-16) left no clean S through the

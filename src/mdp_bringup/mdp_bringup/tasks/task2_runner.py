@@ -34,7 +34,7 @@ known in advance, so the car measures them with the front ultrasonic:
   (fallback, arrow 1 not read at home: straight on until YOLO reads it, then the
    same S to checkpoint 1 from there - APPROACH_1; too close for that:
    SWERVE_OUT/BACK, full lock out and back)
-  FINISHED         in the carpark (or the ultrasonic sees the back wall)
+  FINISHED         the ultrasonic sees the back wall (or, no wall seen, all in the carpark)
 
 step:=true (launch argument, testing): one checkpoint per /step (`pixi run step`,
 SPACE). The first starts the run; the car stops at checkpoint 1, stands still
@@ -1422,14 +1422,19 @@ class Task2Runner(RunnerBase):
                              for i in range(len(gears)) if i == 0 or gears[i] != gears[i - 1])
             self.get_logger().info(f"LEG {self.leg + 1}/3" + (f"   {moves}" if 'REV' in moves else ''))
             self.publish_waypoints()
-        # The whole car inside the carpark -> done (no creeping on to its middle).
-        if self.leg == len(self.waypoints) - 1 and self.in_carpark():
-            return self.finish("all of it in the carpark")
-        # Into the carpark: the ultrasonic sees the back wall -> done.
+        # Into the carpark: the ultrasonic sees the back wall -> done. First: the real wall,
+        # not odometry.
         r = self.fresh_range()
-        if (self.leg == len(self.waypoints) - 1 and r is not None and r <= float(self.p('home_stop_dist'))
+        home_leg = self.leg == len(self.waypoints) - 1
+        if (home_leg and r is not None and r <= float(self.p('home_stop_dist'))
                 and self.current_pose[0] < self.arena.opening_x):
             return self.finish("the back wall")
+        # The whole car inside the carpark -> done (no creeping on to its middle). Only
+        # when the ultrasonic sees no wall within the carpark's depth (a taped carpark):
+        # 10 cm inside is ~17 cm from the wall, before the wall stop above.
+        wall_seen = r is not None and r <= self.arena.opening_x - TASK2_BACK_WALL_X
+        if home_leg and not wall_seen and self.in_carpark():
+            return self.finish("all of it in the carpark")
         self.publish_leg()
         self.check_stuck()
         if self.follower_step(stop_at_end=self.next_leg() is None):
