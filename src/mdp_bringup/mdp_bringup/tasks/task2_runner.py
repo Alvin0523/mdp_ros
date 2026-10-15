@@ -1293,7 +1293,11 @@ class Task2Runner(RunnerBase):
         (the plan to checkpoint 1 is re-made on every reading change)."""
         if text != self._ready_note:
             self._ready_note = text
-            (self.get_logger().warn if warn else self.get_logger().info)(text)
+            # Two call sites: rclpy refuses one call site logging at two severities.
+            if warn:
+                self.get_logger().warn(text)
+            else:
+                self.get_logger().info(text)
 
     def cp1_offness(self) -> str:
         """'2 deg, +3 cm off the lane' at checkpoint 1."""
