@@ -34,8 +34,13 @@ known in advance, so the car measures them with the front ultrasonic:
   (fallback, arrow 1 not read at home: straight on until YOLO reads it, then the
    same S to checkpoint 1 from there - APPROACH_1; too close for that:
    SWERVE_OUT/BACK, full lock out and back)
-  FINISHED         in the carpark (or the ultrasonic sees the back wall); phase:=1
-                   (launch argument): at checkpoint 1, stopped
+  FINISHED         in the carpark (or the ultrasonic sees the back wall)
+
+step:=true (launch argument, testing): one checkpoint per /step (`pixi run step`,
+SPACE). The first starts the run; the car stops at checkpoint 1, stands still
+STEP_LOOK_S reading arrow 2, the bar's distance and width, then plans - or says
+what is missing and stays (SPACE looks again). Each further SPACE drives one leg
+and stops at its checkpoint. No path: it stays. Nothing is guessed.
 
 Frame (`map`): the task 2 course, x along it, centre line y = 1.2 m - see
 utils/obstacle_layout.py. The course rules (carpark, obstacle sizes) come from
@@ -93,6 +98,7 @@ CP1_WINDOW_M = (-0.12, 0.40)  # m along: the car this near checkpoint 1 starts l
 HEADING_GAIN = 1.5            # rad of steering per rad of heading error, on straights
 ARC_LEAD_RAD = math.radians(5.0)   # end an arc this early: the steering takes a moment to swing back
 ARROW_WAIT_S = 3.0            # an arrow not read yet when needed: wait this long, then guess
+STEP_LOOK_S = 2.0             # step:=true: s standing at checkpoint 1 collecting boxes and ultrasonic
 US_VALID = (0.25, 2.2)        # m - lane readings outside this are not obstacle 2
 # Beside obstacle 1 with arrow 2 or obstacle 2's distance still unknown: no stop -
 # angle gently toward the centre line (the camera points at arrow 2, and the middle
@@ -155,7 +161,10 @@ class Task2Runner(RunnerBase):
         # laptop's tasks.yaml, for both tasks; alone, this node does.
         if self.declare_parameter('serve_setup', True).value:
             self.create_service(Trigger, '/setup_obstacles', self.setup_obstacles_callback)
-        self.car = planner_params.ACTIVE          # URDF + navigation.yaml (robot.*, follower.*)
+        # step:=true - one checkpoint per /step (module docstring).
+        self.step = bool(self.declare_parameter('step', False).value)
+        self.create_service(Trigger, '/step', self.step_callback)
+        self.car =planner_params.ACTIVE          # URDF + navigation.yaml (robot.*, follower.*)
         car_centre_ahead = (self.car.footprint_front - self.car.footprint_rear) / 2.0
         self.home = self.arena.car_pose_centred(car_centre_ahead, math.pi)
         # Where every run starts (the launch's start pose: the carpark, facing out) - the
@@ -189,9 +198,6 @@ class Task2Runner(RunnerBase):
         # these settings; else planned live like the other legs.
         self.routes = self.load_routes()
 
-        # phase:=1 - carpark -> checkpoint 1 only: stop there and finish.
-        self.phase = int(self.declare_parameter('phase', 0).value)
-
         # Hybrid A* on the laptop (task1_planner) with one (role:=pi), else here.
         self.remote_planner = self.declare_parameter('remote_planner', False).value
         plan_qos = rclpy.qos.QoSProfile(depth=20, reliability=rclpy.qos.ReliabilityPolicy.RELIABLE)
@@ -217,7 +223,10 @@ class Task2Runner(RunnerBase):
         self._arrow_wait_since = None
         self._glance = None              # None / 'turn' / 'hold' / 'back' / 'done' (glance())
         self._glance_since = None
-        self.side = 0.0                  # +1 left / -1 right, the lane beside obstacle 1
+        self.step_go = False             # step:=true: a /step came - the next leg (or another look) may go
+        self._look_since = None          # step:=true: standing at checkpoint 1 since
+        self._step_note = None           # step:=true: the last "waiting" line (logged once)
+        self.side = 0.0                 # +1 left / -1 right, the lane beside obstacle 1
         self.x1 = self.x2 = None         # obstacle centres (m, along the course)
         self.lane_readings = []
         self.waypoints = []              # (x, y, theta): A, B, HOME
@@ -631,6 +640,23 @@ class Task2Runner(RunnerBase):
             self.get_logger().warn(f"`start` rejected: {response.message}")
         return response
 
+    def step_callback(self, request, response):
+        """/step (step:=true): before the run = START; standing at a checkpoint = go on
+        (the next leg, or at checkpoint 1 with something missing: look again)."""
+        if not self.step:
+            response.success, response.message = False, "Not in step mode - launch with step:=true."
+            return response
+        if self.state == State.WAITING_FOR_START:
+            return self.start_run_callback(request, response)
+        if self.state == State.CHECKPOINT_1 or (self.state == State.FOLLOW and not self.follower.active):
+            self.step_go = True
+            response.success, response.message = True, "Step."
+            return response
+        response.success = False
+        response.message = (f"Ignored: {self.state.name} - still driving." if self.state not in
+                            (State.FINISHED, State.STOPPED) else f"{self.state.name} - reset to run again.")
+        return response
+
     def setup_obstacles_callback(self, request, response):
         """/setup_obstacles without a laptop: this machine's task2 layout on /task2_setup."""
         try:
@@ -905,22 +931,22 @@ class Task2Runner(RunnerBase):
                                                  self.current_pose, self.stamp()))
         self.read_obstacle_2()
         self.check_stuck()
-        if not self.follower_step(stop_at_end=False):
+        if not self.follower_step(stop_at_end=self.step):
             return
         # Keep rolling straight on while checkpoints 2-4 are planned (no stop).
-        self.hold_heading(max(abs(self._last_cmd[0]), float(self.p('path_speed'))), 0.0)
+        if not self.step:
+            self.hold_heading(max(abs(self._last_cmd[0]), float(self.p('path_speed'))), 0.0)
         self.arrive_checkpoint_1()
 
     def arrive_checkpoint_1(self):
-        if self.phase == 1:
+        if self.step:
             self.send_cmd(0.0, 0.0)
             self.set_path([])
-            self.set_state(State.FINISHED)
-            self.end_run(done=True)
-            self.get_logger().info(f"FINISHED  phase 1 at checkpoint 1 {self.fmt(self.current_pose)} "
-                                   f"in {self.run_time():.1f} s")
-            return
-        self.get_logger().info(f"CHECKPOINT 1 at {self.fmt(self.current_pose)}")
+            self._look_since = self.now()
+            self.get_logger().info(f"CHECKPOINT 1 at {self.fmt(self.current_pose)} - stopped, looking "
+                                   f"{STEP_LOOK_S:.0f} s (step)")
+        else:
+            self.get_logger().info(f"CHECKPOINT 1 at {self.fmt(self.current_pose)}")
         self.set_state(State.CHECKPOINT_1)
         self.checkpoint_1()
 
@@ -996,6 +1022,8 @@ class Task2Runner(RunnerBase):
         still unread ARROW_2_DEADLINE_M from the bar: the nearer end."""
         if self.pre and self.pre.get('legs'):
             return self.follow_setup_legs()
+        if self.step:
+            return self.step_checkpoint_1()
         self.read_obstacle_2()
         if self.arrows[1] is None and (self.known() or sum(self.arrow_counts[1].values()) >= ARROW_2_SURE):
             self.arrows[1] = self.arrow(1)
@@ -1030,6 +1058,53 @@ class Task2Runner(RunnerBase):
             return
         if not self.decide_bar_width(x2):
             return self.hold_heading(max(abs(self._last_cmd[0]), float(self.p('path_speed'))), 0.0)
+        self.plan_bar(x2, why)
+
+    def step_checkpoint_1(self):
+        """step:=true at checkpoint 1: stand still STEP_LOOK_S collecting arrow 2's and
+        the bullseyes' boxes and the ultrasonic, then plan (the first leg waits for the
+        next /step in follow()). Anything missing: say what, stay - /step looks again.
+        No glance, hedge or guess: the car does not move here."""
+        self.send_cmd(0.0, 0.0)
+        self.read_obstacle_2()
+        if self._look_since is None:
+            self._look_since = self.now()
+        if self.now() - self._look_since < STEP_LOOK_S:
+            return
+        if self.arrows[1] is None:
+            self.arrows[1] = self.arrow(1)
+        x2_us = statistics.median(self.lane_readings) if self.lane_readings else None
+        x2_cam = self.bar_x_from_camera()
+        missing, x2, why = [], None, ''
+        if self.arrows[1] is None:
+            missing.append('arrow 2')
+        if x2_us is None and x2_cam is None:
+            missing.append("obstacle 2's distance")
+        else:
+            x2, why = self.choose_bar_x(x2_us, x2_cam)
+            if self.bar_width is None and not (self.known() and self.known()[4] is not None):
+                width, widths, how = self.measure_bar(x2)
+                if width is None:
+                    missing.append('a bullseye (bar width)')
+                else:
+                    self.bar_width = self.round_bar_width(width)
+                    each = ' '.join(f'{w * 100:.0f}' for w in widths[:8])
+                    self.get_logger().info(f"BAR       {width * 100:.1f} cm wide ({how}: {each}) -> planned as "
+                                           f"{self.bar_width * 100:.0f} cm")
+        if missing:
+            note = ', '.join(missing)
+            if note != self._step_note:
+                self._step_note = note
+                self.get_logger().warn(f"STEP      at checkpoint 1: no {note} - staying. SPACE looks again")
+            if self.step_go:
+                self.step_go, self._look_since, self._step_note = False, None, None
+                self.get_logger().info(f"STEP      looking again {STEP_LOOK_S:.0f} s")
+            return
+        self.plan_bar(x2, why)
+
+    def plan_bar(self, x2: float, why: str):
+        """Obstacle 2 at x2, arrow 2 and the bar's width known: checkpoints 2, 3, 4 and
+        their legs (leg 1 from the route table if it fits), then FOLLOW."""
         if why:
             self.get_logger().warn(f"OBSTACLE 2 {why}")
         self.x2 = x2
@@ -1037,8 +1112,9 @@ class Task2Runner(RunnerBase):
         self.waypoints = self.bar_waypoints(self.x2, self.arrows[1])
         # Planned live (no table route): from where the car will be once the plan is
         # ready - it rolls on meanwhile (follow(), ROLL_ON_M); passed points are trimmed.
+        # Step mode: it stands still, so from right here.
         x, y, _ = self.current_pose
-        start = (x + abs(self._last_cmd[0]) * 0.15 + LIVE_PLAN_LEAD_M, y, 0.0)
+        start = (x, y, 0.0) if self.step else (x + abs(self._last_cmd[0]) * 0.15 + LIVE_PLAN_LEAD_M, y, 0.0)
         self.get_logger().info(f"OBSTACLE 2 at ({markers.cell(self.x2)},{markers.cell(cy)}), arrow 2 {self.arrows[1]}"
                                f", {self.bar_w() * 100:.0f} cm wide -> checkpoint 2 {self.fmt(self.waypoints[0])}"
                                f"  3 {self.fmt(self.waypoints[1])}  4 {self.fmt(self.home)}")
@@ -1230,7 +1306,8 @@ class Task2Runner(RunnerBase):
                 # Leg 1 (planned live, not from the table): roll straight on while the
                 # bar is still well ahead; else (and any later leg) wait.
                 face = self.x2 - self.arena.obstacle_2_size[0] / 2.0 if self.x2 is not None else None
-                if (self.leg == 0 and face is not None and abs(self.current_pose[2]) < math.radians(15.0)
+                if (not self.step and self.leg == 0 and face is not None
+                        and abs(self.current_pose[2]) < math.radians(15.0)
                         and face - (self.current_pose[0] + self.car.footprint_front) > ROLL_ON_M):
                     self.hold_heading(float(self.p('path_speed')), 0.0)
                 else:
@@ -1241,6 +1318,15 @@ class Task2Runner(RunnerBase):
                 self.get_logger().error(f"LEG {self.leg + 1}/3   NO PATH to {self.names[self.leg]} - stopping")
                 self.set_state(State.STOPPED)
                 return
+            if self.step and not self.step_go:     # step:=true: each leg waits for /step
+                self.send_cmd(0.0, 0.0)
+                note = f"leg {self.leg + 1}"
+                if note != self._step_note:
+                    self._step_note = note
+                    self.get_logger().info(f"STEP      planned - SPACE for leg {self.leg + 1}/3 -> "
+                                           f"{self.names[self.leg]} {self.fmt(self.waypoints[self.leg])}")
+                return
+            self.step_go = False
             self.set_path(self.trim_behind(path))
             gears = [pt[3] for pt in path]
             moves = ' '.join('fwd' if gears[i] >= 0 else 'REV'
@@ -1293,6 +1379,8 @@ class Task2Runner(RunnerBase):
         in the gear the current leg ends in. None otherwise (home, a gear change,
         still planning) - then the car slows for the checkpoint and stops there."""
         path = self.follower.path
+        if self.step:                    # step:=true: stop at every checkpoint
+            return None
         if self.state != State.FOLLOW or not path or self.leg + 1 >= len(self.leg_paths):
             return None
         nxt = self.leg_paths[self.leg + 1]

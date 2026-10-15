@@ -43,6 +43,8 @@ Arguments
   gui        sim only - Gazebo window                                 (default true)
   model      YOLO model file under mdp_vision/models/ (default best_v5.pt;
              task:=2 task2_yolo26s.pt)
+  step       task 2, testing: true -> stops at every checkpoint, `pixi run step`
+             (SPACE) drives on to the next                        (default false)
   bullseye_matcher  task 2: true -> bullseyes also by template matching
              (mdp_vision bullseye_matcher, wherever YOLO runs) - until YOLO
              has a bullseye class                              (default true)
@@ -187,9 +189,7 @@ def generate_launch_description(argv=None):
     # were removed 2026-10-08).
     model = arg('model', 'task2_yolo26s.pt' if task == '2' else 'best_v5.pt')
     matcher = _true(arg('bullseye_matcher', 'true'))
-    phase = arg('phase', '0')
-    if phase not in ('0', '1'):
-        raise ValueError(f"phase:={phase} - expected 0 (the whole run) or 1 (task 2 to checkpoint 1)")
+    step = _true(arg('step', 'false'))      # task 2: one checkpoint per /step (pixi run step, SPACE)
     quiet = arg('log', 'quiet') != 'full'
     serial_port = arg('serial_port', '')              # '' = config/bridges.yaml
     bluetooth_device = arg('bluetooth_device', '')
@@ -219,8 +219,8 @@ def generate_launch_description(argv=None):
         DeclareLaunchArgument('model', default_value='best_v5.pt',
                               description='YOLO model file under mdp_vision/models/, or a full path '
                                           '(task:=2: task2_yolo26s.pt)'),
-        DeclareLaunchArgument('phase', default_value='0',
-                              description='task 2: 0 the whole run, 1 carpark -> checkpoint 1 only (stops there)'),
+        DeclareLaunchArgument('step', default_value='false',
+                              description='task 2: stop at every checkpoint, go on with /step (pixi run step, SPACE)'),
         DeclareLaunchArgument('bullseye_matcher', default_value='true',
                               description='task 2: bullseyes by template matching too, where YOLO runs'),
         DeclareLaunchArgument('serial_port', default_value='config/bridges.yaml', description='real: STM32 USART3 device'),
@@ -496,6 +496,6 @@ def generate_launch_description(argv=None):
             package='mdp_bringup', executable='task2_runner', output='screen',
             parameters=[navigation, {'layout': layout, 'serve_setup': role != 'pi', 'start_x': start_x,
                                      'start_y': start_y, 'start_yaw': start_yaw,
-                                     'remote_planner': role == 'pi', 'phase': int(phase)}, sim_time]))
+                                     'remote_planner': role == 'pi', 'step': step}, sim_time]))
 
     return LaunchDescription(declared + actions)
