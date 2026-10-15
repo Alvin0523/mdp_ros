@@ -942,18 +942,39 @@ class Task2Runner(RunnerBase):
         return paths
 
     def cp1_lined_up(self, start, x1, arrow, costmap):
-        """(checkpoint 1, the lined-up path to it or None): cp1_back behind obstacle 1's
-        centre (the camera in front of it), else 10 cm nearer at a time - a short
-        course has no room for the S that far back (cp1_back 0.4: none at d1 0.6 /
-        0.7, offline check 2026-10-15). Leg 1's table route follows (table_route())."""
-        lane, back = float(self.p('lane_offset')), float(self.p('cp1_back'))
-        goal = None
-        while True:
-            goal = task2_routes.checkpoint_1(x1, arrow, lane, back)
-            path = self.lined_up_path(start, goal, costmap, float(self.p('line_up_dist')))
-            if path or back <= 0.0:
-                return goal, path
-            back = max(0.0, round(back - 0.10, 3))
+        """(checkpoint 1, the lined-up path to it or None): as far back as cp1_back
+        behind obstacle 1's centre (the camera in front of it) WITH at least
+        cp1_min_straight of straight before it, else 10 cm nearer at a time. The
+        furthest-back fit had none on every course - the car reached checkpoint 1
+        still turning and stopped 23 deg in (bag 2026-10-16 03:36). Nothing with the
+        straight: the furthest back that fits at all, as before. Leg 1's table route
+        follows (table_route() - routes for every 10 cm back)."""
+        lane, want = float(self.p('lane_offset')), float(self.p('cp1_back'))
+        backs, b = [], want
+        while b > -1e-6:
+            backs.append(round(max(0.0, b), 3))
+            b -= 0.10
+        for min_straight in (float(self.p('cp1_min_straight')), 0.0):
+            for back in backs:
+                goal = task2_routes.checkpoint_1(x1, arrow, lane, back)
+                path = self.cp1_path(start, goal, costmap, min_straight)
+                if path:
+                    return goal, path
+        return task2_routes.checkpoint_1(x1, arrow, lane, 0.0), None
+
+    def cp1_path(self, start, goal, costmap, min_straight: float):
+        """The lined-up S into checkpoint 1 with at least min_straight before it
+        (task2_paths.LADDER's straights and margins, smooth before arc)."""
+        straight = float(self.p('line_up_dist'))
+        for shape in ('smooth', 'arc'):
+            for f_straight, f_margin in task2_paths.LADDER:
+                if straight * f_straight < min_straight - 1e-6:
+                    continue
+                path = task2_paths.lined_up_path(start, goal, costmap, self.shapes(), straight * f_straight,
+                                                 0.04 * f_margin, shape)
+                if path:
+                    return path
+        return None
 
     def lined_up_path(self, start, goal, costmap, straight, margin=0.04):
         """start -> goal (same heading), straight again `straight` before it (task2_paths.py)."""
