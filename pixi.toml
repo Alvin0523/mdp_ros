@@ -54,6 +54,7 @@ around-obstacle = { cmd = "ros2 run mdp_bringup around_obstacle", description = 
 teleop = { cmd = "ros2 run teleop_twist_keyboard teleop_twist_keyboard --ros-args -p stamped:=true", description = "Keyboard driving", env = { DYLD_LIBRARY_PATH = "$PIXI_PROJECT_ROOT/install/mdp_interfaces/lib" } }
 
 # --- Viewing and recording ---------------------------------------------------
+car = { cmd = "zellij --layout zellij/car.kdl", description = "Real task 2 run in one zellij window: the Pi (waits for it, SSHes in, pixi run pi task:=2), the laptop side (laptop task:=2) and Foxglove's bridge - Ctrl+C stops a pane, ENTER reruns it, Ctrl+Q quits. MDP_PI=user@host for another Pi" }
 foxglove = { cmd = "ros2 launch foxglove_bridge foxglove_bridge_launch.xml", description = "Foxglove bridge (ws://<pi>:8765, display frame: map)", env = { DYLD_LIBRARY_PATH = "$PIXI_PROJECT_ROOT/install/mdp_interfaces/lib" } }
 bag = { cmd = "ros2 run mdp_bringup trigger /bag/toggle", description = "Start recording a bag (every topic except camera images) into bags/, or stop it if recording - same as the Foxglove REC button", env = { DYLD_LIBRARY_PATH = "$PIXI_PROJECT_ROOT/install/mdp_interfaces/lib" } }
 bag-all = { cmd = "ros2 bag record -a -o bags/rosbag2_$(date +%Y%m%d_%H%M%S)", description = "Record everything, including camera images (large)", env = { DYLD_LIBRARY_PATH = "$PIXI_PROJECT_ROOT/install/mdp_interfaces/lib" } }
