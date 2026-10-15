@@ -416,11 +416,15 @@ class Task2Runner(RunnerBase):
 
     def measure_bar(self, x2: float):
         """The bar's width from the frames seen near checkpoint 1: (width or None,
-        widths, 'gap' / 'pose') - arrow 2 to bullseye in one frame, else from the pose."""
+        widths, 'gap') - arrow 2 to bullseye in one frame only. Not the pose method (one
+        bullseye + the car's own heading and position): it read 42-52 cm for a 76 cm bar
+        and put checkpoint 2 13 cm too close (car 2026-10-16) - no gap: the usual width."""
         face_x = x2 - self.arena.obstacle_2_size[0] / 2.0
-        return task2_vision.bar_width(self.bullseyes, self.arrows_2, float(self.p('camera_hfov')), face_x,
-                                      TASK2_CENTRE_Y, self.side, self.arena.obstacle_2_width_range,
-                                      gap_scale=1.0 if self.p('use_sim_time') else float(self.p('bar_gap_scale')))
+        width, widths, how = task2_vision.bar_width(
+            self.bullseyes, self.arrows_2, float(self.p('camera_hfov')), face_x, TASK2_CENTRE_Y, self.side,
+            self.arena.obstacle_2_width_range,
+            gap_scale=1.0 if self.p('use_sim_time') else float(self.p('bar_gap_scale')))
+        return (width, widths, how) if how == 'gap' else (None, [], '')
 
     def bar_w(self) -> float:
         """The bar's width planned with: measured (nearest 5 cm), set up, or the usual one."""
