@@ -217,8 +217,9 @@ task2_runner:
     side_clearance: 0.25       # m, checkpoints 2 and 3 out from obstacle 2's ends (as lane_offset)
     home_stop_dist: 0.12       # m, ultrasonic reading of the carpark's back wall = stop
     home_straight_dist: 0.45   # m, on the centre line before home: the car lines up this far out
-    home_margin: 0.08          # m of extra room either side on the way home (it passes obstacle 1;
-                               # the other legs keep 0.04)
+    home_margin: 0.12          # m of extra room either side on the way home (it passes obstacle 1;
+                               # the other legs keep 0.04). 0.08 until 2026-10-16: at 1.05 m/s the home
+                               # S turned in close to obstacle 1
     line_up_dist: 0.30         # m, straight into checkpoints 1 and 2: the diagonal ends this far before
                                # (0.3 + side_clearance 0.25 gave the most clean diagonals, 24 of 36
                                # layouts, in an offline search 2026-09-30; the rest use Hybrid A*)
