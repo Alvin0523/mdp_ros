@@ -34,7 +34,7 @@ known in advance, so the car measures them with the front ultrasonic:
   (fallback, arrow 1 not read at home: straight on until YOLO reads it, then the
    same S to checkpoint 1 from there - APPROACH_1; too close for that:
    SWERVE_OUT/BACK, full lock out and back)
-  FINISHED         in the carpark (or the ultrasonic sees the back wall)
+  FINISHED         the ultrasonic sees the back wall (or, no wall seen, all in the carpark)
 
 step:=true (launch argument, testing): one checkpoint per /step (`pixi run step`,
 SPACE). The first starts the run; the car stops at checkpoint 1, stands still
@@ -117,8 +117,12 @@ LEVEL_X_M = 0.30              # m before obstacle 1's centre (or the straight in
                               # ultrasonic and camera see past it (obstacle 2 and arrow 2) and
                               # arrow 1 is out of the camera's view - read them on the move
 BRAKE_RESPONSE_S = 0.15       # s for the wheels' speed to follow a slower command (speed_ahead)
-IN_CARPARK_MARGIN_M = 0.06    # m: the whole outline this far inside the carpark's walls = home (0.02 until
-                              # 2026-10-16: it stopped just past the entrance line)
+HOME_DEEPER_M = 0.05          # m: the home checkpoint this far past the carpark's middle, toward the
+                              # back wall (2026-10-16: centred, the car stopped ~20 cm from the wall - its
+                              # path ended before the ultrasonic's 15 cm stop)
+IN_CARPARK_MARGIN_M = 0.10    # m: the whole outline this far inside the carpark's walls = home (0.02, 0.06
+                              # until 2026-10-16: it stopped just past the entrance; the home spot itself
+                              # has 13.5 cm, so it still fits)
 NO_BAR_LIMIT_M = 0.35         # m past obstacle 1's centre without obstacle 2 seen: stop (the
                               # bar's face can be 0.65 m past it, the car's nose is 0.2 m ahead)
 
@@ -168,7 +172,10 @@ class Task2Runner(RunnerBase):
         self._ready_note = None          # the last READY / plan-failure line (each logged once)
         self.car =planner_params.ACTIVE          # URDF + navigation.yaml (robot.*, follower.*)
         car_centre_ahead = (self.car.footprint_front - self.car.footprint_rear) / 2.0
-        self.home = self.arena.car_pose_centred(car_centre_ahead, math.pi)
+        # The last checkpoint HOME_DEEPER_M past the carpark's middle (nose ~8.5 cm from the
+        # back wall by odometry): the ultrasonic's 15 cm stop comes first.
+        hx, hy, hyaw = self.arena.car_pose_centred(car_centre_ahead, math.pi)
+        self.home = (hx - HOME_DEEPER_M, hy, hyaw)
         # Where every run starts (the launch's start pose: the carpark, facing out) - the
         # path to checkpoint 1 is planned from here, like task 1, not from the live pose.
         default = self.arena.car_pose_centred(car_centre_ahead, 0.0)
@@ -1421,14 +1428,19 @@ class Task2Runner(RunnerBase):
                              for i in range(len(gears)) if i == 0 or gears[i] != gears[i - 1])
             self.get_logger().info(f"LEG {self.leg + 1}/3" + (f"   {moves}" if 'REV' in moves else ''))
             self.publish_waypoints()
-        # The whole car inside the carpark -> done (no creeping on to its middle).
-        if self.leg == len(self.waypoints) - 1 and self.in_carpark():
-            return self.finish("all of it in the carpark")
-        # Into the carpark: the ultrasonic sees the back wall -> done.
+        # Into the carpark: the ultrasonic sees the back wall -> done. First: the real wall,
+        # not odometry.
         r = self.fresh_range()
-        if (self.leg == len(self.waypoints) - 1 and r is not None and r <= float(self.p('home_stop_dist'))
+        home_leg = self.leg == len(self.waypoints) - 1
+        if (home_leg and r is not None and r <= float(self.p('home_stop_dist'))
                 and self.current_pose[0] < self.arena.opening_x):
             return self.finish("the back wall")
+        # The whole car inside the carpark -> done (no creeping on to its middle). Only
+        # when the ultrasonic sees no wall within the carpark's depth (a taped carpark):
+        # 10 cm inside is ~17 cm from the wall, before the wall stop above.
+        wall_seen = r is not None and r <= self.arena.opening_x - TASK2_BACK_WALL_X
+        if home_leg and not wall_seen and self.in_carpark():
+            return self.finish("all of it in the carpark")
         self.publish_leg()
         self.check_stuck()
         if self.follower_step(stop_at_end=self.next_leg() is None):
