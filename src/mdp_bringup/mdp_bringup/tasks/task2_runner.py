@@ -115,7 +115,8 @@ CP1_WAIT_S = 1.5
 # ...but first roll on straight this far past it at cp1_speed: YOLO's boxes come ~0.2 s
 # after the frame, and arrow 2 usually arrives within that (it stopped for 0.2-0.4 s in
 # most runs, 2026-10-16). Straight, so leg 1's table route still starts from here.
-CP1_ROLL_M = 0.15
+CP1_ROLL_M = 0.35             # (0.15 until 2026-10-16) - within the route table's CP1 window (0.40)
+WEAK_WIDTH_DIST_M = 1.0       # m from the ultrasonic to the bar: further, its width is planned at least usual
 LEVEL_X_M = 0.30              # m before obstacle 1's centre (or the straight into checkpoint 1, if
                               # earlier: level_with_1()): straight in the lane from here, the
                               # ultrasonic and camera see past it (obstacle 2 and arrow 2) and
@@ -420,14 +421,18 @@ class Task2Runner(RunnerBase):
 
     def measure_bar(self, x2: float):
         """The bar's width from the frames seen near checkpoint 1: (width or None,
-        widths, 'gap' / 'pose') - arrow 2 to bullseye in one frame, else from the pose."""
+        widths, 'gap') - arrow 2 to bullseye in one frame only. The pose method (one
+        bullseye + the car's own heading and position) read 42-45 cm for real bars (car
+        2026-10-16): not used - the car rolls on for a gap frame instead (checkpoint_1())."""
         face_x = x2 - self.arena.obstacle_2_size[0] / 2.0
-        return task2_vision.bar_width(self.bullseyes, self.arrows_2, float(self.p('camera_hfov')), face_x,
-                                      TASK2_CENTRE_Y, self.side, self.arena.obstacle_2_width_range,
-                                      gap_scale=1.0 if self.p('use_sim_time') else float(self.p('bar_gap_scale')))
+        width, widths, how = task2_vision.bar_width(
+            self.bullseyes, self.arrows_2, float(self.p('camera_hfov')), face_x, TASK2_CENTRE_Y, self.side,
+            self.arena.obstacle_2_width_range,
+            gap_scale=1.0 if self.p('use_sim_time') else float(self.p('bar_gap_scale')))
+        return (width, widths, how) if how == 'gap' else (None, [], '')
 
     def bar_w(self) -> float:
-        """The bar's width planned with: measured (nearest 5 cm), set up, or the usual one."""
+        """The bar's width planned with: measured (up to 5 cm), set up, or the usual one."""
         if self.bar_width is not None:
             return self.bar_width
         if self.known() and self.known()[4] is not None:
@@ -435,9 +440,10 @@ class Task2Runner(RunnerBase):
         return self.arena.obstacle_2_size[1]
 
     def round_bar_width(self, width: float) -> float:
-        """To the nearest 5 cm (the route table's step) - not up: the side walls stand a
-        fixed distance from the bar's real ends (task2_routes.py, module docstring)."""
-        return round(round(width / task2_routes.STEP_M) * task2_routes.STEP_M, 3)
+        """UP to the route table's 5 cm step: never planned narrower than measured - 0-5 cm
+        more room at the bar's ends (nearest until 2026-10-16, for side walls a fixed
+        distance from the bar's real ends - none stand near it on the course)."""
+        return round(math.ceil(width / task2_routes.STEP_M - 1e-6) * task2_routes.STEP_M, 3)
 
     # --------------------------------------------------- laptop planning ----
 
@@ -1067,9 +1073,10 @@ class Task2Runner(RunnerBase):
         """At checkpoint 1: arrow 2 (YOLO), obstacle 2's distance (the ultrasonic, read on
         the straight into it - checked by the camera) and the bar's width (arrow 2 + the
         near bullseye) -> checkpoints 2, 3, 4 and the path through them. All known on
-        arrival: on at once, rolling. Something missing: roll on straight CP1_ROLL_M,
-        then stop, reading up to CP1_WAIT_S in all - then arrow 2 still unread: ARROW_WAIT_S more, then the nearer end;
-        no distance: the run stops; no width: the usual one."""
+        arrival: on at once, rolling. Something missing (or the bar far): roll on
+        straight CP1_ROLL_M, then stop, reading up to CP1_WAIT_S in all - then arrow 2
+        still unread: ARROW_WAIT_S more, then the nearer end; no distance: the run
+        stops; no gap width: the usual one."""
         if self.pre and self.pre.get('legs'):
             return self.follow_setup_legs()
         if self.step:
@@ -1081,15 +1088,21 @@ class Task2Runner(RunnerBase):
         known_width = self.bar_width is not None or (self.known() and self.known()[4] is not None)
         measured = self.measure_bar(x2) if x2 is not None and not known_width else (None, [], '')
         missing = [name for name, gone in (('arrow 2', self.arrows[1] is None), ("obstacle 2's distance", x2 is None),
-                                           ('a bullseye', x2 is not None and not known_width and measured[0] is None))
+                                           ('arrow 2 + bullseye', x2 is not None and not known_width
+                                            and measured[0] is None))
                    if gone]
+        cp1_x = self.lane_waypoint[0] if self.lane_waypoint else self.current_pose[0]
+        rolling = self.current_pose[0] - cp1_x < CP1_ROLL_M
+        # A far bar's width read low (67 / 69 cm for 76 at 1.2-1.5 m, car 2026-10-16):
+        # roll on closer while the roll lasts (bar_width() keeps the nearest frames).
+        if rolling and x2 is not None and not known_width and measured[0] is not None \
+                and self.bar_gap(x2) > WEAK_WIDTH_DIST_M:
+            missing.append('a closer width')
         if missing:
             now = self.now()
             if self._cp1_wait_since is None:
                 self._cp1_wait_since = now
             if now - self._cp1_wait_since < CP1_WAIT_S:
-                cp1_x = self.lane_waypoint[0] if self.lane_waypoint else self.current_pose[0]
-                rolling = self.current_pose[0] - cp1_x < CP1_ROLL_M
                 if rolling:
                     self.hold_heading(float(self.p('cp1_speed')), 0.0)
                 else:
@@ -1111,7 +1124,7 @@ class Task2Runner(RunnerBase):
         if not known_width:
             width, widths, how = measured
             self._bar_info = (width, how)
-            self.bar_width = self.round_bar_width(width if width is not None else self.arena.obstacle_2_size[1])
+            self.bar_width = self.round_bar_width(self.safe_width(width, how, x2))
         self.plan_bar(x2, why, src)
 
     def step_checkpoint_1(self):
@@ -1151,7 +1164,7 @@ class Task2Runner(RunnerBase):
                 if raw is None:
                     missing.append('a bullseye (bar width)')
                 else:
-                    width = self.round_bar_width(raw)
+                    width = self.round_bar_width(self.safe_width(raw, how, x2))
                     self._bar_info = (raw, how)
         self._looks += 1
         go = self.step_go
@@ -1299,6 +1312,20 @@ class Task2Runner(RunnerBase):
         return sum(1 for _, box, w, cam in self.bullseyes if task2_vision.confident(box)
                    and task2_vision.bar_half_width(box, w, hfov, cam, face_x, TASK2_CENTRE_Y) is not None)
 
+    def safe_width(self, width, how: str, x2: float) -> float:
+        """The bar's width to plan with: the measured one (gap method), but at least the
+        usual width if it was still read from beyond WEAK_WIDTH_DIST_M after the roll - far
+        readings came out low (car 2026-10-16: 67 / 69 for 76 at 1.2-1.5 m; checkpoint 2
+        too close, it touched the bar). Wider only moves the path round the bar out."""
+        usual = self.arena.obstacle_2_size[1]
+        if width is None:
+            return usual
+        return max(width, usual) if (how != 'gap' or self.bar_gap(x2) > WEAK_WIDTH_DIST_M) else width
+
+    def bar_gap(self, x2: float) -> float:
+        """m from the ultrasonic to the bar's face now."""
+        return x2 - self.arena.obstacle_2_size[0] / 2.0 - (self.current_pose[0] + self.ultrasonic_offset())
+
     def ready_line(self, text: str, warn: bool = False):
         """A READY / plan-failure line before START - only when it says something new
         (the plan to checkpoint 1 is re-made on every reading change)."""
@@ -1331,7 +1358,9 @@ class Task2Runner(RunnerBase):
         """'arrow LEFT, 47 cm -> 45 (gap), 1.02 m (ultrasonic)': the bar's distance from the
         ultrasonic's face."""
         raw, how = self._bar_info
-        w = (f"{raw * 100:.0f} cm -> {width * 100:.0f} ({how})" if raw is not None
+        raised = raw is not None and width > self.round_bar_width(raw) + 1e-6
+        w = (f"{raw * 100:.0f} cm -> {width * 100:.0f} ({how}{', weak - at least usual' if raised else ''})"
+             if raw is not None
              else f"{width * 100:.0f} cm ({'setup' if how == 'setup' else 'usual - no bullseye'})")
         face = x2 - self.arena.obstacle_2_size[0] / 2.0
         d = face - (self.current_pose[0] + self.ultrasonic_offset())
