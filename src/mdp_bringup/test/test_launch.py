@@ -72,3 +72,7 @@ def test_every_executable_in_the_launch_is_installed():
     setup = (PACKAGE / 'setup.py').read_text()
     missing = [n for n in used if f"'{n}'" not in setup]
     assert used and not missing, missing
+
+
+def test_task2_step():
+    assert 'task2_runner' in _executables(['sim:=false', 'task:=2', 'step:=true'])
