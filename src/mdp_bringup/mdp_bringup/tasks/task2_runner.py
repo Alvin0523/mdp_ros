@@ -37,7 +37,8 @@ known in advance, so the car measures them with the front ultrasonic:
   FINISHED         in the carpark (or the ultrasonic sees the back wall)
 
 step:=true (launch argument, testing): one checkpoint per /step (`pixi run step`,
-SPACE). The first starts the run; the car stops at checkpoint 1, stands still
+SPACE). The first starts the run; the car stops at checkpoint 1 - 12 cm short, its camera
+level with obstacle 1's far face (step_back()) - stands still
 STEP_LOOK_S reading arrow 2, the bar's distance and width, then plans - or says
 what is missing and stays (SPACE looks again). Each further SPACE drives one leg
 and stops at its checkpoint. No path: it stays. Nothing is guessed.
@@ -331,6 +332,24 @@ class Task2Runner(RunnerBase):
             except tf2_ros.TransformException:
                 return (0.171, 0.0, 0.0)     # URDF task 2: 28 mm behind the chassis front, centre line
         return self.cam_offset
+
+    def step_back(self) -> float:
+        """step:=true: how far short of checkpoint 1 the car stops - the camera level
+        with obstacle 1's far face (camera 17 cm ahead of the rear axle, URDF; the face
+        5 cm past obstacle 1's centre: 12 cm). From checkpoint 1 itself arrow 2 is ~32
+        deg off the camera's axis at d2 = 0.6 m, its half view 31; from here 27, and
+        obstacle 1 is beside the camera, out of the picture. (The real car overshot
+        checkpoint 1 by ~17 cm, 2026-10-15 - not allowed for here.)"""
+        return max(0.0, self.camera_offset()[0] - self.arena.obstacle_1_size[0] / 2.0)
+
+    def step_cut(self, path):
+        """step:=true: the path into checkpoint 1 ending step_back() short of it, so the
+        follower slows to a stop there. Unchanged otherwise."""
+        if not self.step or not path:
+            return path
+        stop_x = path[-1][0] - self.step_back()
+        cut = [p for p in path if p[0] <= stop_x]
+        return cut if len(cut) >= 2 else path
 
     def camera_pose(self, pose):
         cx, cy, cyaw = self.camera_offset()
@@ -785,7 +804,7 @@ class Task2Runner(RunnerBase):
             # Planned at home: straight to the waypoint beside obstacle 1.
             self.arrows[0], self.x1, self.side = pre['arrow'], pre['x1'], SIDE[pre['arrow']]
             self.lane_waypoint, self.cp1_planned = pre['goal'], True
-            self.set_path(pre['path'])
+            self.set_path(self.step_cut(pre['path']))
             self.watch_obstacle_1()
             self.get_logger().info(f"START     arrow 1 {pre['arrow']}, obstacle 1 at "
                                    f"({markers.cell(self.x1)},{markers.cell(TASK2_CENTRE_Y)}) -> beside it "
@@ -943,8 +962,9 @@ class Task2Runner(RunnerBase):
             self.send_cmd(0.0, 0.0)
             self.set_path([])
             self._look_since = self.now()
-            self.get_logger().info(f"CHECKPOINT 1 at {self.fmt(self.current_pose)} - stopped, looking "
-                                   f"{STEP_LOOK_S:.0f} s (step)")
+            self.get_logger().info(f"CHECKPOINT 1 at {self.fmt(self.current_pose)} - stopped "
+                                   f"{self.step_back() * 100:.0f} cm short (camera level with obstacle 1's "
+                                   f"far face), looking {STEP_LOOK_S:.0f} s (step)")
         else:
             self.get_logger().info(f"CHECKPOINT 1 at {self.fmt(self.current_pose)}")
         self.set_state(State.CHECKPOINT_1)
@@ -967,7 +987,7 @@ class Task2Runner(RunnerBase):
             if path:
                 self.arrows[0], self.x1, self.side, self.lane_waypoint = arrow, x1, SIDE[arrow], goal
                 self.cp1_planned = True
-                self.set_path(path)
+                self.set_path(self.step_cut(path))
                 self.watch_obstacle_1()
                 self.get_logger().info(f"ARROW 1   {arrow} at {self.fmt(self.current_pose)}, obstacle 1 at "
                                        f"({markers.cell(x1)},{markers.cell(TASK2_CENTRE_Y)}) -> beside it "
@@ -1224,7 +1244,8 @@ class Task2Runner(RunnerBase):
             return None
         cp1 = self.lane_waypoint
         x, y, _ = self.current_pose
-        if abs(y - cp1[1]) > 0.06 or not (CP1_WINDOW_M[0] < x - cp1[0] < CP1_WINDOW_M[1]):
+        lo = min(CP1_WINDOW_M[0], -self.step_back() - 0.03) if self.step else CP1_WINDOW_M[0]
+        if abs(y - cp1[1]) > 0.06 or not (lo < x - cp1[0] < CP1_WINDOW_M[1]):
             self.get_logger().warn(f"ROUTES    the car is off checkpoint 1 ({(x - cp1[0]) * 100:+.0f} / "
                                    f"{(y - cp1[1]) * 100:+.0f} cm) - planning leg 1 live")
             return None
