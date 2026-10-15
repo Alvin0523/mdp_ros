@@ -9,6 +9,7 @@ and publishes detected target/arrow string to /yolo_result.
 import json
 import os
 import sys
+import warnings
 
 import signal
 
@@ -21,6 +22,14 @@ from sensor_msgs.msg import Image, CompressedImage
 from std_msgs.msg import String
 import cv2
 from cv_bridge import CvBridge
+
+# Loading a CoreML model, Ultralytics checks numpy <= 2.3.5 (for its exporter) and
+# tries to pip-install it: pixi's env has numpy 2.5 and no pip, so 4 lines of
+# failed AutoUpdate every start. Inference is fine on 2.5 (task2_yolo26s.mlpackage
+# = the .pt on all 27 test images, 2026-10-15). Never pip-install here anyway.
+os.environ.setdefault('YOLO_AUTOINSTALL', 'false')
+# coremltools 9's own docstring (fake_palettize.py) warns on import: not ours.
+warnings.filterwarnings('ignore', message=r'invalid escape sequence', category=SyntaxWarning)
 
 try:
     from ultralytics.utils.plotting import colors
