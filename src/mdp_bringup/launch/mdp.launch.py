@@ -255,11 +255,15 @@ def generate_launch_description(argv=None):
         # WiFi; raw is ~0.9 MB). Everything else runs on the Pi (role:=pi).
         # Sim (sim:=true, next to `pixi run sim role:=pi` on the same laptop):
         # Gazebo's camera directly, on sim time - the same split as the car.
+        # Real: the JPEGs cross the link once, to camera_relay; YOLO and the
+        # bullseye matcher read its copy (a DDS sends each remote reader its own).
+        if not sim:
+            actions.append(Node(package='mdp_vision', executable='camera_relay', output='screen'))
         actions.append(IncludeLaunchDescription(
             PythonLaunchDescriptionSource(os.path.join(pkg_bringup, 'launch', 'vision.launch.py')),
             launch_arguments={'model': model, 'camera': 'false', 'yolo': 'true',
                               'bullseye': str(matcher).lower(),   # the laptop does not know the task
-                              'camera_topic': '/camera/image_raw' if sim else '/image_raw/compressed',
+                              'camera_topic': '/camera/image_raw' if sim else '/laptop/image_raw/compressed',
                               'use_sim_time': str(sim).lower(),
                               'log_level': 'info'}.items()))   # one startup line each: model + GPU/CPU, camera mode
         # Task 1's paths between checkpoints, for task1_runner on the car

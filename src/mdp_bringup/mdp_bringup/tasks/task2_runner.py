@@ -447,10 +447,14 @@ class Task2Runner(RunnerBase):
                 'layout': os.path.basename(self.layout),
                 'arena': task2_routes.arena_to_dict(self.arena)}
 
-    def hybrid_leg(self, costmap, start, target):
-        """Hybrid A* for a leg no clean shape fits: on the laptop if there is one, else here."""
+    def hybrid_leg(self, costmap, start, target, obstacles=None):
+        """Hybrid A* for a leg no clean shape fits: on the laptop if there is one, else here.
+        obstacles: (x1, x2) the costmap was built from - preplan() passes its own:
+        before START self.x1 is still None, and the laptop's planner crashed on it, so
+        every leg waited out the timeout and was planned here (car 2026-10-15)."""
         if self.remote_planner:
-            path = self.remote_leg(start, target, self.costmap_spec(self.x1, self.x2))
+            x1, x2 = obstacles or (self.x1, self.x2)
+            path = self.remote_leg(start, target, self.costmap_spec(x1, x2))
             if path is not None:
                 return path
             self.get_logger().warn("PLAN      the laptop did not answer - planning here")
@@ -799,7 +803,7 @@ class Task2Runner(RunnerBase):
             t0 = time.monotonic()
             try:
                 pre['path'] = (self.lined_up_path(start, goal, costmap, float(self.p('line_up_dist')))
-                               or self.hybrid_leg(costmap, start, goal))
+                               or self.hybrid_leg(costmap, start, goal, (x1, None)))
                 if not pre['path']:
                     self.get_logger().warn(f"PLAN      NO PATH start -> beside obstacle 1 from {self.fmt(start)} "
                                            f"after {time.monotonic() - t0:.1f} s - trying again")
@@ -816,7 +820,7 @@ class Task2Runner(RunnerBase):
                 full = self.make_costmap(x1, x2)
                 legs, pose = [], goal
                 for idx, target in enumerate(waypoints):
-                    path = self.geometric_leg(idx, pose, target, full) or self.hybrid_leg(full, pose, target)
+                    path = self.geometric_leg(idx, pose, target, full) or self.hybrid_leg(full, pose, target, (x1, x2))
                     if not path:
                         self.get_logger().warn(f"PLAN      NO PATH to {self.names[idx]} {self.fmt(target)} - "
                                                f"trying again")
@@ -1442,7 +1446,7 @@ class Task2Runner(RunnerBase):
 
 
 def main(args=None):
-    run(Task2Runner, args=args)
+    run(Task2Runner, args=args, events=True)   # ~330 msg/s of sensors: see run()
 
 
 if __name__ == '__main__':

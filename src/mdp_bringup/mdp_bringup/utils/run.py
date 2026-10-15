@@ -36,11 +36,21 @@ def wall_timer(node, period_s, callback):
     return node.create_timer(period_s, callback, clock=Clock(clock_type=ClockType.STEADY_TIME))
 
 
-def run(make_node, args=None):
+def run(make_node, args=None, events=False):
+    """events=True: rclpy's EventsExecutor instead of the default one. Per message
+    it costs a third of the CPU: a node taking /ultrasonic, /ir, /ir2 (94 Hz each)
+    and /odometry/filtered (40 Hz), 350 msg/s, used 42-51% of a Pi core, 15-22%
+    with it (2026-10-15). Still experimental in Jazzy: opt in per node."""
     rclpy.init(args=args)
     node = make_node()
     try:
-        rclpy.spin(node)
+        if events:
+            from rclpy.experimental import EventsExecutor
+            executor = EventsExecutor()
+            executor.add_node(node)
+            executor.spin()
+        else:
+            rclpy.spin(node)
     except (KeyboardInterrupt, ExternalShutdownException):
         pass
     except Exception:
