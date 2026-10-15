@@ -117,7 +117,8 @@ LEVEL_X_M = 0.30              # m before obstacle 1's centre (or the straight in
                               # ultrasonic and camera see past it (obstacle 2 and arrow 2) and
                               # arrow 1 is out of the camera's view - read them on the move
 BRAKE_RESPONSE_S = 0.15       # s for the wheels' speed to follow a slower command (speed_ahead)
-IN_CARPARK_MARGIN_M = 0.02    # m: the whole outline this far inside the carpark's walls = home
+IN_CARPARK_MARGIN_M = 0.06    # m: the whole outline this far inside the carpark's walls = home (0.02 until
+                              # 2026-10-16: it stopped just past the entrance line)
 NO_BAR_LIMIT_M = 0.35         # m past obstacle 1's centre without obstacle 2 seen: stop (the
                               # bar's face can be 0.65 m past it, the car's nose is 0.2 m ahead)
 
