@@ -42,13 +42,13 @@ from mdp_bringup.utils.obstacle_layout import TASK2_AREA_M, TASK2_CENTRE_Y, Task
 SIDE = {'LEFT': 1.0, 'RIGHT': -1.0}       # +y = left
 STEP_M = 0.05
 D2_RANGE = (0.60, 1.50)                   # m, the course rules
-TABLE_VERSION = 3       # how routes are built (shapes, walls): a table from another version is rebuilt
+TABLE_VERSION = 4       # how routes are built (shapes, walls): a table from another version is rebuilt
 TABLE_FILE = 'task2_routes.json.gz'    # gzip: ~2.5 MB of JSON otherwise
 
 # The settings a route depends on (navigation.yaml task2_runner): with the car's
 # outline and turning circles, the course sizes and the planner's margin, the
 # table's fingerprint.
-ROUTE_SETTINGS = ('lane_offset', 'cp1_back', 'side_clearance', 'line_up_dist', 'obstacle_padding', 'wall_padding',
+ROUTE_SETTINGS = ('lane_offset', 'cp1_back', 'obstacle_1_padding', 'side_clearance', 'line_up_dist', 'obstacle_padding', 'wall_padding',
                   'straight_speed', 'max_lateral_accel')
 
 
@@ -75,17 +75,22 @@ def fingerprint(car, arena: Task2Arena, settings: dict) -> dict:
 
 
 def course_costmap(arena: Task2Arena, x1: float, x2: Optional[float], bar_width: float,
-                   padding: float, wall_padding: Optional[float] = None) -> Costmap:
+                   padding: float, wall_padding: Optional[float] = None,
+                   obstacle_1_padding: Optional[float] = None) -> Costmap:
     """The course as far as it is known: carpark walls, the obstacles measured so
     far, and the side walls that MAY stand beside obstacle 2 (assumed there).
     padding: the car's margin round the obstacles (task 2's obstacle_padding, the
     planner's footprint_padding). wall_padding: round the walls (default the same):
     the costmap pads walls like obstacles, so they are drawn (padding - wall_padding)
     further back from the course - more room round the obstacles without squeezing
-    the car toward the walls."""
+    the car toward the walls. obstacle_1_padding: more before and behind obstacle 1
+    alone (drawn that much longer)."""
     cm = 100.0
     s1, s2 = arena.obstacle_1_size, arena.obstacle_2_size
-    obstacles = [Obstacle(x1 * cm, TASK2_CENTRE_Y * cm, 'W', 0, s1[0] * cm, s1[1] * cm)]
+    grow = 0.0 if obstacle_1_padding is None else 2.0 * max(0.0, obstacle_1_padding - padding)
+    # Along the course only: the lane beside it keeps obstacle_padding (cp1_back 0.1-0: the
+    # car beside it), while leg 1 crossing behind it keeps the more.
+    obstacles = [Obstacle(x1 * cm, TASK2_CENTRE_Y * cm, 'W', 0, (s1[0] + grow) * cm, s1[1] * cm)]
     walls = arena.carpark_walls()
     if x2 is not None:
         obstacles.append(Obstacle(x2 * cm, TASK2_CENTRE_Y * cm, 'W', 1, s2[0] * cm, bar_width * cm))
@@ -138,17 +143,18 @@ def grid(lo: float, hi: float) -> List[float]:
 
 
 def build_route(arena: Task2Arena, car, settings: dict, d2: float, bar_width: float, arrow_1: str,
-                arrow_2: str, plan_leg=None):
+                arrow_2: str, plan_leg=None, back: Optional[float] = None):
     """One CP1 -> CP2 route in CP1's frame, and how it was made ('smooth' / 'arc' /
     'hybrid_astar'), or (None, why). plan_leg: Hybrid A* (planner.plan_leg) for
     what no clean shape fits; None = clean shapes only."""
     shapes = task2_paths.Shapes.from_params(car, settings['straight_speed'], settings['max_lateral_accel'])
     x1 = arena.opening_x + D2_RANGE[0] + arena.obstacle_1_size[0] / 2.0     # d1 does not change this leg
     x2 = bar_x(arena, x1, d2)
-    cp1 = checkpoint_1(x1, arrow_1, float(settings['lane_offset']), float(settings['cp1_back']))
+    back = float(settings['cp1_back']) if back is None else back
+    cp1 = checkpoint_1(x1, arrow_1, float(settings['lane_offset']), back)
     cp2 = bar_checkpoints(x2, arrow_2, bar_width, float(settings['side_clearance']))[0]
     costmap = course_costmap(arena, x1, x2, bar_width, float(settings['obstacle_padding']),
-                             float(settings['wall_padding']))
+                             float(settings['wall_padding']), float(settings['obstacle_1_padding']))
     if costmap.in_collision(cp2[0] * 100.0, cp2[1] * 100.0, cp2[2]):
         return None, 'checkpoint 2 not clear'
     path, how = None, None
@@ -169,29 +175,45 @@ def build_route(arena: Task2Arena, car, settings: dict, d2: float, bar_width: fl
     return local, how
 
 
+def cp1_backs(settings: dict) -> List[float]:
+    """Checkpoint 1's distances behind obstacle 1's centre the table covers: cp1_back,
+    and 10 cm nearer at a time down to 0 - where a short course puts it (no room for
+    the S that far back; task2_runner cp1_lined_up())."""
+    back, out = float(settings['cp1_back']), []
+    while back > -1e-6:
+        out.append(round(max(0.0, back), 2))
+        back -= 0.10
+    return out
+
+
+def route_key(arrow_1: str, arrow_2: str, back: float) -> str:
+    return f'{arrow_1}/{arrow_2}@{round(back, 2):.2f}'
+
+
 def build_table(arena: Task2Arena, car, settings: dict, plan_leg=None, progress=None) -> dict:
-    """Every route (module docstring); progress(done, total, key, d2, width, how)."""
+    """Every route (module docstring) for every cp1_backs(); progress(done, total, key, d2, width, how)."""
     lo, hi = arena.obstacle_2_width_range
-    d2s, widths = grid(*D2_RANGE), grid(lo, hi)
-    table = {'fingerprint': fingerprint(car, arena, settings), 'd2': d2s, 'bar_width': widths, 'routes': {},
-             'how': {}}
-    total, done = 4 * len(d2s) * len(widths), 0
-    for a1 in ('LEFT', 'RIGHT'):
-        for a2 in ('LEFT', 'RIGHT'):
-            key = f'{a1}/{a2}'
-            rows, hows = [], []
-            for d2 in d2s:
-                row, how_row = [], []
-                for w in widths:
-                    path, how = build_route(arena, car, settings, d2, w, a1, a2, plan_leg)
-                    row.append(None if path is None else [[round(v, 4) for v in p[:3]] + [p[3]] for p in path])
-                    how_row.append(how)
-                    done += 1
-                    if progress:
-                        progress(done, total, key, d2, w, how)
-                rows.append(row)
-                hows.append(how_row)
-            table['routes'][key], table['how'][key] = rows, hows
+    d2s, widths, backs = grid(*D2_RANGE), grid(lo, hi), cp1_backs(settings)
+    table = {'fingerprint': fingerprint(car, arena, settings), 'd2': d2s, 'bar_width': widths, 'backs': backs,
+             'routes': {}, 'how': {}}
+    total, done = 4 * len(backs) * len(d2s) * len(widths), 0
+    for back in backs:
+        for a1 in ('LEFT', 'RIGHT'):
+            for a2 in ('LEFT', 'RIGHT'):
+                key = route_key(a1, a2, back)
+                rows, hows = [], []
+                for d2 in d2s:
+                    row, how_row = [], []
+                    for w in widths:
+                        path, how = build_route(arena, car, settings, d2, w, a1, a2, plan_leg, back)
+                        row.append(None if path is None else [[round(v, 4) for v in p[:3]] + [p[3]] for p in path])
+                        how_row.append(how)
+                        done += 1
+                        if progress:
+                            progress(done, total, key, d2, w, how)
+                    rows.append(row)
+                    hows.append(how_row)
+                table['routes'][key], table['how'][key] = rows, hows
     return table
 
 
@@ -217,9 +239,15 @@ class RouteTable:
         w = min(self.widths, key=lambda v: abs(v - width))
         return w if abs(w - width) <= STEP_M / 2 + 1e-6 else None
 
-    def lookup(self, d2: float, bar_width: float, arrow_1: str, arrow_2: str) -> Tuple[Optional[list], str]:
+    def lookup(self, d2: float, bar_width: float, arrow_1: str, arrow_2: str,
+               back: float) -> Tuple[Optional[list], str]:
         """(route in CP1's frame ending exactly d2 ahead, why-not). bar_width must be
-        one of the table's (round_width())."""
+        one of the table's (round_width()); back: checkpoint 1 behind obstacle 1's
+        centre (one of cp1_backs(), within 2 cm)."""
+        backs = self.data.get('backs', [])
+        near = min(backs, key=lambda b: abs(b - back)) if backs else None
+        if near is None or abs(near - back) > 0.02:
+            return None, f'checkpoint 1 {back * 100:.0f} cm back not in the table'
         # Up to 1.5 steps outside: the nearest route, its straight adjusted - the course's
         # d2 is 0.60-1.50 m, a reading a few cm outside is the ultrasonic / pose's error
         # (sim 2026-10-14: 0.57 m for 0.60, 1.55-1.56 m for 1.50).
@@ -228,7 +256,7 @@ class RouteTable:
         if bar_width not in self.widths:
             return None, f'bar width {bar_width:.2f} m not in the table'
         i = min(range(len(self.d2s)), key=lambda k: abs(self.d2s[k] - d2))
-        route = self.data['routes'][f'{arrow_1}/{arrow_2}'][i][self.widths.index(bar_width)]
+        route = self.data['routes'][route_key(arrow_1, arrow_2, near)][i][self.widths.index(bar_width)]
         if route is None:
             return None, 'no route for this layout (table)'
         return stretch(route, d2 - self.d2s[i]), ''

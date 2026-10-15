@@ -124,14 +124,15 @@ def test_gap_method_ignores_heading_and_position_error(d2, width, side):
     assert how == 'pose' and abs(old - width) > 0.05
 
 
-def test_both_ends_in_one_frame():
+def test_both_ends_in_one_frame_needs_the_arrow():
+    # Arrow + one bullseye only (2026-10-15): both ends without arrow 2 are no gap reading.
     face_x, true_cam = 2.30, (1.20, CY + 0.25, math.radians(3.0))
     believed = (1.20, CY + 0.25, 0.0)
-    for arrow in (True, False):                                         # the two ends need no arrow
-        bulls, arrows = bar_frame(true_cam, believed, 0.60, face_x, ends=(1, -1), arrow=arrow)
-        got, widths, how = V.bar_width(bulls, arrows, HFOV, face_x, CY, 1, RANGE)
-        # 3 deg turns the far end (further off the axis) a little more than the near: 1-2 cm
-        assert how == 'gap' and len(widths) == 1 and got == pytest.approx(0.60, abs=0.02)
+    bulls, arrows = bar_frame(true_cam, believed, 0.60, face_x, ends=(1, -1), arrow=True)
+    got, widths, how = V.bar_width(bulls, arrows, HFOV, face_x, CY, 1, RANGE)
+    assert how == 'gap' and got == pytest.approx(0.60, abs=0.02)
+    bulls, arrows = bar_frame(true_cam, believed, 0.60, face_x, ends=(1, -1), arrow=False)
+    assert V.bar_width(bulls, arrows, HFOV, face_x, CY, 1, RANGE)[2] != 'gap'
 
 
 def test_near_end_preferred():

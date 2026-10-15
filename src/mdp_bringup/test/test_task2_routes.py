@@ -44,7 +44,7 @@ def test_every_layout_has_a_route(table):
 def test_lookup_ends_at_checkpoint_2_and_is_clear(table, arrows, d2, width):
     a1, a2 = arrows.split('/')
     width = table.round_width(width)
-    local, why = table.lookup(d2, width, a1, a2)
+    local, why = table.lookup(d2, width, a1, a2, SETTINGS['cp1_back'])
     assert local, why
     x1 = ARENA.opening_x + 0.9 + ARENA.obstacle_1_size[0] / 2.0
     x2 = R.bar_x(ARENA, x1, d2)
@@ -54,8 +54,15 @@ def test_lookup_ends_at_checkpoint_2_and_is_clear(table, arrows, d2, width):
     assert path[-1][:2] == pytest.approx(cp2[:2], abs=0.005)
     assert abs(math.remainder(path[-1][2] - cp2[2], 2 * math.pi)) < 0.02
     planner_params.configure(CAR)
-    cm = R.course_costmap(ARENA, x1, x2, width, SETTINGS['obstacle_padding'], SETTINGS['wall_padding'])
+    cm = R.course_costmap(ARENA, x1, x2, width, SETTINGS['obstacle_padding'], SETTINGS['wall_padding'],
+                         SETTINGS['obstacle_1_padding'])
     assert task2_paths.clear(path, cm, margin=0.0)
+
+
+def test_lookup_per_checkpoint_1_offset(table):
+    for back in R.cp1_backs(SETTINGS):
+        assert table.lookup(0.8, 0.6, 'LEFT', 'RIGHT', back)[0] is not None, back
+    assert table.lookup(0.8, 0.6, 'LEFT', 'RIGHT', 0.25)[0] is None      # not one of them
 
 
 def test_width_rounds_to_the_nearest(table):
@@ -65,11 +72,11 @@ def test_width_rounds_to_the_nearest(table):
 
 
 def test_lookup_refuses_outside_the_table(table):
-    assert table.lookup(2.0, 0.6, 'LEFT', 'LEFT')[0] is None
-    assert table.lookup(0.50, 0.6, 'LEFT', 'LEFT')[0] is None
-    assert table.lookup(0.57, 0.6, 'LEFT', 'LEFT')[0] is not None   # a few cm short of the course's 0.60
-    assert table.lookup(1.56, 0.6, 'LEFT', 'LEFT')[0] is not None   # the ultrasonic's long reading at 1.5 m
-    assert table.lookup(1.0, 0.62, 'LEFT', 'LEFT')[0] is None      # not a table width
+    assert table.lookup(2.0, 0.6, 'LEFT', 'LEFT', SETTINGS['cp1_back'])[0] is None
+    assert table.lookup(0.50, 0.6, 'LEFT', 'LEFT', SETTINGS['cp1_back'])[0] is None
+    assert table.lookup(0.57, 0.6, 'LEFT', 'LEFT', SETTINGS['cp1_back'])[0] is not None   # a few cm short of the course's 0.60
+    assert table.lookup(1.56, 0.6, 'LEFT', 'LEFT', SETTINGS['cp1_back'])[0] is not None   # the ultrasonic's long reading at 1.5 m
+    assert table.lookup(1.0, 0.62, 'LEFT', 'LEFT', SETTINGS['cp1_back'])[0] is None      # not a table width
 
 
 def test_stretch_moves_only_the_final_straight():
