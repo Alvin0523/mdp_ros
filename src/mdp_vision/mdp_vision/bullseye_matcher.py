@@ -38,9 +38,11 @@ class BullseyeMatcher(Node):
         self.template = load_template(template)
         self.bridge = CvBridge()
         self.pub = self.create_publisher(String, '/bullseye_detections', 10)
-        # The newest frame only (as YOLO): matching takes longer than a frame.
-        qos = QoSProfile(depth=1, reliability=ReliabilityPolicy.BEST_EFFORT, history=HistoryPolicy.KEEP_LAST)
+        # The newest frame only (as YOLO): matching takes longer than a frame. Raw
+        # frames RELIABLE (as YOLO's, see there).
         self.compressed = camera_topic.endswith('/compressed')
+        qos = QoSProfile(depth=1, history=HistoryPolicy.KEEP_LAST, reliability=(
+            ReliabilityPolicy.BEST_EFFORT if self.compressed else ReliabilityPolicy.RELIABLE))
         self.create_subscription(CompressedImage if self.compressed else Image, camera_topic, self.on_image, qos)
         self.get_logger().info(f"BULLSEYE  template matching on {camera_topic}")
 

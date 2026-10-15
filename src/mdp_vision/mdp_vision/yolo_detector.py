@@ -177,15 +177,18 @@ class YoloDetector(Node):
         # frame and silently drop anything older, so the feed stays live
         # instead of catching up. camera_ros's default publisher QoS is
         # RELIABLE, which is compatible with a BEST_EFFORT subscriber.
-        image_qos = QoSProfile(
-            depth=1,
-            reliability=ReliabilityPolicy.BEST_EFFORT,
-            history=HistoryPolicy.KEEP_LAST,
-        )
         # A topic ending in /compressed is the JPEG copy (rpi_cam_publisher
         # sends it while something subscribes) - what YOLO on the laptop reads
         # over WiFi (`pixi run laptop`): ~20 KB a frame instead of ~0.9 MB raw.
         self.compressed = camera_topic.endswith('/compressed')
+        # Raw frames (same machine: Gazebo, the Pi's own camera) RELIABLE, still
+        # depth 1: best effort lost nearly every ~0.9 MB sim frame since Cyclone /
+        # Fast DDS replaced Zenoh - 2 of ~260 in 8 s, YOLO saw nothing (2026-10-15).
+        image_qos = QoSProfile(
+            depth=1,
+            reliability=ReliabilityPolicy.BEST_EFFORT if self.compressed else ReliabilityPolicy.RELIABLE,
+            history=HistoryPolicy.KEEP_LAST,
+        )
         self.create_subscription(CompressedImage if self.compressed else Image, camera_topic,
                                  self.image_callback, image_qos)
 
