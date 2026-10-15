@@ -16,7 +16,7 @@ horizontal view hfov, looking along the car's heading (task 2's camera).
 import math
 from typing import List, Optional, Tuple
 
-from mdp_bringup.utils.obstacle_layout import BULLSEYE_RIM_M, SYMBOL_M
+from mdp_bringup.utils.obstacle_layout import BULLSEYE_FROM_END_M, BULLSEYE_RIM_M, SYMBOL_M
 
 ARROW_IDS = {'39': 'LEFT', '38': 'RIGHT'}
 BULLSEYE_ID = '99'
@@ -91,12 +91,12 @@ def bullseye_position(box, image_w: float, hfov: float, cam: Tuple[float, float,
 
 
 def bar_half_width(box, image_w: float, hfov: float, cam: Tuple[float, float, float], face_x: float,
-                   centre_y: float, block_m: float = 0.10) -> Optional[float]:
+                   centre_y: float, end_m: float = BULLSEYE_FROM_END_M) -> Optional[float]:
     """Half the bar's width from one bullseye on its near face, or None if the box
     does not fit that (wrong size for the distance, seen edge-on, behind the camera).
 
-    The bullseyes on the bar's face sit on its edge-most block, centred, so the
-    bar's end is block_m / 2 further out than the bullseye. The bar's face is at
+    The bullseyes on the bar's face sit near its ends: the bar's end is end_m
+    further out than the bullseye. The bar's face is at
     face_x (the ultrasonic), so only the bullseye's direction is needed - not its
     size, which at 2-3 m away is a few px and +-1 px off (sim 2026-10-14:
     carpark estimates up to 7 cm off; at checkpoint 1 0.2-0.3 cm)."""
@@ -115,7 +115,7 @@ def bar_half_width(box, image_w: float, hfov: float, cam: Tuple[float, float, fl
     if not RANGE_RATIO[0] <= ratio <= RANGE_RATIO[1]:
         return None
     y = cy + t * math.sin(phi)
-    return abs(y - centre_y) + block_m / 2.0
+    return abs(y - centre_y) + end_m
 
 
 def plausible_bullseye(box, image_w: float, hfov: float, z: float, yaw: float = 0.0) -> bool:
@@ -138,7 +138,7 @@ def lateral(box, image_w: float, hfov: float, z: float, yaw: float = 0.0) -> flo
 
 
 def bar_half_width_gap(arrow_box, bullseye_box, image_w: float, hfov: float, z: float, yaw: float = 0.0,
-                       block_m: float = 0.10) -> float:
+                       end_m: float = BULLSEYE_FROM_END_M, gap_scale: float = 1.0) -> float:
     """Half the bar's width from the gap between arrow 2 (the face's centre) and a
     bullseye (mid its edge-most block) in the SAME frame, z = the face's distance
     (ultrasonic). A heading error turns both the same, so the gap - and the width -
@@ -146,12 +146,13 @@ def bar_half_width_gap(arrow_box, bullseye_box, image_w: float, hfov: float, z: 
     (yaw) only corrects perspective: 3 deg wrong is ~ z * 3 deg * (tan^2 of one's
     angle off square to the face - the other's): ~2 cm of width at checkpoint 1,
     d2 = 0.6 m (arrow 2 32 deg off), less further away; the ray from the pose
-    (bar_half_width()) 5 cm, and 2 cm per cm the position is off across."""
-    return abs(lateral(bullseye_box, image_w, hfov, z, yaw) - lateral(arrow_box, image_w, hfov, z, yaw)) \
-        + block_m / 2.0
+    (bar_half_width()) 5 cm, and 2 cm per cm the position is off across. gap_scale:
+    the lens' correction (navigation.yaml bar_gap_scale)."""
+    gap = abs(lateral(bullseye_box, image_w, hfov, z, yaw) - lateral(arrow_box, image_w, hfov, z, yaw))
+    return gap * gap_scale + end_m
 
 
-def gap_widths(frames, hfov: float, side: float, block_m: float = 0.10):
+def gap_widths(frames, hfov: float, side: float, gap_scale: float = 1.0):
     """The bar's widths from frames [(arrow 2 box or None, [bullseye boxes], image w, z, yaw)]:
     [(bullseye box height, width)]: one end and arrow 2 (mid-bar) - twice their gap.
     Bullseyes on the car's side (`side` +1 left / -1 right) first - the far end's only
@@ -166,7 +167,7 @@ def gap_widths(frames, hfov: float, side: float, block_m: float = 0.10):
             continue
         ya = lateral(arrow, w, hfov, z, yaw)
         for y, b in xs[:1] if len(xs) == 1 else (xs[0], xs[-1]):
-            est = (b[5] - b[3], 2.0 * bar_half_width_gap(arrow, b, w, hfov, z, yaw, block_m))
+            est = (b[5] - b[3], 2.0 * bar_half_width_gap(arrow, b, w, hfov, z, yaw, gap_scale=gap_scale))
             (near if (y - ya) * side > 0 else far).append(est)
     return near or far
 
@@ -195,7 +196,7 @@ def merge_duplicates(boxes):
 
 
 def bar_width(bullseyes, arrows_2, hfov: float, face_x: float, centre_y: float, side: float, width_range,
-              pair_s: float = 0.02):
+              pair_s: float = 0.02, gap_scale: float = 1.0):
     """The bar's width from the frames seen near checkpoint 1: (width or None, widths,
     'gap' / 'pose'). bullseyes [(stamp, box, image w, camera pose)], arrows_2 [(stamp,
     box)] - YOLO's and the matcher's boxes of one frame carry the frame's stamp.
@@ -211,7 +212,7 @@ def bar_width(bullseyes, arrows_2, hfov: float, face_x: float, centre_y: float, 
         near = [a for t, a in arrows_2 if abs(t - stamp) <= pair_s]
         arrow = max(near, key=lambda a: a[1]) if near else None
         gap_frames.append((arrow, boxes, w, face_x - cam[0], cam[2]))
-    width, widths = pick_width(gap_widths(gap_frames, hfov, side), width_range)
+    width, widths = pick_width(gap_widths(gap_frames, hfov, side, gap_scale), width_range)
     if width is not None:
         return width, widths, 'gap'
     sized = []
