@@ -203,10 +203,9 @@ task2_runner:
     # parallel to the centre line, lane_offset to the side.
     swerve_early_dist: 0.90    # m
     swerve_trigger_dist: 0.45  # m
-    lane_offset: 0.28          # m, checkpoint 1 (beside obstacle 1) out from the centre line: the car's
-                               # side 13.5 cm from obstacle 1. 0.25 (10.5 cm) left no room for
-                               # obstacle_padding 0.08 + the clean shapes' 4 cm spare beside it
-                               # (task2-cp1 sim 2026-10-15)
+    lane_offset: 0.30          # m, checkpoint 1 (beside obstacle 1) out from the centre line: the car's
+                               # side 15.5 cm from obstacle 1 - room for obstacle_padding 0.10 + the
+                               # clean shapes' 4 cm spare beside it (0.25: 10.5 cm, every route failed)
     side_clearance: 0.25       # m, checkpoints 2 and 3 out from obstacle 2's ends (as lane_offset)
     home_stop_dist: 0.12       # m, ultrasonic reading of the carpark's back wall = stop
     home_straight_dist: 0.45   # m, on the centre line before home: the car lines up this far out
@@ -226,7 +225,7 @@ task2_runner:
     ir_fix: false              # IR position fixes past obstacle 1's side and the bar's ends (live;
                                # false = dead reckoning only). Off by default: CP1 -> CP2 is now placed
                                # from the bar as the car sees it at checkpoint 1 (bullseye + ultrasonic)
-    obstacle_padding: 0.08     # m kept between the car's outline and the obstacles when planning,
+    obstacle_padding: 0.10     # m kept between the car's outline and the obstacles when planning,
                                # task 2 only (task 1: costmap.footprint_padding). Was 0.06 for walls
                                # and obstacles alike: the car's inside rear corner cut ~8 cm into it
                                # turning right just past obstacle 1 and passed it at 2.1 cm (sim
