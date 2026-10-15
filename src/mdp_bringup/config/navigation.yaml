@@ -195,8 +195,10 @@ task2_runner:
   ros__parameters:
     # Speeds (live). The turning circles were measured at 0.2 m/s: faster turns
     # are wider - test in sim first.
-    straight_speed: 0.90       # m/s, out of the carpark to obstacle 1, and straight parts of the planned path
-    path_speed: 0.50           # m/s, the slowest: gear changes, arriving, the fallback swerve (sim 2026-10-10)
+    straight_speed: 1.05       # m/s, out of the carpark to obstacle 1, and straight parts of the planned path
+                               # (0.90 until 2026-10-16; the motor tops out ~1.15 m/s no-load)
+    path_speed: 0.60           # m/s, the slowest: gear changes, arriving, the fallback swerve
+                               # (0.50 until 2026-10-16)
     # The swerve round obstacle 1 (front ultrasonic reading to obstacle 1): as early
     # as possible - from swerve_early_dist once YOLO has read arrow 1, at the latest
     # at swerve_trigger_dist (waiting there if the arrow is still unread). It ends
@@ -220,9 +222,11 @@ task2_runner:
     line_up_dist: 0.30         # m, straight into checkpoints 1 and 2: the diagonal ends this far before
                                # (0.3 + side_clearance 0.25 gave the most clean diagonals, 24 of 36
                                # layouts, in an offline search 2026-09-30; the rest use Hybrid A*)
-    brake_decel: 1.20          # m/s^2 the speed profile brakes at, for curves, gear changes and path ends
+    brake_decel: 1.40          # m/s^2 the speed profile brakes at, for curves, gear changes and path ends
+                               # (1.20 until 2026-10-16)
     ir_pass_speed: 0.60        # m/s while an IR passes obstacle 1's side / a bar end (enough readings for a fix)
-    max_lateral_accel: 1.00    # m/s^2: curve speed = sqrt(this x radius), path_speed..straight_speed.
+    max_lateral_accel: 1.20    # m/s^2: curve speed = sqrt(this x radius), path_speed..straight_speed.
+                               # 1.00 until 2026-10-16.
                                # 1.5: the tightest turn (~33 cm) at 0.70 m/s overshot the straighten-up
                                # into checkpoint 1, 30 deg off (car 2026-10-14); 1.0: 0.57 m/s there
     path_tracking: lqr         # pure_pursuit | lqr (task1_runner follower.* has the lqr weights)
@@ -251,9 +255,9 @@ task2_runner:
     bar_gap_scale: 1.065       # x the arrow 2 -> bullseye gap: the real lens (barrel distortion) shows it
                                # ~6.5% short - 60 and 76.3 cm bars measured 55.6 / 71 with the ultrasonic's
                                # distance right (car 2026-10-15). Not in sim (a pinhole camera). Live
-    cp1_speed: 0.50            # m/s on the straight into checkpoint 1 (line_up_dist): steady while the
-                               # ultrasonic and the camera read obstacle 2 - at 0.9 it arrived still
-                               # turning and wiggled +-15 deg (bags 2026-10-15). Tune on the car
+    cp1_speed: 0.50            # m/s on the straight into checkpoint 1 (line_up_dist; may be below
+                               # path_speed): steady while the ultrasonic and the camera read obstacle 2 -
+                               # at 0.9 it arrived still turning and wiggled +-15 deg (bags 2026-10-15)
     # Hybrid A* for a leg no clean shape and no route table covers: on the laptop with one
     # (role:=pi, task1_planner), here if it does not answer within this.
     remote_plan_timeout: 2.0   # s
