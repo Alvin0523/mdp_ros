@@ -259,7 +259,7 @@ task2_runner:
     cp1_min_straight: 0.10     # m of straight at least before checkpoint 1 - it moves 10 cm nearer at a
                                # time for it (cp1_back the most). None: the car arrived still turning
                                # and stopped 23 deg in (bag 2026-10-16 03:36). Live
-    cp1_speed: 0.60            # m/s on the straight into checkpoint 1 (0.50 until 2026-10-16; may be below
+    cp1_speed: 0.50            # m/s on the straight into checkpoint 1 (0.60 tried 2026-10-16; may be below
                                # path_speed): steady while the ultrasonic and the camera read obstacle 2 -
                                # at 0.9 it arrived still turning and wiggled +-15 deg (bags 2026-10-15)
     # Hybrid A* for a leg no clean shape and no route table covers: on the laptop with one
