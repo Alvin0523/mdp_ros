@@ -117,6 +117,9 @@ LEVEL_X_M = 0.30              # m before obstacle 1's centre (or the straight in
                               # ultrasonic and camera see past it (obstacle 2 and arrow 2) and
                               # arrow 1 is out of the camera's view - read them on the move
 BRAKE_RESPONSE_S = 0.15       # s for the wheels' speed to follow a slower command (speed_ahead)
+HOME_DEEPER_M = 0.05          # m: the home checkpoint this far past the carpark's middle, toward the
+                              # back wall (2026-10-16: centred, the car stopped ~20 cm from the wall - its
+                              # path ended before the ultrasonic's 15 cm stop)
 IN_CARPARK_MARGIN_M = 0.10    # m: the whole outline this far inside the carpark's walls = home (0.02, 0.06
                               # until 2026-10-16: it stopped just past the entrance; the home spot itself
                               # has 13.5 cm, so it still fits)
@@ -169,7 +172,10 @@ class Task2Runner(RunnerBase):
         self._ready_note = None          # the last READY / plan-failure line (each logged once)
         self.car =planner_params.ACTIVE          # URDF + navigation.yaml (robot.*, follower.*)
         car_centre_ahead = (self.car.footprint_front - self.car.footprint_rear) / 2.0
-        self.home = self.arena.car_pose_centred(car_centre_ahead, math.pi)
+        # The last checkpoint HOME_DEEPER_M past the carpark's middle (nose ~8.5 cm from the
+        # back wall by odometry): the ultrasonic's 15 cm stop comes first.
+        hx, hy, hyaw = self.arena.car_pose_centred(car_centre_ahead, math.pi)
+        self.home = (hx - HOME_DEEPER_M, hy, hyaw)
         # Where every run starts (the launch's start pose: the carpark, facing out) - the
         # path to checkpoint 1 is planned from here, like task 1, not from the live pose.
         default = self.arena.car_pose_centred(car_centre_ahead, 0.0)
