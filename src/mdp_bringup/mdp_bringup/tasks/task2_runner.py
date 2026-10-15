@@ -891,11 +891,9 @@ class Task2Runner(RunnerBase):
                 if not known:
                     back, want = x1 - goal[0], float(self.p('cp1_back'))
                     d1 = x1 - self.arena.obstacle_1_size[0] / 2.0 - self.arena.opening_x
-                    rev = any(p[3] < 0 for p in pre['path'])
                     self.ready_line(f"READY     arrow 1 {arrow}, obstacle 1 at {d1 * 100:.0f} cm"
                                     + (f", CP1 {back * 100:.0f} cm back (no room for {want * 100:.0f})"
-                                       if back < want - 0.01 else '')
-                                    + (", S then back up to CP1" if rev else ''))
+                                       if back < want - 0.01 else ''))
                     return
                 x2, arrow2 = known[1], known[3]
                 waypoints = self.bar_waypoints(x2, arrow2)
@@ -944,10 +942,9 @@ class Task2Runner(RunnerBase):
         return paths
 
     def cp1_lined_up(self, start, x1, arrow, costmap):
-        """(checkpoint 1, the lined-up path to it or None): cp1_back behind obstacle 1's
-        centre (the camera in front of it). The S goes as far back as fits WITH at least
-        cp1_min_straight of straight before its end, else 10 cm nearer at a time - and
-        from a nearer end the car backs up straight to cp1_back. The
+        """(checkpoint 1, the lined-up path to it or None): as far back as cp1_back
+        behind obstacle 1's centre (the camera in front of it) WITH at least
+        cp1_min_straight of straight before it, else 10 cm nearer at a time. The
         furthest-back fit had none on every course - the car reached checkpoint 1
         still turning and stopped 23 deg in (bag 2026-10-16 03:36). Nothing with the
         straight: the furthest back that fits at all, as before. Leg 1's table route
@@ -957,20 +954,11 @@ class Task2Runner(RunnerBase):
         while b > -1e-6:
             backs.append(round(max(0.0, b), 3))
             b -= 0.10
-        target = task2_routes.checkpoint_1(x1, arrow, lane, want)
         for min_straight in (float(self.p('cp1_min_straight')), 0.0):
             for back in backs:
                 goal = task2_routes.checkpoint_1(x1, arrow, lane, back)
                 path = self.cp1_path(start, goal, costmap, min_straight)
                 if path:
-                    if back < want - 1e-6:
-                        # Short course: then straight back to cp1_back - read from there
-                        # like every other course, pointing straight (2026-10-16).
-                        back_up = [(goal[0] - (goal[0] - target[0]) * k / n, goal[1], 0.0, -1)
-                                   for n in [max(1, int(round((goal[0] - target[0]) / 0.02)))]
-                                   for k in range(1, n + 1)]
-                        if task2_paths.clear(back_up, costmap, 0.0):
-                            return target, path + back_up
                     return goal, path
         return task2_routes.checkpoint_1(x1, arrow, lane, 0.0), None
 
