@@ -281,7 +281,10 @@ def lined_up_path(start: Pose, goal: Pose, costmap, shapes: Shapes, straight_m: 
     return path + tail
 
 
-LADDER = ((1.0, 1.0), (0.5, 1.0), (0.5, 0.5), (0.0, 0.5))   # (x straight_m, x margin), tried in turn
+# (x straight_m, x margin), tried in turn. A third of the straight before none: at
+# d1 = 0.6 with checkpoint 1 at 30 cm only 10 cm fits, and arriving with none left
+# the car 6-8 deg off at checkpoint 1 (sim 2026-10-15).
+LADDER = ((1.0, 1.0), (0.5, 1.0), (0.5, 0.5), (1 / 3, 0.5), (0.0, 0.5))
 
 
 def stepped_lined_up_path(start: Pose, goal: Pose, costmap, shapes: Shapes, straight_m: float,

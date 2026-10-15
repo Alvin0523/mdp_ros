@@ -377,13 +377,17 @@ class Task2Runner(RunnerBase):
         face_x = x2 - self.arena.obstacle_2_size[0] / 2.0
         hfov = float(self.p('camera_hfov'))
         lo, hi = self.arena.obstacle_2_width_range
-        widths = []
+        sized = []                       # (box height, width)
         for _, box, w, cam in self.bullseyes:
             if not task2_vision.confident(box):
                 continue
             half = task2_vision.bar_half_width(box, w, hfov, cam, face_x, TASK2_CENTRE_Y)
             if half is not None and lo - 0.05 <= 2.0 * half <= hi + 0.05:
-                widths.append(2.0 * half)
+                sized.append((box[5] - box[3], 2.0 * half))
+        # The nearest half only (the biggest boxes): a far frame's pixel of error is more
+        # of the width (sim 2026-10-14: up to 9 cm off at d2 = 1.5 with every frame).
+        sized.sort(reverse=True)
+        widths = [wd for _, wd in sized[:max(1, (len(sized) + 1) // 2)]]
         width = task2_vision.median(widths)
         return (None if width is None else min(hi, max(lo, width))), widths
 
@@ -439,6 +443,7 @@ class Task2Runner(RunnerBase):
     def costmap_spec(self, x1, x2):
         """What the laptop needs to build the same costmap (task1_planner)."""
         return {'x1': x1, 'x2': x2, 'bar_width': self.bar_w(), 'padding': float(self.p('obstacle_padding')),
+                'wall_padding': float(self.p('wall_padding')),
                 'layout': os.path.basename(self.layout),
                 'arena': task2_routes.arena_to_dict(self.arena)}
 
@@ -1332,7 +1337,8 @@ class Task2Runner(RunnerBase):
     def make_costmap(self, x1, x2):
         """The course as far as it is known: carpark walls, the obstacles measured
         so far, and the side walls that MAY stand beside obstacle 2 (assumed there)."""
-        return task2_routes.course_costmap(self.arena, x1, x2, self.bar_w(), float(self.p('obstacle_padding')))
+        return task2_routes.course_costmap(self.arena, x1, x2, self.bar_w(), float(self.p('obstacle_padding')),
+                                           float(self.p('wall_padding')))
 
     def plan_legs(self, start, gen, leg_paths, waypoints, costmap, ready=None):
         """Background thread: every leg back to back (like task 1). ready: legs

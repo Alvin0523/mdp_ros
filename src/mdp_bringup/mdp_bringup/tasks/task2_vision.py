@@ -6,7 +6,9 @@ bullseye_matcher on /bullseye_detections, in the same format):
     {"stamp": s, "w": 640, "h": 480, "boxes": [[id, conf, x1, y1, x2, y2], ...]}
 ids: '39' arrow left, '38' arrow right, '99' bullseye (MDP target ids).
 
-Every symbol is printed the same size (SYMBOL_M square), so a box's height says
+Every symbol is printed the same size (SYMBOL_M square; a bullseye is boxed by its
+outer white square, BULLSEYE_RIM_M - its black edge is lost against the black
+obstacle), so a box's height says
 how far away it is, and its centre which way: a pinhole camera with the
 horizontal view hfov, looking along the car's heading (task 2's camera).
 """
@@ -14,7 +16,7 @@ horizontal view hfov, looking along the car's heading (task 2's camera).
 import math
 from typing import List, Optional, Tuple
 
-from mdp_bringup.utils.obstacle_layout import SYMBOL_M
+from mdp_bringup.utils.obstacle_layout import BULLSEYE_RIM_M, SYMBOL_M
 
 ARROW_IDS = {'39': 'LEFT', '38': 'RIGHT'}
 BULLSEYE_ID = '99'
@@ -29,18 +31,19 @@ ARROW_2_MARGIN_M = 0.35       # an arrow this much further than obstacle 1's fac
 # further away: at d1 = 1.0 m arrow 1 was taken for arrow 2.
 ARROW_BOX_SCALE = 0.75
 CONFIDENT = 0.70              # a bullseye box this sure is used for the bar's distance
-MIN_BULLSEYE_PX = 16          # the bar's face is at most ~2.1 m away while measuring: >= 16 px
+MIN_BULLSEYE_PX = 12          # the bar's face is at most ~2.1 m away while measuring: the rim >= 12 px
 
 
 def focal_px(image_w: float, hfov: float) -> float:
     return (image_w / 2.0) / math.tan(hfov / 2.0)
 
 
-def box_range(box, image_w: float, hfov: float, scale: float = 1.0) -> float:
-    """Distance along the camera's axis to a symbol from its box height (m). scale:
-    the box's size as a share of the printed card (ARROW_BOX_SCALE for an arrow)."""
+def box_range(box, image_w: float, hfov: float, scale: float = 1.0, size: float = SYMBOL_M) -> float:
+    """Distance along the camera's axis to a symbol from its box height (m). size: what
+    is boxed (the card, BULLSEYE_RIM_M for a bullseye); scale: the box's share of it
+    (ARROW_BOX_SCALE for an arrow)."""
     h = max(1.0, box[5] - box[3])
-    return SYMBOL_M * scale * focal_px(image_w, hfov) / h
+    return size * scale * focal_px(image_w, hfov) / h
 
 
 def box_bearing(box, image_w: float, hfov: float) -> float:
@@ -82,7 +85,7 @@ def bullseye_position(box, image_w: float, hfov: float, cam: Tuple[float, float,
     looks straight past a bar narrower than the lane is wide (sim 2026-10-14: a
     40 cm bar read 25 cm too far)."""
     theta = box_bearing(box, image_w, hfov)
-    t = box_range(box, image_w, hfov) / max(0.2, math.cos(theta))      # along the ray
+    t = box_range(box, image_w, hfov, size=BULLSEYE_RIM_M) / max(0.2, math.cos(theta))   # along the ray
     phi = cam[2] + theta
     return cam[0] + t * math.cos(phi), cam[1] + t * math.sin(phi)
 
@@ -108,7 +111,7 @@ def bar_half_width(box, image_w: float, hfov: float, cam: Tuple[float, float, fl
     if t <= 0.05:
         return None
     axial = t * math.cos(phi - yaw)                 # its distance along the camera's axis
-    ratio = box_range(box, image_w, hfov) / axial
+    ratio = box_range(box, image_w, hfov, size=BULLSEYE_RIM_M) / axial
     if not RANGE_RATIO[0] <= ratio <= RANGE_RATIO[1]:
         return None
     y = cy + t * math.sin(phi)

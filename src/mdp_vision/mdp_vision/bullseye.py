@@ -22,10 +22,19 @@ SCALE_STEP = 1.12     # one size to the next
 
 
 def load_template(path: str) -> np.ndarray:
+    """The bullseye's outer WHITE square and what is inside it - cropped off the black
+    card: on the black obstacle the card's edge is invisible, so the matcher (like
+    YOLO's labels) boxes the white square (task2_vision BULLSEYE_RIM_M)."""
     img = cv2.imread(path, cv2.IMREAD_GRAYSCALE)
     if img is None:
         raise FileNotFoundError(path)
-    return img
+    _, bright = cv2.threshold(img, 160, 255, cv2.THRESH_BINARY)
+    bright = cv2.morphologyEx(bright, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))   # specks on the photo
+    contours, _ = cv2.findContours(bright, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if not contours:
+        return img
+    x, y, w, h = cv2.boundingRect(max(contours, key=cv2.contourArea))
+    return img[y:y + h, x:x + w]
 
 
 def sizes(min_px: float, max_px: float) -> List[float]:

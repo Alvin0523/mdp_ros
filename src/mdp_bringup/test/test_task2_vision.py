@@ -6,13 +6,13 @@ import math
 import pytest
 
 from mdp_bringup.tasks import task2_vision as V
-from mdp_bringup.utils.obstacle_layout import SYMBOL_M
+from mdp_bringup.utils.obstacle_layout import BULLSEYE_RIM_M, SYMBOL_M
 
 W, H, HFOV = 640.0, 480.0, 1.089
 CY = 1.20
 
 
-def project(cam, point, size=SYMBOL_M):
+def project(cam, point, size=BULLSEYE_RIM_M):
     """The box a symbol centred at `point` (on a face across the course) makes."""
     cx, cy, yaw = cam
     dx, dy = point[0] - cx, point[1] - cy
@@ -47,7 +47,7 @@ def test_heading_error_moves_the_estimate_little():
 
 def test_wrong_size_and_edge_on_boxes_are_refused():
     cam, face_x = (1.30, CY + 0.25, 0.0), 1.90
-    box = project(cam, (face_x, CY + 0.25), size=SYMBOL_M * 3)      # far too big for that distance
+    box = project(cam, (face_x, CY + 0.25), size=BULLSEYE_RIM_M * 3)   # far too big for that distance
     assert V.bar_half_width(box, W, HFOV, cam, face_x, CY) is None
     box = project(cam, (face_x, CY + 0.25))
     box[2] = box[2] + 0.6 * (box[4] - box[2])                        # narrow: a face seen edge-on
@@ -56,8 +56,8 @@ def test_wrong_size_and_edge_on_boxes_are_refused():
 
 def test_arrow_1_and_2_by_distance():
     cam_x, face1 = 0.90, 1.20                                       # obstacle 1's face 0.3 m ahead
-    near = project((cam_x, CY, 0.0), (face1, CY))
-    far = project((cam_x, CY, 0.0), (face1 + 0.1 + 0.6, CY + 0.1))
+    near = project((cam_x, CY, 0.0), (face1, CY), size=SYMBOL_M)
+    far = project((cam_x, CY, 0.0), (face1 + 0.1 + 0.6, CY + 0.1), size=SYMBOL_M)
     assert V.classify_arrow(near, W, HFOV, cam_x, face1) == 0
     assert V.classify_arrow(far, W, HFOV, cam_x, face1) == 1
     assert V.classify_arrow(near, W, HFOV, 1.25, face1) == 1        # past obstacle 1: only the bar's
@@ -94,4 +94,4 @@ def test_arrow_1_at_1_m_is_not_arrow_2():
 def test_confident_bullseyes_only():
     assert V.confident(['99', 0.8, 0, 0, 20, 20])
     assert not V.confident(['99', 0.65, 0, 0, 20, 20])     # the textures' false matches scored 0.64-0.67
-    assert not V.confident(['99', 0.9, 0, 0, 14, 14])      # smaller than the bar can be while measuring
+    assert not V.confident(['99', 0.9, 0, 0, 10, 10])      # smaller than the bar can be while measuring
