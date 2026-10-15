@@ -1442,7 +1442,7 @@ class Task2Runner(RunnerBase):
 
 
 def main(args=None):
-    run(Task2Runner, args=args)
+    run(Task2Runner, args=args, events=True)   # ~330 msg/s of sensors: see run()
 
 
 if __name__ == '__main__':
