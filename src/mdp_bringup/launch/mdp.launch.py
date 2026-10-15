@@ -22,7 +22,8 @@ Arguments
              laptop -> the laptop: YOLO on the Pi's JPEG frames, task 1's path
                      planning, and the monitors (health_monitor, bt_monitor -
                      topics only) (`pixi run laptop`). Both machines on the same
-                     ROS_DOMAIN_ID, finding each other by ROS_STATIC_PEERS.
+                     ROS_DOMAIN_ID, finding each other by ROS_STATIC_PEERS
+                     (Cyclone DDS, scripts/activate_rmw.sh).
              Sim, the same split on one laptop: `pixi run sim role:=pi ...`
              + `pixi run laptop sim:=true`.
   obstacles  tablet -> only the tablet (over Bluetooth on `bluetooth_device`); in

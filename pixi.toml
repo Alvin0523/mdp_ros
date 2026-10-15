@@ -137,12 +137,12 @@ torchvision = "==0.23.0"
 coremltools = "*"          # `pixi run export-coreml`: YOLO -> CoreML (Neural Engine)
 
 [activation]
-scripts = ["install/setup.bash"]
+scripts = ["install/setup.bash", "scripts/activate_rmw.sh"]
 
 # NVIDIA GPU for Gazebo rendering when the driver is present (no-op otherwise).
 # A target's scripts REPLACE the list above, so install/setup.bash is repeated.
 [target.linux-64.activation]
-scripts = ["install/setup.bash", "scripts/activate_gpu.sh"]
+scripts = ["install/setup.bash", "scripts/activate_rmw.sh", "scripts/activate_gpu.sh"]
 
 [activation.env]
 ROS_DOMAIN_ID = "14"
