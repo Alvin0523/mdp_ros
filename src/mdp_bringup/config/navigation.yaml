@@ -224,8 +224,8 @@ task2_runner:
     line_up_dist: 0.30         # m, straight into checkpoints 1 and 2: the diagonal ends this far before
                                # (0.3 + side_clearance 0.25 gave the most clean diagonals, 24 of 36
                                # layouts, in an offline search 2026-09-30; the rest use Hybrid A*)
-    brake_decel: 1.40          # m/s^2 the speed profile brakes at, for curves, gear changes and path ends
-                               # (1.20 until 2026-10-16; 1.4 fine on the car at the 0.90 straights)
+    brake_decel: 1.20          # m/s^2 the speed profile brakes at, for curves, gear changes and path ends
+                               # (1.4 tried 2026-10-16: checkpoint 2 arrived 12 cm off on average vs 7)
     ir_pass_speed: 0.60        # m/s while an IR passes obstacle 1's side / a bar end (enough readings for a fix)
     max_lateral_accel: 1.00    # m/s^2: curve speed = sqrt(this x radius), path_speed..straight_speed.
                                # 1.5: the tightest turn (~33 cm) at 0.70 m/s overshot the straighten-up
