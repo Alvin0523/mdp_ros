@@ -34,7 +34,8 @@ known in advance, so the car measures them with the front ultrasonic:
   (fallback, arrow 1 not read at home: straight on until YOLO reads it, then the
    same S to checkpoint 1 from there - APPROACH_1; too close for that:
    SWERVE_OUT/BACK, full lock out and back)
-  FINISHED         in the carpark (or the ultrasonic sees the back wall)
+  FINISHED         in the carpark (or the ultrasonic sees the back wall); phase:=1
+                   (launch argument): at checkpoint 1, stopped
 
 Frame (`map`): the task 2 course, x along it, centre line y = 1.2 m - see
 utils/obstacle_layout.py. The course rules (carpark, obstacle sizes) come from
@@ -187,6 +188,9 @@ class Task2Runner(RunnerBase):
         # Checkpoint 1 -> 2 from the route table (task2_routes.py), if it was built with
         # these settings; else planned live like the other legs.
         self.routes = self.load_routes()
+
+        # phase:=1 - carpark -> checkpoint 1 only: stop there and finish.
+        self.phase = int(self.declare_parameter('phase', 0).value)
 
         # Hybrid A* on the laptop (task1_planner) with one (role:=pi), else here.
         self.remote_planner = self.declare_parameter('remote_planner', False).value
@@ -908,6 +912,14 @@ class Task2Runner(RunnerBase):
         self.arrive_checkpoint_1()
 
     def arrive_checkpoint_1(self):
+        if self.phase == 1:
+            self.send_cmd(0.0, 0.0)
+            self.set_path([])
+            self.set_state(State.FINISHED)
+            self.end_run(done=True)
+            self.get_logger().info(f"FINISHED  phase 1 at checkpoint 1 {self.fmt(self.current_pose)} "
+                                   f"in {self.run_time():.1f} s")
+            return
         self.get_logger().info(f"CHECKPOINT 1 at {self.fmt(self.current_pose)}")
         self.set_state(State.CHECKPOINT_1)
         self.checkpoint_1()
