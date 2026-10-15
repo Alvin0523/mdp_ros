@@ -48,7 +48,7 @@ TABLE_FILE = 'task2_routes.json.gz'    # gzip: ~2.5 MB of JSON otherwise
 # The settings a route depends on (navigation.yaml task2_runner): with the car's
 # outline and turning circles, the course sizes and the planner's margin, the
 # table's fingerprint.
-ROUTE_SETTINGS = ('lane_offset', 'side_clearance', 'line_up_dist', 'obstacle_padding',
+ROUTE_SETTINGS = ('lane_offset', 'side_clearance', 'line_up_dist', 'obstacle_padding', 'wall_padding',
                   'straight_speed', 'max_lateral_accel')
 
 
@@ -75,10 +75,14 @@ def fingerprint(car, arena: Task2Arena, settings: dict) -> dict:
 
 
 def course_costmap(arena: Task2Arena, x1: float, x2: Optional[float], bar_width: float,
-                   padding: float) -> Costmap:
+                   padding: float, wall_padding: Optional[float] = None) -> Costmap:
     """The course as far as it is known: carpark walls, the obstacles measured so
     far, and the side walls that MAY stand beside obstacle 2 (assumed there).
-    padding: the car's margin round obstacles AND walls (task 2's obstacle_padding)."""
+    padding: the car's margin round the obstacles (task 2's obstacle_padding, the
+    planner's footprint_padding). wall_padding: round the walls (default the same):
+    the costmap pads walls like obstacles, so they are drawn (padding - wall_padding)
+    further back from the course - more room round the obstacles without squeezing
+    the car toward the walls."""
     cm = 100.0
     s1, s2 = arena.obstacle_1_size, arena.obstacle_2_size
     obstacles = [Obstacle(x1 * cm, TASK2_CENTRE_Y * cm, 'W', 0, s1[0] * cm, s1[1] * cm)]
@@ -86,6 +90,8 @@ def course_costmap(arena: Task2Arena, x1: float, x2: Optional[float], bar_width:
     if x2 is not None:
         obstacles.append(Obstacle(x2 * cm, TASK2_CENTRE_Y * cm, 'W', 1, s2[0] * cm, bar_width * cm))
         walls = walls + arena.side_walls(x2, bar_width)
+    back = 0.0 if wall_padding is None else max(0.0, padding - wall_padding)
+    walls = [_set_back(w, back) for w in walls]
     return Costmap(obstacles, arena_cm=(TASK2_AREA_M[0] * cm, TASK2_AREA_M[1] * cm),
                    walls=[tuple(v * cm for v in w) for w in walls], edge_padding_cm=padding * cm)
 
@@ -97,6 +103,17 @@ def arena_to_dict(arena: Task2Arena) -> dict:
 
 def arena_from_dict(data: dict) -> Task2Arena:
     return Task2Arena(**{k: tuple(v) if isinstance(v, list) else v for k, v in data.items()})
+
+
+def _set_back(wall, d: float):
+    """A wall rectangle moved d away from the course: a side wall (or the carpark's)
+    away from the centre line, the carpark's back wall back."""
+    x0, y0, x1, y1 = wall
+    if y0 >= TASK2_CENTRE_Y:
+        return (x0, y0 + d, x1, y1 + d)
+    if y1 <= TASK2_CENTRE_Y:
+        return (x0, y0 - d, x1, y1 - d)
+    return (x0 - d, y0, x1 - d, y1)            # across the centre line: the carpark's back wall
 
 
 def checkpoint_1(x1: float, arrow_1: str, lane_offset: float):
@@ -128,7 +145,8 @@ def build_route(arena: Task2Arena, car, settings: dict, d2: float, bar_width: fl
     x2 = bar_x(arena, x1, d2)
     cp1 = checkpoint_1(x1, arrow_1, float(settings['lane_offset']))
     cp2 = bar_checkpoints(x2, arrow_2, bar_width, float(settings['side_clearance']))[0]
-    costmap = course_costmap(arena, x1, x2, bar_width, float(settings['obstacle_padding']))
+    costmap = course_costmap(arena, x1, x2, bar_width, float(settings['obstacle_padding']),
+                             float(settings['wall_padding']))
     if costmap.in_collision(cp2[0] * 100.0, cp2[1] * 100.0, cp2[2]):
         return None, 'checkpoint 2 not clear'
     path, how = None, None

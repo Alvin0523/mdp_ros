@@ -129,7 +129,7 @@ class Task1Planner(Node):
                 planner_params.configure(dataclasses.replace(planner_params.from_flat(req['params']),
                                                              footprint_padding=float(spec['padding'])))
                 costmap = task2_routes.course_costmap(arena, spec['x1'], spec['x2'], spec['bar_width'],
-                                                      spec['padding'])
+                                                      spec['padding'], spec.get('wall_padding'))
                 path = plan_leg(costmap, tuple(req['start']), tuple(req['checkpoints'][0])) or []
             self.send({'gen': req['gen'], 'idx': 0, 'start': req['start'],
                        'path': [list(map(float, p[:3])) + [int(p[3])] for p in path]})

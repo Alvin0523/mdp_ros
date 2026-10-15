@@ -54,7 +54,7 @@ def test_lookup_ends_at_checkpoint_2_and_is_clear(table, arrows, d2, width):
     assert path[-1][:2] == pytest.approx(cp2[:2], abs=0.005)
     assert abs(math.remainder(path[-1][2] - cp2[2], 2 * math.pi)) < 0.02
     planner_params.configure(CAR)
-    cm = R.course_costmap(ARENA, x1, x2, width, SETTINGS['obstacle_padding'])
+    cm = R.course_costmap(ARENA, x1, x2, width, SETTINGS['obstacle_padding'], SETTINGS['wall_padding'])
     assert task2_paths.clear(path, cm, margin=0.0)
 
 

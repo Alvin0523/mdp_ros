@@ -203,10 +203,10 @@ task2_runner:
     # parallel to the centre line, lane_offset to the side.
     swerve_early_dist: 0.90    # m
     swerve_trigger_dist: 0.45  # m
-    lane_offset: 0.25          # m, checkpoint 1 (beside obstacle 1) out from the centre line. 0.28 was
-                               # tried (car 2026-10-14: at 0.25 the car cut ~3 cm inside the plan and
-                               # leg 1 reversed); back to 0.25 with the smooth S, which the car follows
-                               # closely, and forward-only legs (no reverse) - task2-cp1
+    lane_offset: 0.28          # m, checkpoint 1 (beside obstacle 1) out from the centre line: the car's
+                               # side 13.5 cm from obstacle 1. 0.25 (10.5 cm) left no room for
+                               # obstacle_padding 0.08 + the clean shapes' 4 cm spare beside it
+                               # (task2-cp1 sim 2026-10-15)
     side_clearance: 0.25       # m, checkpoints 2 and 3 out from obstacle 2's ends (as lane_offset)
     home_stop_dist: 0.12       # m, ultrasonic reading of the carpark's back wall = stop
     home_straight_dist: 0.45   # m, on the centre line before home: the car lines up this far out
@@ -226,8 +226,12 @@ task2_runner:
     ir_fix: false              # IR position fixes past obstacle 1's side and the bar's ends (live;
                                # false = dead reckoning only). Off by default: CP1 -> CP2 is now placed
                                # from the bar as the car sees it at checkpoint 1 (bullseye + ultrasonic)
-    obstacle_padding: 0.06     # m kept between the car's outline and the obstacles when planning,
-                               # task 2 only (task 1: costmap.footprint_padding)
+    obstacle_padding: 0.08     # m kept between the car's outline and the obstacles when planning,
+                               # task 2 only (task 1: costmap.footprint_padding). Was 0.06 for walls
+                               # and obstacles alike: the car's inside rear corner cut ~8 cm into it
+                               # turning right just past obstacle 1 and passed it at 2.1 cm (sim
+                               # 2026-10-14, d2 0.6 L/R)
+    wall_padding: 0.06         # m kept from the walls (carpark, the side walls by the bar)
     # Forward only: the legs are planned without reversing, and the follower never reverses
     # on its own (it backed up after checkpoint 1, car 2026-10-14). Only when the car has
     # not moved for stuck_time s while told to drive may it reverse.
