@@ -35,6 +35,7 @@ SYMBOL_M = 0.061                   # printed symbol, square
 # 99_Bullseye.png (the real print, photographed); measured on the real card 2026-10-15:
 # 4.4 cm of its 6 cm.
 BULLSEYE_RIM_M = 0.044
+BULLSEYE_FROM_END_M = 0.057        # a bar-face bullseye's centre from the bar's end (real bar, 2026-10-15)
 
 
 @dataclass(frozen=True)
@@ -191,8 +192,8 @@ def task2_setup(path: str):
     x2 = x1 + s1[0] / 2.0 + float(layout['d2']) + s2[0] / 2.0
     cy = TASK2_CENTRE_Y
     # Bullseyes as on the course (2026-10-14): obstacle 1's two sides; obstacle 2's
-    # two ends, and its front and back faces on the edge-most 10 cm block each side.
-    edge = s2[1] / 2.0 - 0.05
+    # two ends, and its front and back faces BULLSEYE_FROM_END_M from each end (as measured).
+    edge = s2[1] / 2.0 - BULLSEYE_FROM_END_M
     obstacles = [
         LayoutObstacle(1, x1, cy, 'W', s1, ARROW_SYMBOL[str(layout['arrow_1']).upper()],
                        (('N', 0.0, BULLSEYE_SYMBOL), ('S', 0.0, BULLSEYE_SYMBOL))),

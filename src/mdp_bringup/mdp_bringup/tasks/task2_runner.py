@@ -418,7 +418,8 @@ class Task2Runner(RunnerBase):
         widths, 'gap' / 'pose') - arrow 2 to bullseye in one frame, else from the pose."""
         face_x = x2 - self.arena.obstacle_2_size[0] / 2.0
         return task2_vision.bar_width(self.bullseyes, self.arrows_2, float(self.p('camera_hfov')), face_x,
-                                      TASK2_CENTRE_Y, self.side, self.arena.obstacle_2_width_range)
+                                      TASK2_CENTRE_Y, self.side, self.arena.obstacle_2_width_range,
+                                      gap_scale=1.0 if self.p('use_sim_time') else float(self.p('bar_gap_scale')))
 
     def bar_w(self) -> float:
         """The bar's width planned with: measured (nearest 5 cm), set up, or the usual one."""
@@ -1293,7 +1294,11 @@ class Task2Runner(RunnerBase):
         (the plan to checkpoint 1 is re-made on every reading change)."""
         if text != self._ready_note:
             self._ready_note = text
-            (self.get_logger().warn if warn else self.get_logger().info)(text)
+            # Two call sites: rclpy refuses one call site logging at two severities.
+            if warn:
+                self.get_logger().warn(text)
+            else:
+                self.get_logger().info(text)
 
     def cp1_offness(self) -> str:
         """'2 deg, +3 cm off the lane' at checkpoint 1."""

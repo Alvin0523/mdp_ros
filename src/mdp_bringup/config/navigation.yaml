@@ -248,6 +248,9 @@ task2_runner:
     # end in one frame (YOLO class 99, or the laptop's bullseye_matcher) x the ultrasonic.
     camera_hfov: 1.089         # rad, the camera's horizontal view (Pi camera v2 full sensor ~62 deg;
                                # the sim camera is the same, URDF)
+    bar_gap_scale: 1.065       # x the arrow 2 -> bullseye gap: the real lens (barrel distortion) shows it
+                               # ~6.5% short - 60 and 76.3 cm bars measured 55.6 / 71 with the ultrasonic's
+                               # distance right (car 2026-10-15). Not in sim (a pinhole camera). Live
     cp1_speed: 0.50            # m/s on the straight into checkpoint 1 (line_up_dist): steady while the
                                # ultrasonic and the camera read obstacle 2 - at 0.9 it arrived still
                                # turning and wiggled +-15 deg (bags 2026-10-15). Tune on the car

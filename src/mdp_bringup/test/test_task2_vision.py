@@ -30,7 +30,7 @@ def test_width_from_the_near_bullseye(d2, width, side):
     x1 = 1.25
     face_x = x1 + 0.05 + d2
     cam = (x1 + 0.171 - 0.10, CY + side * 0.25, 0.0)     # just before checkpoint 1, straight
-    bullseye = (face_x, CY + side * (width / 2.0 - 0.05))
+    bullseye = (face_x, CY + side * (width / 2.0 - 0.057))
     box = project(cam, bullseye)
     half = V.bar_half_width(box, W, HFOV, cam, face_x, CY)
     assert 2 * half == pytest.approx(width, abs=0.005)
@@ -106,7 +106,7 @@ RANGE = (0.30, 1.20)
 def bar_frame(true_cam, believed_cam, width, face_x, stamp=1.0, ends=(1,), arrow=True):
     """One frame of the bar seen from true_cam, logged with believed_cam (the pose
     the car thinks it has): bullseyes on `ends` (+1 left / -1 right), arrow 2 at the centre."""
-    bulls = [(stamp, project(true_cam, (face_x, CY + e * (width / 2.0 - 0.05))), W, believed_cam) for e in ends]
+    bulls = [(stamp, project(true_cam, (face_x, CY + e * (width / 2.0 - 0.057))), W, believed_cam) for e in ends]
     a = project(true_cam, (face_x, CY), size=ARROW_PX)
     a[0] = '39'
     return bulls, ([(stamp, a)] if arrow else [])
