@@ -30,7 +30,7 @@ class BullseyeMatcher(Node):
     def __init__(self):
         super().__init__('bullseye_matcher')
         camera_topic = self.declare_parameter('camera_topic', '/image_raw').value
-        self.min_px = float(self.declare_parameter('min_px', 14.0).value)
+        self.min_px = float(self.declare_parameter('min_px', 11.0).value)
         self.max_px = float(self.declare_parameter('max_px', 140.0).value)
         self.threshold = float(self.declare_parameter('threshold', 0.6).value)
         template = self.declare_parameter('template', os.path.join(
