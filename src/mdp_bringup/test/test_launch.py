@@ -48,14 +48,33 @@ MONITORS = {'health_monitor', 'bt_monitor'}
 @pytest.mark.parametrize('task', ['0', '1', '2'])
 def test_split_roles(task):
     """Pi + laptop: the Pi side has the hardware and the runner but not the
-    monitors; the laptop side has the planner and the monitors, no hardware."""
-    solo = _executables(['sim:=false', f'task:={task}'])
+    monitors; the laptop side has the planner and the monitors, no hardware.
+    role:=pi is the default."""
     pi = _executables(['sim:=false', f'task:={task}', 'role:=pi'])
+    assert _executables(['sim:=false', f'task:={task}']) == pi
     laptop = _executables(['sim:=false', 'role:=laptop'])
-    assert MONITORS <= solo and not MONITORS & pi
+    hardware = {'serial_bridge_node', 'bluetooth_bridge_node', 'ros2_control_node'}
+    assert hardware <= pi and not MONITORS & pi
+    assert MONITORS | {'task1_planner', 'bag_recorder'} <= laptop
+    assert not hardware & laptop
+    runner = {'0': 'manual_drive', '1': 'task1_runner', '2': 'task2_runner'}[task]
+    assert runner in pi
+
+
+@pytest.mark.parametrize('sim', ['false', 'true'])
+def test_no_standalone(sim):
+    """Always split, sim and real: no role:=solo (everything in one launch)."""
+    with pytest.raises(ValueError):
+        _executables([f'sim:={sim}', 'task:=2', 'role:=solo'])
+
+
+@pytest.mark.skipif(not _has_gazebo(), reason='no Gazebo here')
+def test_sim_split():
+    """Sim, split like the car: Gazebo's half has the runner, the laptop's the planner and monitors."""
+    car = _executables(['sim:=true', 'task:=2'])
+    laptop = _executables(['sim:=true', 'role:=laptop'])
+    assert 'task2_runner' in car and not MONITORS & car and 'task1_planner' not in car
     assert MONITORS | {'task1_planner'} <= laptop
-    assert not {'serial_bridge_node', 'bluetooth_bridge_node', 'ros2_control_node'} & laptop
-    assert pi | laptop >= solo   # nothing lost in the split
 
 
 def test_config_files_named_in_the_launch_exist():

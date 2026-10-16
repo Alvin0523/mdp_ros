@@ -2,7 +2,7 @@
 paths between the car's checkpoints, the slow part of planning, and sends each
 one back as soon as it is found.
 
-task1_runner on the Pi (role:=pi, remote_planner) still works out the visiting
+task1_runner on the car still works out the visiting
 order and checkpoints itself (milliseconds), then sends
 
     /plan_legs/request  {"gen", "obstacles_cm": [[x, y, facing], ...],
@@ -109,7 +109,10 @@ class Task1Planner(Node):
         threading.Thread(target=self.plan, args=(req,), daemon=True).start()
 
     def plan_one(self, req: dict):
+        """With the car's own settings, as plan() - else the last plan's (maybe task 2's
+        padding). No lock: a full plan running beside it has the same car's settings."""
         try:
+            planner_params.configure(planner_params.from_flat(req['params']))
             costmap = build_costmap([tuple(o) for o in req['obstacles_cm']])
             path = plan_leg(costmap, tuple(req['start']), tuple(req['checkpoints'][0])) or []
             self.send({'gen': req['gen'], 'idx': 0, 'start': req['start'],

@@ -5,8 +5,8 @@ matching), on /bullseye_detections in /yolo_detections' format:
     {"stamp": s, "w": 640, "h": 480, "boxes": [["99", score, x1, y1, x2, y2], ...]}
 
 task2_runner reads both topics; once YOLO reports bullseyes itself (class 99),
-start the launch with bullseye_matcher:=false. Runs where YOLO runs (the laptop
-with `pixi run laptop`; with role:=solo for task 2). Settings: config/vision.yaml.
+start the launch with bullseye_matcher:=false. Runs where YOLO runs: the laptop
+(`pixi run laptop`, sim too). Settings: config/vision.yaml.
 """
 
 import json

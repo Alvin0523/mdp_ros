@@ -6,7 +6,7 @@ the ir1_curve / ir2_curve in config/bridges.yaml (serial bridge).
     pixi run calib ir --distances 10 20 30     other distances (cm)
     pixi run calib ir --wait 10                a 10 s countdown instead of Enter
 
-HOW: the car stands still with the stack up (pixi run pi / pi-solo). For every
+HOW: the car stands still with the stack up (pixi run pi). For every
 sensor and distance it says where to put the block - a flat face square to the
 beam, the distance measured from the SENSOR'S FACE - waits for Enter once it
 is placed (or counts down --wait seconds), then samples the raw reading (/ir/raw, /ir2/raw) for
