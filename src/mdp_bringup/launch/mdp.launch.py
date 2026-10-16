@@ -42,8 +42,9 @@ Arguments
   gui        sim only - Gazebo window                                 (default true)
   model      YOLO model file under mdp_vision/models/ (default best_v5.pt;
              task:=2 task2_yolo26s.pt)
-  step       task 2, testing: true -> stops at every checkpoint, `pixi run step`
-             (SPACE) drives on to the next                        (default false)
+  step       task 1 / 2, testing: true -> stops at every checkpoint, `pixi run step`
+             (SPACE) drives on to the next. Task 1: each stop does everything a
+             real run does (IR fix, scan, TARGET) first        (default false)
   bullseye_matcher  task 2: true -> bullseyes also by template matching
              (mdp_vision bullseye_matcher, wherever YOLO runs) - until YOLO
              has a bullseye class                              (default true)
@@ -187,7 +188,7 @@ def generate_launch_description(argv=None):
     # laptop (role:=laptop, sim); PyTorch crashed on the Pi 4's CPU (SIGILL).
     model = arg('model', 'task2_yolo26s.pt' if task == '2' else 'best_v5.pt')
     matcher = _true(arg('bullseye_matcher', 'true'))
-    step = _true(arg('step', 'false'))      # task 2: one checkpoint per /step (pixi run step, SPACE)
+    step = _true(arg('step', 'false'))      # task 1 / 2: one checkpoint per /step (pixi run step, SPACE)
     quiet = arg('log', 'quiet') != 'full'
     serial_port = arg('serial_port', '')              # '' = config/bridges.yaml
     bluetooth_device = arg('bluetooth_device', '')
@@ -218,7 +219,7 @@ def generate_launch_description(argv=None):
                               description='YOLO model file under mdp_vision/models/, or a full path '
                                           '(task:=2: task2_yolo26s.pt)'),
         DeclareLaunchArgument('step', default_value='false',
-                              description='task 2: stop at every checkpoint, go on with /step (pixi run step, SPACE)'),
+                              description='task 1 / 2: stop at every checkpoint, go on with /step (pixi run step, SPACE)'),
         DeclareLaunchArgument('bullseye_matcher', default_value='true',
                               description='task 2: bullseyes by template matching too, where YOLO runs'),
         DeclareLaunchArgument('serial_port', default_value='config/bridges.yaml', description='real: STM32 USART3 device'),
@@ -479,7 +480,7 @@ def generate_launch_description(argv=None):
             package='mdp_bringup', executable='task1_runner', output='screen',
             parameters=[navigation,
                         {f'robot.{k}': car[k] for k in ('wheelbase', 'steering_limit_left', 'steering_limit_right')},
-                        {'start_x': start_x, 'start_y': start_y, 'start_yaw': start_yaw}, sim_time]))
+                        {'start_x': start_x, 'start_y': start_y, 'start_yaw': start_yaw, 'step': step}, sim_time]))
     elif task == '2':
         actions.append(Node(
             package='mdp_bringup', executable='task2_runner', output='screen',

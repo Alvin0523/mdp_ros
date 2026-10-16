@@ -93,5 +93,6 @@ def test_every_executable_in_the_launch_is_installed():
     assert used and not missing, missing
 
 
-def test_task2_step():
-    assert 'task2_runner' in _executables(['sim:=false', 'task:=2', 'step:=true'])
+@pytest.mark.parametrize('task', ['1', '2'])
+def test_step(task):
+    assert f'task{task}_runner' in _executables(['sim:=false', f'task:={task}', 'step:=true'])

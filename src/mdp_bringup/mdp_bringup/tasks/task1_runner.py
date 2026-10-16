@@ -28,7 +28,14 @@ Topics:
        /run_status      live numbers, 2 Hz (mdp_interfaces/RunStatus)
        Foxglove drawings - see mdp_bringup/utils/markers.py
   services  /start_run  /stop_run   (reset: /reset_pose, robot_pose_feedback)
+            /step       step:=true only (`pixi run step`, SPACE)
             (/setup_obstacles - `pixi run setup`: the laptop's task1_planner)
+
+step:=true (launch argument, testing): one obstacle per /step. The first starts the
+run (like START); the car drives one leg and does everything it does on a real run
+at that stop - the IR approach, creep and position fix, the scan, TARGET to the
+tablet - then holds there until the next /step drives the next leg. The run timer
+keeps running while it holds.
 """
 
 import json
@@ -47,6 +54,7 @@ from rclpy.qos import QoSProfile, ReliabilityPolicy
 from robot_localization.srv import SetPose
 from sensor_msgs.msg import Range
 from std_msgs.msg import String
+from std_srvs.srv import Trigger
 from visualization_msgs.msg import MarkerArray
 
 from mdp_algorithm.control.path_follower import PathFollower, yaw_from_quaternion
@@ -116,6 +124,10 @@ class Task1Runner(RunnerBase):
         # At each scan stop: fix the pose against the block with the two left
         # IRs, creeping and centring on it first if needed (ir_stop_step).
         self.declare_parameter('ir_pose_fix', True)
+        # step:=true - one obstacle per /step (module docstring).
+        self.step = bool(self.declare_parameter('step', False).value)
+        self.create_service(Trigger, '/step', self.step_callback)
+        self._step_hold = False        # step:=true: scanned, holding until the next /step
         manual.declare_params(self)   # the tablet's movement buttons, see utils/manual.py
         # robot.wheelbase / steering_limit_* (URDF) + navigation.yaml, passed
         # by the launch; the same files are the defaults for a bare `ros2 run`.
@@ -488,6 +500,7 @@ class Task1Runner(RunnerBase):
         else:
             self.set_state(State.NAVIGATING_TO_TARGET)
             self.current_target_idx = 0
+            self._step_hold = False
             self._manual_until = 0.0
             self.reset_done = False     # the car is leaving the start
             self.run_start, self.run_end = self.now(), None
@@ -504,6 +517,24 @@ class Task1Runner(RunnerBase):
         self.sync_indicators()
         return response
 
+    def step_callback(self, request, response):
+        """/step (step:=true): before the run = START; holding at a stop after its
+        scan = drive the next leg."""
+        if not self.step:
+            response.success, response.message = False, "Not in step mode - launch with step:=true."
+            return response
+        if self.state == State.WAITING_FOR_START:
+            return self.start_run_callback(request, response)
+        if self.state == State.NAVIGATING_TO_TARGET and self._step_hold:
+            self._step_hold = False
+            response.success, response.message = True, "Step."
+            return response
+        response.success = False
+        response.message = (f"Ignored: {self.state.name} - still at it." if self.in_run() else
+                            f"Ignored: {self.state.name}" + (" - reset to run again." if self.state in
+                                                              (State.FINISHED, State.STOPPED) else "."))
+        return response
+
     def stop_run_callback(self, request, response):
         """/stop_run (tablet STOP, `pixi run stop`): halt, hold zeros until reset."""
         self.stop()
@@ -518,6 +549,7 @@ class Task1Runner(RunnerBase):
         self._manual_until = 0.0
         self._ir_fix_pending = False
         self._creep = None
+        self._step_hold = False
         self.follower.set_path([])
         if self.plan_state == 'PLANNING':
             self.plan_state = 'WAITING'   # a pose reset replans from the kept obstacles
@@ -811,6 +843,9 @@ class Task1Runner(RunnerBase):
             self.set_state(State.FINISHED)
             self.get_logger().info("FINISHED  nothing to visit")
             return
+        if self._step_hold:
+            self.send_cmd(0.0, 0.0)    # step:=true: scanned - waiting for /step
+            return
         if not self.follower.active and not self.start_leg():
             self.send_cmd(0.0, 0.0)    # this leg is still being planned
             return
@@ -1062,6 +1097,10 @@ class Task1Runner(RunnerBase):
                                    f"(+{scan_s:.1f} s last scan)")
         else:
             self.set_state(State.NAVIGATING_TO_TARGET)   # the next tick loads the leg
+            if self.step:
+                self._step_hold = True
+                self.get_logger().info(f"STEP      SPACE for leg {self.current_target_idx + 1}/"
+                                       f"{len(self.visiting_order)} -> #{self.current_label()}")
         self.publish_checkpoints()
 
     # -------------------------------------------------------------- output ----
