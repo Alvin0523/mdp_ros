@@ -1,7 +1,7 @@
 """
-Task 2 step-through (the car launched with step:=true): SPACE = /step - the first
-starts the run, each next one drives on to the next checkpoint (at checkpoint 1 with
-something missing: look again). s = E-STOP (/stop_run), q / Ctrl+C = quit.
+Task 1 / 2 step-through (the car launched with step:=true): SPACE = /step - the first
+starts the run, each next one drives on to the next checkpoint (task 1: after the
+stop's IR fix and scan; task 2 at checkpoint 1 with something missing: look again). s = E-STOP (/stop_run), q / Ctrl+C = quit.
 
     pixi run step
 
@@ -19,7 +19,7 @@ from std_srvs.srv import Trigger
 
 def ask(node: Node, client, name: str):
     if not client.wait_for_service(timeout_sec=3.0):
-        print(f"\r{name} not available - is the car up with task:=2 step:=true?\r")
+        print(f"\r{name} not available - is the car up with task:=1|2 step:=true?\r")
         return
     future = client.call_async(Trigger.Request())
     rclpy.spin_until_future_complete(node, future, timeout_sec=5.0)
