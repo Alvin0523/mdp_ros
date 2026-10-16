@@ -54,10 +54,10 @@ these fits. Steering limits must also match `../mdp_stm32/include/servo.h`.
 
 | Goal | Command |
 | --- | --- |
-| Sim, task 1 (obstacles from `tasks.yaml`) | `pixi run sim task:=1` then `pixi run reset`, `pixi run start` |
-| Sim, task 2 | `pixi run sim task:=2` then `pixi run start` |
-| Bare car (manual / calibration) | `pixi run sim` then `pixi run calib straight 1.0` / `rotate 90` / `turn left` / `goto 5 8 E` / `ultrasonic 60` |
-| Real car + laptop | Pi: `pixi run pi [task:=1\|2]`; laptop: `pixi run laptop` (YOLO + task 1 path planning, `tasks/task1_planner.py`, + the monitors `health_monitor`/`bt_monitor`; the Pi plans itself if it does not answer). Sim, the same split: `pixi run sim ...` + `pixi run laptop sim:=true` (task 2: `pixi run sim-car`). `role:=pi\|laptop` in `mdp.launch.py` - nothing runs alone |
+| Sim, task 1 (obstacles from `tasks.yaml`) | `pixi run sim task:=1` + `pixi run laptop sim:=true task:=1`, then `pixi run reset`, `pixi run start` |
+| Sim, task 2 | `pixi run sim-car` (or `pixi run sim task:=2` + `pixi run laptop sim:=true task:=2`), then `pixi run start` |
+| Bare car (manual / calibration) | `pixi run sim` + `pixi run laptop sim:=true`, then `pixi run calib straight 1.0` / `rotate 90` / `turn left` / `goto 5 8 E` / `ultrasonic 60` |
+| Real car + laptop | Pi: `pixi run pi [task:=1\|2]`; laptop: `pixi run laptop [task:=1\|2]` (YOLO + the legs' path planning and `/setup_obstacles`, `tasks/task1_planner.py`, + the monitors `health_monitor`/`bt_monitor`, bags, snapshots; the Pi plans a leg itself if it does not answer within `remote_plan_timeout`). Task 2: `pixi run car`. Sim, the same split: `pixi run sim ...` + `pixi run laptop sim:=true` (task 2: `pixi run sim-car`). `role:=pi\|laptop` in `mdp.launch.py` - nothing runs alone |
 | Headless | add `gui:=false`; no camera: `vision:=false` |
 
 Launch arguments, tablet protocol and pixi tasks: `../docs/quickstart.md`.
@@ -81,7 +81,7 @@ the user's sim.
 
 1. Tests pass.
 2. A sim run finishes: task 1 logs `FINISHED  all obstacles visited`, task 2
-   `FINISHED  in the carpark`, with no `Traceback` in the launch output.
+   `FINISHED  <time> s` (`(the back wall)` when the ultrasonic stopped it), with no `Traceback` in the launch output.
 3. For driving changes, compare with Gazebo's truth: record a bag (exclude images) and read
    `/sim/ground_truth` (`transforms[0]` = the car) against `/run_status.x/y` or `/odometry/filtered`.
    Reference results (task 1): stops 1–6 cm off the checkpoint, closest body gap to a block ≥ ~1 cm,
