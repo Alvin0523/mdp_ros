@@ -57,8 +57,7 @@ these fits. Steering limits must also match `../mdp_stm32/include/servo.h`.
 | Sim, task 1 (obstacles from `tasks.yaml`) | `pixi run sim task:=1` then `pixi run reset`, `pixi run start` |
 | Sim, task 2 | `pixi run sim task:=2` then `pixi run start` |
 | Bare car (manual / calibration) | `pixi run sim` then `pixi run calib straight 1.0` / `rotate 90` / `turn left` / `goto 5 8 E` / `ultrasonic 60` |
-| Real car + laptop | Pi: `pixi run pi [task:=1\|2]`; laptop: `pixi run laptop` (YOLO + task 1 path planning, `tasks/task1_planner.py`, + the monitors `health_monitor`/`bt_monitor`; the Pi plans itself if it does not answer). Sim: `pixi run sim role:=pi ...` + `pixi run laptop sim:=true`. `role:=solo\|pi\|laptop` in `mdp.launch.py` |
-| Real car alone | `pixi run pi-solo [task:=1\|2]` on the Pi (YOLO there too) |
+| Real car + laptop | Pi: `pixi run pi [task:=1\|2]`; laptop: `pixi run laptop` (YOLO + task 1 path planning, `tasks/task1_planner.py`, + the monitors `health_monitor`/`bt_monitor`; the Pi plans itself if it does not answer). Sim, the same split: `pixi run sim ...` + `pixi run laptop sim:=true` (task 2: `pixi run sim-car`). `role:=pi\|laptop` in `mdp.launch.py` - nothing runs alone |
 | Headless | add `gui:=false`; no camera: `vision:=false` |
 
 Launch arguments, tablet protocol and pixi tasks: `../docs/quickstart.md`.
@@ -90,7 +89,7 @@ the user's sim.
 
 ## Real-car safety
 
-- Driving commands (`start`, `calib`, `teleop`, `around-obstacle`) move a real car when `pixi run pi` / `pi-solo` is
+- Driving commands (`start`, `calib`, `teleop`, `around-obstacle`) move a real car when `pixi run pi` is
   up. Don't run them unless the user asks. For tests, the wheels should be off the ground.
 - `calib` refuses to run while a task runner owns `/cmd_vel`; keep that check in any new driving tool.
 - Flashing the STM32 (`../mdp_stm32`, `pixi run flash`) only when asked.

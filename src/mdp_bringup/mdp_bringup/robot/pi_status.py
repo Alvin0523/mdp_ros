@@ -1,6 +1,6 @@
 """The Pi's own load on /pi/status (mdp_interfaces/PiStatus), once a second.
 
-Runs on the Pi (real car, role:=pi / solo): with a laptop the monitors run
+Runs on the Pi (real car, role:=pi): the monitors run
 there and cannot read the Pi's /proc. CPU per core from /proc/stat, memory
 from /proc/meminfo, temperature from the thermal zone, throttling from
 `vcgencmd get_throttled` (~2 ms a call, measured 2026-10-02). health_monitor

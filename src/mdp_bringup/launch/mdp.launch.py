@@ -3,7 +3,7 @@
     ros2 launch mdp_bringup mdp.launch.py sim:=true  task:=1
     ros2 launch mdp_bringup mdp.launch.py sim:=false task:=2 vision:=false   (no camera)
 
-(`pixi run sim / pi / pi-solo / laptop ...` wrap these; any argument below can be
+(`pixi run sim / pi / laptop ...` wrap these; any argument below can be
 appended.)
 
 Arguments
@@ -12,20 +12,19 @@ Arguments
   task       0 bare car (manual drive, no runner), 1 explore + recognise,
              2 fastest car                                             (default 0)
   vision     true/false - camera + YOLO                               (default true)
-  role       where this machine's part runs - one repo, two machines:
-             solo -> everything here (sim, or the Pi on its own)     (default)
-                     (`pixi run pi-solo`)
-             pi   -> the Pi with a laptop: everything that touches the car
-                     (hardware, EKF, runner, tablet, camera - JPEG frames),
-                     not YOLO or the monitors; task 1's paths are planned on
-                     the laptop, here if it does not answer  (`pixi run pi`)
-             laptop -> the laptop: YOLO on the Pi's JPEG frames, task 1's path
-                     planning, and the monitors (health_monitor, bt_monitor -
-                     topics only) (`pixi run laptop`). Both machines on the same
-                     ROS_DOMAIN_ID, finding each other by ROS_STATIC_PEERS
-                     (Cyclone DDS, scripts/activate_rmw.sh).
-             Sim, the same split on one laptop: `pixi run sim role:=pi ...`
-             + `pixi run laptop sim:=true`.
+  role       which half of the run this is - always two, sim and real alike:
+             pi   -> the car: everything that touches it (hardware or Gazebo,
+                     EKF, runner, tablet, camera - JPEG frames), not YOLO or the
+                     monitors. The legs' Hybrid A* goes to the laptop, planned
+                     here only if it does not answer   (default; `pixi run pi`,
+                     `pixi run sim`)
+             laptop -> YOLO on the car's frames, the leg planner, /setup_obstacles,
+                     the monitors (health_monitor, bt_monitor), bags and
+                     snapshots (`pixi run laptop`, sim: `pixi run laptop sim:=true`).
+                     Both on the same ROS_DOMAIN_ID, finding each other by
+                     ROS_STATIC_PEERS (Cyclone DDS, scripts/activate_rmw.sh).
+             The real car: the Pi + the laptop (`pixi run car`); sim: both halves
+             on the laptop (`pixi run sim-car`). No half runs on its own (2026-10-16).
   obstacles  tablet -> only the tablet (over Bluetooth on `bluetooth_device`); in
                        sim task 1 Gazebo starts with an empty arena and the
                        blocks appear when the tablet sends its layout
@@ -174,9 +173,10 @@ def generate_launch_description(argv=None):
     if task not in TASKS:
         raise ValueError(f"task:={task} - expected 0, 1 or 2")
     vision = _true(arg('vision', 'true'))
-    role = arg('role', 'solo')
-    if role not in ('solo', 'pi', 'laptop'):
-        raise ValueError(f"role:={role} - expected solo, pi or laptop")
+    # Always split, sim and real (2026-10-16): the car's half + the laptop's.
+    role = arg('role', 'pi')
+    if role not in ('pi', 'laptop'):
+        raise ValueError(f"role:={role} - expected pi (the car) or laptop")
     obstacles = arg('obstacles', 'yaml' if sim else 'tablet')
     if obstacles not in ('yaml', 'tablet'):
         raise ValueError(f"obstacles:={obstacles} - expected yaml or tablet")
@@ -184,9 +184,7 @@ def generate_launch_description(argv=None):
     gui = _true(arg('gui', 'true'))
     # YOLO model: best_v5.pt (PyTorch); task 2: task2_yolo26s.pt (Arrow Left / Right +
     # Bullseye, 2026-10-15), as CoreML when its .mlpackage is there. YOLO runs on the
-    # laptop (role:=laptop, sim); PyTorch crashed on the Pi 4's CPU (SIGILL), so
-    # role:=solo on the real car has no working YOLO model any more (the NCNN exports
-    # were removed 2026-10-08).
+    # laptop (role:=laptop, sim); PyTorch crashed on the Pi 4's CPU (SIGILL).
     model = arg('model', 'task2_yolo26s.pt' if task == '2' else 'best_v5.pt')
     matcher = _true(arg('bullseye_matcher', 'true'))
     step = _true(arg('step', 'false'))      # task 2: one checkpoint per /step (pixi run step, SPACE)
@@ -206,8 +204,8 @@ def generate_launch_description(argv=None):
         DeclareLaunchArgument('sim', default_value='false', description='true: Gazebo, false: real robot'),
         DeclareLaunchArgument('task', default_value='0', description='0 bare car (manual drive), 1 explore+recognise, 2 fastest car'),
         DeclareLaunchArgument('vision', default_value='true', description='camera + YOLO (false: without)'),
-        DeclareLaunchArgument('role', default_value='solo',
-                              description='solo: everything here; pi: the Pi with a laptop; laptop: YOLO, planning, monitors'),
+        DeclareLaunchArgument('role', default_value='pi',
+                              description='pi: the car (real or Gazebo); laptop: YOLO, planning, monitors - always both'),
         DeclareLaunchArgument('obstacles', default_value='yaml in sim, tablet on real',
                               description='tablet: only the tablet (sim: empty arena until it sends); yaml: also publish `layout` once at startup (task 1)'),
         DeclareLaunchArgument('layout', default_value='config/tasks.yaml',
@@ -240,8 +238,8 @@ def generate_launch_description(argv=None):
     sim_time = {'use_sim_time': sim}
 
     def monitors(camera_topic):
-        """Watchers of the car's topics, no hardware: on the Pi alone (role:=solo),
-        on the laptop with one (role:=laptop) - off the Pi's CPU. health_monitor:
+        """Watchers of the car's topics, no hardware - on the laptop, off the Pi's
+        CPU. health_monitor:
         one-glance health on /diagnostics (STM32/tablet links, sensors, camera/
         YOLO, runner - Foxglove "Diagnostics" panels). bt_monitor: the tablet
         link's traffic as log lines on /rosout (`pixi run btlog`), kept off this
@@ -262,7 +260,7 @@ def generate_launch_description(argv=None):
     if role == 'laptop':
         # The laptop: YOLO on the Pi camera's JPEG copy (~20 KB a frame over
         # WiFi; raw is ~0.9 MB). Everything else runs on the Pi (role:=pi).
-        # Sim (sim:=true, next to `pixi run sim role:=pi` on the same laptop):
+        # Sim (sim:=true, next to `pixi run sim` on the same laptop):
         # Gazebo's camera directly, on sim time - the same split as the car.
         # Real: the JPEGs cross the link once, to camera_relay; YOLO and the
         # bullseye matcher read its copy (a DDS sends each remote reader its own).
@@ -275,8 +273,8 @@ def generate_launch_description(argv=None):
                               'camera_topic': '/camera/image_raw' if sim else '/laptop/image_raw/compressed',
                               'use_sim_time': str(sim).lower(),
                               'log_level': 'info'}.items()))   # one startup line each: model + GPU/CPU, camera mode
-        # Task 1's paths between checkpoints, for task1_runner on the car
-        # (remote_planner) - it plans them itself if this does not answer.
+        # The legs' Hybrid A* for both runners on the car - they plan them
+        # themselves only if this does not answer.
         # It also serves /setup_obstacles (pixi run setup) from THIS machine's layout file.
         actions.append(Node(package='mdp_bringup', executable='task1_planner', output='screen',
                             parameters=[{'layout': layout}, sim_time]))
@@ -438,15 +436,13 @@ def generate_launch_description(argv=None):
                    '--yaw', str(start_yaw), '--pitch', '0.0', '--roll', '0.0',
                    '--frame-id', 'map', '--child-frame-id', 'odom']))
 
-    if vision:
-        # Camera (real only - Gazebo has its own) + YOLO: launch/vision.launch.py.
+    if vision and not sim:
+        # The Pi camera (Gazebo has its own); YOLO runs on the laptop: launch/vision.launch.py.
         actions.append(IncludeLaunchDescription(
             PythonLaunchDescriptionSource(os.path.join(pkg_bringup, 'launch', 'vision.launch.py')),
-            launch_arguments={'model': model, 'camera': str(not sim).lower(), 'camera_topic': camera_topic,
-                              'yolo': str(role != 'pi').lower(),
-                              'bullseye': str(matcher and role != 'pi' and task == '2').lower(),
-                              'use_sim_time': str(sim).lower(),
-                              'log_level': 'info'}.items()))   # one startup line each: model + GPU/CPU, camera mode
+            launch_arguments={'model': model, 'camera': 'true', 'camera_topic': camera_topic,
+                              'yolo': 'false', 'bullseye': 'false', 'use_sim_time': 'false',
+                              'log_level': 'info'}.items()))   # one startup line: camera mode
 
     # Tablet link - the real tablet, in sim as on the robot.
     actions.append(Node(
@@ -472,12 +468,6 @@ def generate_launch_description(argv=None):
              parameters=[{'gz_world': world_name if sim else '', 'start_x': start_x, 'start_y': start_y,
                           'start_yaw': start_yaw}, sim_time]),
     ]
-    if role == 'solo':     # role:=pi - the laptop runs them (`pixi run laptop`)
-        actions += monitors(camera_topic if vision else '')
-        # /bag/toggle - record a bag from the Foxglove REC button (pixi run bag); /bag/recording.
-        actions.append(Node(package='mdp_bringup', executable='bag_recorder', output='screen',
-                            parameters=[sim_time]))
-
     if task == '0':
         # Bare car: the tablet's manual drive buttons, no runner.
         actions.append(Node(package='mdp_bringup', executable='manual_drive', output='screen',
@@ -489,13 +479,11 @@ def generate_launch_description(argv=None):
             package='mdp_bringup', executable='task1_runner', output='screen',
             parameters=[navigation,
                         {f'robot.{k}': car[k] for k in ('wheelbase', 'steering_limit_left', 'steering_limit_right')},
-                        {'start_x': start_x, 'start_y': start_y, 'start_yaw': start_yaw,
-                         'remote_planner': role == 'pi', 'layout': layout}, sim_time]))
+                        {'start_x': start_x, 'start_y': start_y, 'start_yaw': start_yaw}, sim_time]))
     elif task == '2':
         actions.append(Node(
             package='mdp_bringup', executable='task2_runner', output='screen',
-            parameters=[navigation, {'layout': layout, 'serve_setup': role != 'pi', 'start_x': start_x,
-                                     'start_y': start_y, 'start_yaw': start_yaw,
-                                     'remote_planner': role == 'pi', 'step': step}, sim_time]))
+            parameters=[navigation, {'layout': layout, 'start_x': start_x, 'start_y': start_y,
+                                     'start_yaw': start_yaw, 'step': step}, sim_time]))
 
     return LaunchDescription(declared + actions)

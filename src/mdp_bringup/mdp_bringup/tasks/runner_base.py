@@ -7,7 +7,6 @@ A runner subclasses RunnerBase and provides:
   publish_run_status()    fills and sends mdp_interfaces/RunStatus
   start_run_callback / stop_run_callback   /start_run, /stop_run (std_srvs/Trigger)
   set_pose_callback       /set_pose - the EKF being reset (/reset_pose)
-  yolo_callback           /yolo_result
   on_pose()               optional: after each new pose (e.g. reset confirmation)
 and creates self.follower (after its parameters are set) before spinning.
 """
@@ -49,7 +48,6 @@ class RunnerBase(Node):
         self.leg_pub = self.create_publisher(MarkerArray, '/path_markers', 10)
         self.search_pub = self.create_publisher(MarkerArray, '/search_progress', 10)
 
-        self.create_subscription(String, '/yolo_result', self.yolo_callback, 10)
         self.create_subscription(Odometry, '/odometry/filtered', self.odom_callback, 10)
         self.create_subscription(PoseWithCovarianceStamped, '/set_pose', self.set_pose_callback, 10)
         self.create_service(Trigger, '/start_run', self.start_run_callback)

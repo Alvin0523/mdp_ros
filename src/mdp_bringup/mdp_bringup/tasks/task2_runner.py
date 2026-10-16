@@ -19,9 +19,8 @@ known in advance, so the car measures them with the front ultrasonic:
                    the ultrasonic measures obstacle 2 (a bar on the centre line)
                    and the camera sees arrow 2 and a bullseye on its near end
   CHECKPOINT_1     the bar's width from the gap between arrow 2 and that bullseye
-                   in one frame x the ultrasonic's distance (else bullseye +
-                   ultrasonic + pose; the usual 60 cm if none was seen), to the
-                   nearest 5 cm. Something missing: stop at checkpoint 1 and read
+                   in one frame x the ultrasonic's distance (the usual 60 cm if
+                   no such frame), to the nearest 5 cm. Something missing: stop at checkpoint 1 and read
                    up to CP1_WAIT_S - no rolling on or turning ->
                    checkpoints 2, 3, 4; leg 1 (CP1 -> CP2) from the route table
                    built offline (task2_routes.py), the others clean geometry
@@ -57,7 +56,7 @@ in Foxglove like task 1.
 /task2_setup - both obstacles and arrows KNOWN, so no ultrasonic measuring and
 no YOLO: checkpoint 1 is planned before START and checkpoints 2-4 at checkpoint 1
 from the known bar. Kept across resets, like task 1's set. Served by the
-laptop's task1_planner (role:=pi) or by this node (serve_setup).
+laptop's task1_planner.
 """
 
 import dataclasses
@@ -91,7 +90,6 @@ from mdp_bringup.tasks.ir_face_pass import FacePass
 from mdp_bringup.tasks.runner_base import RunnerBase
 from mdp_bringup.utils.run import run
 
-ARROWS = {'39': 'LEFT', 'LEFT': 'LEFT', '38': 'RIGHT', 'RIGHT': 'RIGHT'}   # YOLO id -> side
 SIDE = task2_routes.SIDE                                                  # +y = left
 STUCK_SPEED = 0.03            # m/s: slower than this while told to drive = not moving
 POSE_HISTORY_S = 2.0          # s of poses kept, to place a camera frame by its time stamp
@@ -153,24 +151,19 @@ class Task2Runner(RunnerBase):
             'layout', f"{get_package_share_directory('mdp_bringup')}/config/tasks.yaml").value
         self.arena = obstacle_layout.load_task2(layout)
         self.layout = layout
-        # (x1, x2, arrow 1, arrow 2) from `pixi run setup`, None = measure them. Not
+        # (x1, x2, arrow 1, arrow 2, bar width) from `pixi run setup`, None = measure them. Not
         # cleared by reset_run(): a reset readies the same layout for the next run.
         self.known_layout = None
         self.reset_done = False          # RESET:DONE to the tablet: a reset since the last run
         self._last_sent, self._last_heartbeat = {}, 0.0
         self.create_subscription(String, '/task2_setup', self.task2_setup_callback, 10)
-        self.task2_setup_pub = self.create_publisher(String, '/task2_setup', 10)
-        # With a laptop (role:=pi) its task1_planner serves /setup_obstacles from the
-        # laptop's tasks.yaml, for both tasks; alone, this node does.
-        if self.declare_parameter('serve_setup', True).value:
-            self.create_service(Trigger, '/setup_obstacles', self.setup_obstacles_callback)
         # step:=true - one checkpoint per /step (module docstring).
         self.step = bool(self.declare_parameter('step', False).value)
         self.create_service(Trigger, '/step', self.step_callback)
         # What YOLO saw at each obstacle - the laptop's scan_snapshots saves those frames.
         self.snap_pub = self.create_publisher(String, '/task2_snapshot', 10)
         self._ready_note = None          # the last READY / plan-failure line (each logged once)
-        self.car =planner_params.ACTIVE          # URDF + navigation.yaml (robot.*, follower.*)
+        self.car = planner_params.ACTIVE          # URDF + navigation.yaml (robot.*, follower.*)
         car_centre_ahead = (self.car.footprint_front - self.car.footprint_rear) / 2.0
         # The last checkpoint HOME_DEEPER_M past the carpark's middle (nose ~8.5 cm from the
         # back wall by odometry): the ultrasonic's 15 cm stop comes first.
@@ -200,15 +193,13 @@ class Task2Runner(RunnerBase):
         # bullseyes in the same format until YOLO knows them (task2_vision.py).
         self.create_subscription(String, '/yolo_detections', lambda m: self.detections_callback(m, 'yolo'), 10)
         self.create_subscription(String, '/bullseye_detections', self.detections_callback, 10)
-        self.boxes_seen_at = None        # when any box list last arrived (YOLO / matcher running)
         self.poses = deque()             # (time s, pose) - where the car was when a frame was taken
 
         # Checkpoint 1 -> 2 from the route table (task2_routes.py), if it was built with
         # these settings; else planned live like the other legs.
         self.routes = self.load_routes()
 
-        # Hybrid A* on the laptop (task1_planner) with one (role:=pi), else here.
-        self.remote_planner = self.declare_parameter('remote_planner', False).value
+        # Hybrid A* on the laptop (task1_planner); here only if it does not answer.
         plan_qos = rclpy.qos.QoSProfile(depth=20, reliability=rclpy.qos.ReliabilityPolicy.RELIABLE)
         self.plan_request_pub = self.create_publisher(String, '/plan_legs/request', plan_qos)
         self.create_subscription(String, '/plan_legs/result', self.plan_result_callback, plan_qos)
@@ -373,7 +364,6 @@ class Task2Runner(RunnerBase):
             stamp, w, _, boxes = task2_vision.parse(msg.data)
         except (ValueError, KeyError, TypeError):
             return
-        self.boxes_seen_at = self.now()
         if self.state not in (State.WAITING_FOR_START, State.APPROACH_1, State.TO_CHECKPOINT_1, State.CHECKPOINT_1):
             return
         pose = self.pose_at(stamp) if self.state != State.WAITING_FOR_START else self.current_pose
@@ -491,16 +481,15 @@ class Task2Runner(RunnerBase):
                 'arena': task2_routes.arena_to_dict(self.arena)}
 
     def hybrid_leg(self, costmap, start, target, obstacles=None):
-        """Hybrid A* for a leg no clean shape fits: on the laptop if there is one, else here.
+        """Hybrid A* for a leg no clean shape fits: on the laptop, here if it does not answer.
         obstacles: (x1, x2) the costmap was built from - preplan() passes its own:
         before START self.x1 is still None, and the laptop's planner crashed on it, so
         every leg waited out the timeout and was planned here (car 2026-10-15)."""
-        if self.remote_planner:
-            x1, x2 = obstacles or (self.x1, self.x2)
-            path = self.remote_leg(start, target, self.costmap_spec(x1, x2))
-            if path is not None:
-                return path
-            self.get_logger().warn("PLAN      the laptop did not answer - planning here")
+        x1, x2 = obstacles or (self.x1, self.x2)
+        path = self.remote_leg(start, target, self.costmap_spec(x1, x2))
+        if path is not None:
+            return path
+        self.get_logger().warn("PLAN      the laptop did not answer - planning here")
         return plan_leg(costmap, start, target, progress_callback=self.publish_search_progress)
 
     def ultrasonic_offset(self) -> float:
@@ -594,7 +583,7 @@ class Task2Runner(RunnerBase):
         return x + math.cos(yaw) * (self.ultrasonic_offset() + reading) + depth / 2.0
 
     def known(self):
-        """(x1, x2, arrow 1, arrow 2) from `pixi run setup`, or None (measure them)."""
+        """(x1, x2, arrow 1, arrow 2, bar width or None) from `pixi run setup`, or None (measure them)."""
         return self.known_layout
 
     def arrow(self, i: int):
@@ -626,20 +615,6 @@ class Task2Runner(RunnerBase):
     def ultrasonic_callback(self, msg: Range):
         if math.isfinite(msg.range) and msg.min_range <= msg.range <= msg.max_range:
             self.us_range = (float(msg.range), self.now())
-
-    def yolo_callback(self, msg: String):
-        """/yolo_result (one label a frame): only while no box lists arrive - an older
-        YOLO node. Then arrow 1 until the car turns out, arrow 2 once it is level
-        with obstacle 1 (its face out of view)."""
-        if self.boxes_seen_at is not None and self.now() - self.boxes_seen_at < 2.0:
-            return
-        side = ARROWS.get(msg.data.strip().upper())
-        if side is None:
-            return
-        if self.state in (State.WAITING_FOR_START, State.APPROACH_1):
-            self.count_arrow(0, side)
-        elif self.state == State.CHECKPOINT_1 or (self.state == State.TO_CHECKPOINT_1 and self.level_with_1()):
-            self.count_arrow(1, side)
 
     def start_run_callback(self, request, response):
         response.success = self.state == State.WAITING_FOR_START and not self.start_received and self.have_pose
@@ -676,18 +651,6 @@ class Task2Runner(RunnerBase):
         response.success = False
         response.message = (f"Ignored: {self.state.name} - still driving." if self.state not in
                             (State.FINISHED, State.STOPPED) else f"{self.state.name} - reset to run again.")
-        return response
-
-    def setup_obstacles_callback(self, request, response):
-        """/setup_obstacles without a laptop: this machine's task2 layout on /task2_setup."""
-        try:
-            data = obstacle_layout.task2_setup_string(self.layout)
-        except (OSError, ValueError, KeyError) as exc:
-            response.success, response.message = False, f'no task 2 layout in {self.layout} ({exc})'
-            self.get_logger().warn(f"SETUP     {response.message}")
-            return response
-        self.task2_setup_pub.publish(String(data=data))
-        response.success, response.message = True, f'task 2 layout from {self.layout}'
         return response
 
     def task2_setup_callback(self, msg: String):
@@ -877,7 +840,6 @@ class Task2Runner(RunnerBase):
         # (0, 0) outside the course, and Hybrid A* searched max_planning_time (60 s) for
         # nothing (car 2026-10-14, with setup).
         def plan(start=self.start):
-            t0 = time.monotonic()
             try:
                 goal, path = self.cp1_lined_up(start, x1, arrow, costmap)
                 pre['goal'] = goal
@@ -1228,7 +1190,6 @@ class Task2Runner(RunnerBase):
         if why:
             self.get_logger().warn(f"OBSTACLE 2  {why}")
         self.x2 = x2
-        cy = TASK2_CENTRE_Y
         self.waypoints = self.bar_waypoints(self.x2, self.arrows[1])
         # Planned live (no table route): from where the car will be once the plan is
         # ready - it rolls on meanwhile (follow(), ROLL_ON_M); passed points are trimmed.

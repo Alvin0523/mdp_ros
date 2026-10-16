@@ -28,8 +28,7 @@ Topics:
        /run_status      live numbers, 2 Hz (mdp_interfaces/RunStatus)
        Foxglove drawings - see mdp_bringup/utils/markers.py
   services  /start_run  /stop_run   (reset: /reset_pose, robot_pose_feedback)
-            /setup_obstacles  sends the `layout` file's obstacles on /obstacle_setup,
-                              as the tablet's DONE would (Foxglove SETUP, `pixi run setup`)
+            (/setup_obstacles - `pixi run setup`: the laptop's task1_planner)
 """
 
 import json
@@ -49,7 +48,6 @@ from robot_localization.srv import SetPose
 from sensor_msgs.msg import Range
 from std_msgs.msg import String
 from visualization_msgs.msg import MarkerArray
-from std_srvs.srv import Trigger
 
 from mdp_algorithm.control.path_follower import PathFollower, yaw_from_quaternion
 from mdp_algorithm.planning.costmap import Costmap, Obstacle
@@ -59,7 +57,7 @@ from mdp_bringup.tasks.ir_pose_fix import (IR_APPROACH_M, IR_APPROACH_YAW, IR_CR
                                            IR_FIX_MAX_S, IR_PAST_EDGE_M, IR_SEARCH_MAX_M, Face, IrPoseFix)
 from mdp_bringup.tasks.runner_base import RunnerBase
 from mdp_bringup.utils.run import run
-from mdp_bringup.utils import manual, markers, obstacle_layout, targets
+from mdp_bringup.utils import manual, markers, targets
 
 # RESET turns DONE once odometry reports the start pose within these.
 RESET_POS_TOL_M = 0.03
@@ -111,13 +109,10 @@ class Task1Runner(RunnerBase):
         self.declare_parameter('scan_pause_s', 3.0)
         self.declare_parameter('scan_settle_s', 0.5)
         self.declare_parameter('scan_confirm_count', 3)
-        # role:=pi (a laptop runs `pixi run laptop`): the paths between checkpoints
-        # are planned by task1_planner on the laptop; no answer within
-        # remote_plan_timeout s (or no new leg for max_planning_time + that) and
-        # the car plans them itself, as when it runs alone.
-        self.declare_parameter('remote_planner', False)
+        # The paths between checkpoints are planned by task1_planner on the laptop
+        # (`pixi run laptop`); no answer within remote_plan_timeout s (or no new leg
+        # for max_planning_time + that) and the car plans them itself.
         self.declare_parameter('remote_plan_timeout', 2.0)
-        self.declare_parameter('layout', '')   # tasks.yaml for /setup_obstacles (launch's layout:=)
         # At each scan stop: fix the pose against the block with the two left
         # IRs, creeping and centring on it first if needed (ir_stop_step).
         self.declare_parameter('ir_pose_fix', True)
@@ -131,13 +126,7 @@ class Task1Runner(RunnerBase):
 
         # (/cmd_vel, /run_status, the Foxglove drawings, /start_run ...: RunnerBase)
         self.create_subscription(String, '/obstacle_setup', self.setup_callback, 10)
-        # Published like the tablet's set, so everything that follows it (sim's
-        # blocks) sees the same message.
-        self.setup_pub = self.create_publisher(String, '/obstacle_setup', 10)
-        # With a laptop (remote_planner) the laptop's task1_planner serves it from
-        # the laptop's tasks.yaml - edited there, no need to touch the Pi.
-        if not self.get_parameter('remote_planner').value:
-            self.create_service(Trigger, '/setup_obstacles', self.setup_obstacles_callback)
+        self.create_subscription(String, '/yolo_result', self.yolo_callback, 10)
         # Manual drive lives here, not in the bridge: this node already owns /cmd_vel.
         self.create_subscription(String, '/manual_drive', self.manual_drive_callback, 10)
         plan_qos = QoSProfile(depth=20, reliability=ReliabilityPolicy.RELIABLE)
@@ -466,21 +455,6 @@ class Task1Runner(RunnerBase):
                           for oid, (x, y, face) in zip(ids, obstacles))
         self.get_logger().info(f"OBSTACLES {cells}")
 
-    def setup_obstacles_callback(self, request, response):
-        """/setup_obstacles: the layout file's task 1 set, as if the tablet sent it."""
-        path = self.get_parameter('layout').value
-        try:
-            obstacles = obstacle_layout.load(path) if path else []
-        except (OSError, ValueError, KeyError) as exc:
-            obstacles, path = [], f'{path} ({exc})'
-        if not obstacles:
-            response.success, response.message = False, f'no task 1 obstacles in {path or "(no layout)"}'
-            self.get_logger().warn(f"OBSTACLES {response.message}")
-            return response
-        self.setup_pub.publish(String(data=obstacle_layout.setup_string(obstacles)))
-        response.success, response.message = True, f'{len(obstacles)} obstacles from {path}'
-        return response
-
     def yolo_callback(self, msg: String):
         target_id = msg.data.strip()
         if self.state != State.PAUSE_FOR_SCAN or not target_id:
@@ -725,10 +699,7 @@ class Task1Runner(RunnerBase):
         self.set_state(State.WAITING_FOR_START)
         self._obstacles_cm = obstacles_cm
         self._laptop_ok = False
-        if self.get_parameter('remote_planner').value:
-            self.request_remote_plan(obstacles_cm, start)
-        else:
-            self.plan_locally(start)
+        self.request_remote_plan(obstacles_cm, start)
 
     def plan_locally(self, start):
         self._remote = None
@@ -1049,7 +1020,7 @@ class Task1Runner(RunnerBase):
                                            f"planning from {self.fmt(planned)} instead")
                     start = planned
             path = None
-            if self._laptop_ok and self.get_parameter('remote_planner').value:
+            if self._laptop_ok:
                 t0 = self.now()
                 path = self.remote_leg(idx, start)
                 if path is None:
