@@ -203,7 +203,7 @@ class Task1Runner(RunnerBase):
         self.unreachable = []
         self._slid = {}                # checkpoint index -> m slid along the face to fit (plan)
         # visit.mode anchors (visit_plan.py); square mode: every visit 'square', no vias/drive-bys.
-        self.visit_kinds = []          # per visit: 'square' | 'anchor' | 'last'
+        self.visit_kinds = []          # per visit: 'square' | 'anchor' | 'angled' | 'last'
         self.visit_vias = []           # per visit: poses its leg passes through (no stop)
         self.drive_bys = {}            # obstacle index -> visit index whose leg reads it
         self._drive_reads = {}         # obstacle index -> Counter of the ids read while driving
@@ -769,7 +769,7 @@ class Task1Runner(RunnerBase):
             # A slide up to SLID_IR_MAX_M leaves both IRs on the 10 cm face (the IR creep
             # centres them again): still an IR stop. With 6 cm block padding two ordinary
             # stops slid 1 cm and lost their IR fix (car, 2026-10-09).
-            if abs(along) > SLID_IR_MAX_M or self.visit_kinds[i] == 'last':   # angled: no IR fix
+            if abs(along) > SLID_IR_MAX_M or self.visit_kinds[i] in ('angled', 'last'):   # angled: no IR fix
                 self._slid[i] = abs(along)
         sensors = self.ir_sensors()
         self.ir_fix = IrPoseFix(sensors) if sensors else None
@@ -787,7 +787,7 @@ class Task1Runner(RunnerBase):
             self.get_logger().info(f"PLAN      stops moved {-mid * 100:+.1f} cm along: the IR pair's middle "
                                    f"level with each block")
         for i, d in self._slid.items():
-            if self.visit_kinds[i] == 'last':
+            if self.visit_kinds[i] in ('angled', 'last'):
                 continue
             self.get_logger().info(f"PLAN      #{self.tablet_id(self.visiting_order[i])} stop slid {d * 100:.0f} cm "
                                    f"along the face to fit - no IR fix there")
@@ -798,7 +798,7 @@ class Task1Runner(RunnerBase):
                 f"PLAN      no scan checkpoint for {' '.join('#' + self.tablet_id(i) for i in self.unreachable)} - skipped")
         self.get_logger().info(f"PLAN      order {' -> '.join(self.tablet_id(i) for i in self.visiting_order)}")
         if anchors:
-            names = {'anchor': 'anchor', 'last': 'last, angled'}
+            names = {'anchor': 'anchor', 'angled': 'angled stop (no square spot fits)', 'last': 'last, angled'}
             for k, i in enumerate(self.visiting_order):
                 reads = [f"#{self.tablet_id(o)}" for o, v in self.drive_bys.items() if v == k]
                 self.get_logger().info(f"PLAN      #{self.tablet_id(i)} {names[self.visit_kinds[k]]}"
@@ -1052,7 +1052,7 @@ class Task1Runner(RunnerBase):
         edge or a block (one IR at most reaches the block, on its very edge - a wrong fix)."""
         return (self.ir_fix is not None and bool(self.get_parameter('ir_pose_fix').value)
                 and idx not in self._slid and idx != len(self.visiting_order) - 1
-                and self.visit_kinds[idx] != 'last')
+                and self.visit_kinds[idx] not in ('angled', 'last'))
 
     def leading_ir(self) -> str:
         """The IR that meets the block first driving into the stop: 'front' forward, 'rear' reversing."""

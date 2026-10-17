@@ -8,6 +8,9 @@ Task 1 "anchors" visit plan (navigation.yaml visit.mode: anchors): fewer stops.
              no stop: the leg passes through a VIA point where the camera looks
              straight at it (visit.view_*), in one gear, never stopped at. One via
              per drive-by, so Hybrid A*'s real path sees it too.
+  ANGLED     an image no square stop fits (blocks or the table's edge in the way):
+             a stop further back and/or turned (up to 60 deg, 25-45 cm) where the
+             camera still sees it - read there, no IR fix.
   LAST       the last image: an angled stop (up to visit.last_stop_max_angle off
              square) - nothing is driven after it, a position fix is no use there.
 
@@ -43,11 +46,16 @@ from .visiting_order import obstacle_to_checkpoint
 GEAR_S = 1.0          # s per direction change (stop, change gear, go)
 STOP_S = 1.5          # s per stop (stopping, the scan)
 IR_S = 1.0            # s more at an anchor (the IR fix)
+VIA_S = 0.0           # s charged per via point (see the tuning note at plan_visits)
 SAMPLE_CM = 2.5       # spacing of the poses checked along an estimated leg
 VIA_ANGLES_DEG = range(-30, 31, 10)    # via points tried: these angles off square ...
 VIA_DIST_CM = (25.0, 32.0)             # ... at these camera -> image distances
 VIA_NEAR_CM = 100.0                    # only legs starting or ending this near the image are bent
 MIN_VIEW_CM = 15.0                     # nearer than this the image does not fit the frame
+# A stop for an image with no square spot: up to 60 deg turned, 25-45 cm off (still in the
+# camera's view, read from further back - the user's call 2026-10-17: visit it, don't skip it).
+ANGLED_STOP_DEG = range(-60, 61, 5)
+ANGLED_STOP_CM = (25.0, 28.0, 30.0, 32.0, 36.0, 40.0, 45.0)
 
 
 @dataclass
@@ -57,7 +65,7 @@ class Visit:
     drive_bys: images (obstacle indices) read on that leg."""
     obstacle: int
     pose: Pose
-    kind: str                                  # 'anchor' | 'last'
+    kind: str                                  # 'anchor' (square) | 'angled' | 'last'
     vias: List[Pose] = field(default_factory=list)
     drive_bys: List[int] = field(default_factory=list)
 
@@ -73,11 +81,38 @@ class _Planner:
         self.last_angle = p.last_stop_max_angle
         self.obstacles = costmap.obstacles
         self.anchor: Dict[int, Tuple[float, float, float]] = {}
+        self.angled = set()            # images whose stop is angled (no square spot fits)
         for o in self.obstacles:
             cp = obstacle_to_checkpoint(costmap, o, camera[2])
             if cp is not None:
                 self.anchor[o.id] = cp[:3]
+            else:
+                pose = self.angled_stop(o.id)
+                if pose is not None:
+                    self.anchor[o.id] = pose
+                    self.angled.add(o.id)
         self._rs, self._vr, self._via = {}, {}, {}
+
+    def angled_stop(self, i):
+        """A stop for an image no square stop fits (blocks or the table edge in the way):
+        further back and/or turned, as long as the camera sees it - the least turned and
+        nearest 30 cm that fits (ANGLED_STOP_*). None if there is none."""
+        fx, fy, a = self.face(i)
+        cx_, cy_, cyaw = self.camera
+        best = None
+        for deg in ANGLED_STOP_DEG:
+            for d in ANGLED_STOP_CM:
+                score = abs(deg) / 10.0 + abs(d - 30.0) / 5.0
+                if best is not None and score >= best[0]:
+                    continue
+                b = a + math.radians(deg)
+                cx, cy = fx + d * math.cos(b), fy + d * math.sin(b)
+                th = utils.M(math.atan2(fy - cy, fx - cx) - cyaw)
+                x = cx - (cx_ * math.cos(th) - cy_ * math.sin(th))
+                y = cy - (cx_ * math.sin(th) + cy_ * math.cos(th))
+                if not self.costmap.in_collision(x, y, th) and not self.blocked(cx, cy, i):
+                    best = (score, (x, y, th))
+        return best[1] if best else None
 
     # -- estimates -------------------------------------------------------------
     def rs(self, a, b):
@@ -266,6 +301,8 @@ class _Planner:
                 break                                    # nothing further can beat it
             pts = [leg['from']] + leg['vias'][:pos] + [via] + leg['vias'][pos:] + [leg['pose']]
             t = self.chain(pts)
+            if t is not None:
+                t += VIA_S * (len(leg['vias']) + 1)      # Hybrid A* bends round a via more than Reeds-Shepp
             if t is None or (best is not None and t - leg['t'] >= best[0]):
                 continue
             imgs = leg['drive_bys'][:pos] + [i] + leg['drive_bys'][pos:]
@@ -326,7 +363,7 @@ def plan_visits(obstacles_grid: List[ObstacleSpec], start_pose_m: Pose, camera_m
     def m(p):
         return (p[0] / CM_PER_M, p[1] / CM_PER_M, p[2])
     visits = [Visit(obstacle=leg['obstacle'], pose=m(leg['pose']),
-                    kind='last' if k == len(legs) - 1 else 'anchor',
+                    kind='last' if k == len(legs) - 1 else 'angled' if leg['obstacle'] in pl.angled else 'anchor',
                     vias=[m(v) for v in leg['vias']], drive_bys=list(leg['drive_bys']))
               for k, leg in enumerate(legs)]
     return visits, unreachable, costmap

@@ -38,7 +38,7 @@ def test_plan_visits(layout):
     stopped = [v.obstacle for v in visits]
     driven = [o for v in visits for o in v.drive_bys]
     assert sorted(stopped + driven + unreachable) == list(range(len(layout)))
-    assert [v.kind for v in visits] == ['anchor'] * (len(visits) - 1) + ['last']
+    assert all(v.kind in ('anchor', 'angled') for v in visits[:-1]) and visits[-1].kind == 'last'
     assert all(len(v.drive_bys) <= params.ACTIVE.max_drive_bys_per_leg for v in visits)
 
     for v in visits:
@@ -56,6 +56,12 @@ def test_plan_visits(layout):
             run = max(pl.view_run(pl.rs(a, b)[1], o) for a, b in zip(points, points[1:]))
             assert run >= params.ACTIVE.drive_by_min_view * CM_PER_M, f'drive-by {o}: {run:.0f} cm'
         prev = points[-1]
+
+
+def test_every_image_on_tasks_yaml_visited():
+    """#6 and #8 face each other 20 cm apart: no square stop fits - angled stops (or drive-bys)."""
+    _, unreachable, _ = visit_plan.plan_visits(_tasks_yaml(), START, CAMERA)
+    assert not unreachable
 
 
 def test_fewer_stops_on_the_tablet_layout():

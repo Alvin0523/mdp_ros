@@ -193,17 +193,17 @@ task1_runner:
 
     # ---------------------------------------------------------------- visit --
     # How the images are visited (mdp_algorithm planning/visit_plan.py).
-    #   square   one square-on stop per image (checkpoint_standoff out, IR fix +
-    #            scan) - the competition runs up to 2026-10-17
-    #   anchors  fewer stops: ANCHORS stop square on (IR fix + scan) as today; an
-    #            image the camera sees from a path between anchors is a DRIVE-BY -
-    #            read while driving, at drive_by_speed - and the last image gets an
-    #            angled stop (nothing is driven after it, no fix needed). A drive-by
-    #            not read is visited square at the end of the run. Planned with
+    #   anchors  (default) fewer stops: ANCHORS stop square on (IR fix + scan); an
+    #            image read from a path between them is a DRIVE-BY - read while
+    #            driving, at drive_by_speed; an image no square stop fits gets an
+    #            ANGLED stop (further back / turned, no IR fix); the last image an
+    #            angled stop. A drive-by not read is visited at the end of the run.
+    #   square   the old way: one square-on stop per image, an image no square stop
+    #            fits is skipped - the competition runs up to 2026-10-17 Planned with
     #            Reeds-Shepp estimates (~0.2-0.5 s), then the legs with Hybrid A*.
     #            Offline on the 2026-10-14 tablet layout: 8 stops -> 4 + 4 drive-bys.
     visit:
-      mode: square                    # square | anchors
+      mode: anchors                   # anchors | square
       view_max_dist: 0.50             # m, camera -> image: "in view" (anchors mode)
       view_max_bearing: 0.436         # rad = 25 deg off the camera's axis (view +-31)
       view_max_incidence: 0.785       # rad = 45 deg: the face seen at most this oblique
