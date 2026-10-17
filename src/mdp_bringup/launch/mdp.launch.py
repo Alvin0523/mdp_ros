@@ -158,6 +158,12 @@ def _controller_config(template: str, car: dict) -> str:
     return _temp_file('controller.yaml', yaml.safe_dump(config))
 
 
+def _navigation_value(navigation_yaml: str, node: str, name: str):
+    """One setting of one node from navigation.yaml."""
+    with open(navigation_yaml) as f:
+        return yaml.safe_load(f)[node]['ros__parameters'][name]
+
+
 def _true(value: str) -> bool:
     return value.strip().lower() in ('1', 'true', 'yes', 'on')
 
@@ -480,7 +486,10 @@ def generate_launch_description(argv=None):
             package='mdp_bringup', executable='task1_runner', output='screen',
             parameters=[navigation,
                         {f'robot.{k}': car[k] for k in ('wheelbase', 'steering_limit_left', 'steering_limit_right')},
-                        {'start_x': start_x, 'start_y': start_y, 'start_yaw': start_yaw, 'step': step}, sim_time]))
+                        {'start_x': start_x, 'start_y': start_y, 'start_yaw': start_yaw, 'step': step,
+                         # the camera's view, one number for both runners (task2_runner's setting)
+                         'camera_hfov': _navigation_value(navigation, 'task2_runner', 'camera_hfov')},
+                        sim_time]))
     elif task == '2':
         actions.append(Node(
             package='mdp_bringup', executable='task2_runner', output='screen',
