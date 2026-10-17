@@ -19,7 +19,7 @@ calibration, every measured number) and `../docs/rpi/`.
 | Package | What |
 | --- | --- |
 | `mdp_bringup` (Python) | `launch/mdp.launch.py` (everything, sim and real), `launch/vision.launch.py`, `config/` (all settings). Nodes: `tasks/` (the two runners, sharing `runner_base.py`), `robot/` (pose feedback, manual drive, health, bag recorder, bt monitor), `sim/sim_helpers.py` (sim-only stand-ins, one node). CLI tools in `tools/` (`calib/` = straight, rotate, turn, goto, ultrasonic; rows go to `calibration_log.csv`) |
-| `mdp_algorithm` (Python library, no nodes) | costmap (any area size), Hybrid A*, visit order, pure pursuit; `utils/params.py` loads settings |
+| `mdp_algorithm` (Python library, no nodes) | costmap (any area size), Hybrid A*, visit order (`visit.mode` square) / anchors + drive-bys (`visit_plan.py`, anchors), pure pursuit; `utils/params.py` loads settings |
 | `mdp_vision` (Python) | `rpi_cam_publisher`, `yolo_detector`, models in `models/` |
 | `mdp_bridge` (C++) | `serial_bridge_node` (STM32), `bluetooth_bridge_node` (tablet) |
 | `mdp_description` (CMake) | `urdf/mdp_robot.urdf.xacro` (one URDF, `sim:=true/false`), arenas, symbol meshes |

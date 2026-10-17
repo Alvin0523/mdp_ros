@@ -12,12 +12,22 @@ leg 2 is being planned while the car drives leg 1. The car drives each leg
 with the pure pursuit follower, stops at the checkpoint for scan_pause_s while
 YOLO looks, and sends TARGET,<obstacle>,<id> (the most frequent detection).
 
+visit.mode (navigation.yaml): square = a square-on stop per image (above);
+anchors = fewer stops (mdp_algorithm planning/visit_plan.py): square ANCHOR stops
+(IR fix + scan), DRIVE-BY images read from the passing camera (/yolo_detections,
+matched to the image by the box's direction) at visit.drive_by_speed, and an
+angled LAST stop. A leg bent through a VIA point is planned as two Hybrid A*
+legs joined into one. A drive-by not read on its leg is visited square at the
+end. Either mode: what YOLO reads in the last APPROACH_READ_M before a stop
+already counts toward its scan.
+
 Settings: config/navigation.yaml (robot.* / costmap.* / planner.* / follower.*,
 declared here and handed to the planner library).
 
 Topics:
   in   /obstacle_setup  "id:x,y,facing|..." (metres), from the tablet bridge
        /yolo_result     detected symbol id
+       /yolo_detections every box of a frame (drive-bys, reads on the approach)
        /odometry/filtered  EKF pose, converted to the `map` (arena) frame via TF
        /manual_drive    f/b/fl/fr/bl/br bursts from the tablet
        /set_pose        the EKF being reset (-> RESET confirmation)
@@ -43,10 +53,11 @@ import math
 import threading
 import uuid
 import traceback
-from collections import Counter
+from collections import Counter, deque
 from enum import Enum, auto
 
 import rclpy.time
+from rclpy.parameter import Parameter
 import tf2_ros
 from geometry_msgs.msg import PoseWithCovarianceStamped
 from mdp_interfaces.msg import RunStatus
@@ -60,9 +71,12 @@ from visualization_msgs.msg import MarkerArray
 from mdp_algorithm.control.path_follower import PathFollower, yaw_from_quaternion
 from mdp_algorithm.planning.costmap import Costmap, Obstacle
 from mdp_algorithm.planning.planner import plan_leg, plan_visiting_order
+from mdp_algorithm.planning.visit_plan import plan_visits
+from mdp_algorithm.planning.visiting_order import obstacle_to_checkpoint
 from mdp_algorithm.utils import params as planner_params
 from mdp_bringup.tasks.ir_pose_fix import (IR_APPROACH_M, IR_APPROACH_YAW, IR_CREEP_MAX_M, IR_FIX_DELAY_S,
                                            IR_FIX_MAX_S, IR_PAST_EDGE_M, IR_SEARCH_MAX_M, Face, IrPoseFix)
+from mdp_bringup.tasks import task2_vision
 from mdp_bringup.tasks.runner_base import RunnerBase
 from mdp_bringup.utils.run import run
 from mdp_bringup.utils import manual, markers, targets
@@ -86,6 +100,10 @@ REPLAN_FALLBACK_M = 0.15   # car inside the safety margin this close to the leg'
 # starting in reverse left its path and replanned from the old start (sim 2026-10-03).
 IR_REPLAN_POS_M = 0.02
 SLID_IR_MAX_M = 0.03    # a stop slid further than this along the face: no IR creep or fix there
+POSE_HISTORY_S = 2.0    # s of poses kept, to place a camera frame by its time stamp
+APPROACH_READ_M = 0.35  # what YOLO reads for a stop's image this near it counts toward the scan
+BOX_MATCH_RAD = math.radians(8.0)   # a box this near an image's expected direction is that image
+VIEW_SLACK = 1.2        # the view limits x this when matching boxes (the plan's are tighter)
 
 
 class State(Enum):
@@ -124,6 +142,8 @@ class Task1Runner(RunnerBase):
         # At each scan stop: fix the pose against the block with the two left
         # IRs, creeping and centring on it first if needed (ir_stop_step).
         self.declare_parameter('ir_pose_fix', True)
+        # The camera's horizontal view (rad): task2_runner's camera_hfov, passed by the launch.
+        self.declare_parameter('camera_hfov', Parameter.Type.DOUBLE)
         # step:=true - one obstacle per /step (module docstring).
         self.step = bool(self.declare_parameter('step', False).value)
         self.create_service(Trigger, '/step', self.step_callback)
@@ -139,6 +159,8 @@ class Task1Runner(RunnerBase):
         # (/cmd_vel, /run_status, the Foxglove drawings, /start_run ...: RunnerBase)
         self.create_subscription(String, '/obstacle_setup', self.setup_callback, 10)
         self.create_subscription(String, '/yolo_result', self.yolo_callback, 10)
+        self.create_subscription(String, '/yolo_detections', self.detections_callback, 10)
+        self.poses = deque()             # (time s, pose): where the car was when a frame was taken
         # Manual drive lives here, not in the bridge: this node already owns /cmd_vel.
         self.create_subscription(String, '/manual_drive', self.manual_drive_callback, 10)
         plan_qos = QoSProfile(depth=20, reliability=ReliabilityPolicy.RELIABLE)
@@ -180,6 +202,20 @@ class Task1Runner(RunnerBase):
         self._on_path = False          # car has reached its leg's path (left_path)
         self.unreachable = []
         self._slid = {}                # checkpoint index -> m slid along the face to fit (plan)
+        # visit.mode anchors (visit_plan.py); square mode: every visit 'square', no vias/drive-bys.
+        self.visit_kinds = []          # per visit: 'square' | 'anchor' | 'angled' | 'last'
+        self.visit_vias = []           # per visit: poses its leg passes through (no stop)
+        self.drive_bys = {}            # obstacle index -> visit index whose leg reads it
+        self._drive_reads = {}         # obstacle index -> Counter of the ids read while driving
+        self._drive_done = set()       # drive-by images already reported
+        self._approach_reads = []      # ids read for the current stop's image on its approach
+        self._planned_n = 0            # visits planned; more are added for missed drive-bys
+        self._camera = None            # the camera on base_link (x, y, yaw), from the URDF
+        # What Hybrid A* plans: every via and stop in order; a visit's leg is its parts joined.
+        self.plan_targets = []         # poses
+        self.target_visit = []         # per target: its visit index
+        self.target_paths = []         # per target: path, [] = no path, None = planning
+        self.target_starts = []        # per target: the pose it was planned from
         self.current_target_idx = 0
         self.costmap = None
         # Bumped whenever a plan is abandoned (new setup, stop): a planning thread
@@ -220,6 +256,15 @@ class Task1Runner(RunnerBase):
             return None
         return yaw_from_quaternion(tf.transform.rotation)
 
+    def camera_offset(self):
+        """The camera on base_link (x, y, yaw), from the URDF; None until its transform arrives."""
+        try:
+            tf = self.tf_buffer.lookup_transform('base_link', 'camera_link', rclpy.time.Time())
+        except tf2_ros.TransformException:
+            return None
+        t = tf.transform
+        return (t.translation.x, t.translation.y, yaw_from_quaternion(t.rotation))
+
     def ir_sensors(self):
         """Where the IRs are on the car (x, y, yaw on base_link), from the URDF;
         None while robot_state_publisher's transforms are missing."""
@@ -248,6 +293,10 @@ class Task1Runner(RunnerBase):
 
     def on_pose(self):
         """A pose reset turns DONE once the EKF reports the start pose."""
+        now = self.now()
+        self.poses.append((now, self.current_pose))
+        while self.poses and now - self.poses[0][0] > POSE_HISTORY_S:
+            self.poses.popleft()
         x, y, yaw = self.current_pose
         if self._reset_pending:
             sx, sy, syaw = self.start_pose()
@@ -502,6 +551,8 @@ class Task1Runner(RunnerBase):
             self.current_target_idx = 0
             self._step_hold = False
             self._manual_until = 0.0
+            self.forget_added_stops()
+            self._drive_reads, self._drive_done, self._approach_reads = {}, set(), []
             self.reset_done = False     # the car is leaving the start
             self.run_start, self.run_end = self.now(), None
             self._ir_fix_marks = []                  # a new run: last run's IR fixes off the 3D view
@@ -534,6 +585,13 @@ class Task1Runner(RunnerBase):
                             f"Ignored: {self.state.name}" + (" - reset to run again." if self.state in
                                                               (State.FINISHED, State.STOPPED) else "."))
         return response
+
+    def forget_added_stops(self):
+        """Stops added for missed drive-bys belong to that run only."""
+        n = self._planned_n
+        for lst in (self.visiting_order, self.checkpoints, self.visit_kinds, self.visit_vias,
+                    self.leg_paths, self.leg_starts):
+            del lst[n:]
 
     def stop_run_callback(self, request, response):
         """/stop_run (tablet STOP, `pixi run stop`): halt, hold zeros until reset."""
@@ -684,8 +742,23 @@ class Task1Runner(RunnerBase):
         self.costmap = Costmap([Obstacle(x, y, face, i) for i, (x, y, face) in enumerate(obstacles_cm)])
         self.publish_map()
         start = self.start_pose()
-        self.visiting_order, self.checkpoints, self.unreachable, self.costmap = plan_visiting_order(
-            obstacles_cm, start, theta_offset=camera_yaw)
+        self._camera = self.camera_offset()
+        anchors = str(self.get_parameter('visit.mode').value) == 'anchors'
+        if anchors and self._camera is None:
+            self.get_logger().warn("PLAN      no camera_link transform yet - planning square stops")
+        if anchors and self._camera is not None:
+            visits, self.unreachable, self.costmap = plan_visits(obstacles_cm, start, self._camera)
+            self.visiting_order = [v.obstacle for v in visits]
+            self.checkpoints = [v.pose for v in visits]
+            self.visit_kinds = [v.kind for v in visits]
+            self.visit_vias = [list(v.vias) for v in visits]
+            self.drive_bys = {o: k for k, v in enumerate(visits) for o in v.drive_bys}
+        else:
+            self.visiting_order, self.checkpoints, self.unreachable, self.costmap = plan_visiting_order(
+                obstacles_cm, start, theta_offset=camera_yaw)
+            self.visit_kinds = ['square'] * len(self.checkpoints)
+            self.visit_vias = [[] for _ in self.checkpoints]
+            self.drive_bys = {}
         # Stops the planner slid along the face for the car to fit (visiting_order):
         # index -> how far. Their IRs are not centred on the block; creeping would drive off.
         self._slid = {}
@@ -696,7 +769,7 @@ class Task1Runner(RunnerBase):
             # A slide up to SLID_IR_MAX_M leaves both IRs on the 10 cm face (the IR creep
             # centres them again): still an IR stop. With 6 cm block padding two ordinary
             # stops slid 1 cm and lost their IR fix (car, 2026-10-09).
-            if abs(along) > SLID_IR_MAX_M:
+            if abs(along) > SLID_IR_MAX_M or self.visit_kinds[i] in ('angled', 'last'):   # angled: no IR fix
                 self._slid[i] = abs(along)
         sensors = self.ir_sensors()
         self.ir_fix = IrPoseFix(sensors) if sensors else None
@@ -714,6 +787,8 @@ class Task1Runner(RunnerBase):
             self.get_logger().info(f"PLAN      stops moved {-mid * 100:+.1f} cm along: the IR pair's middle "
                                    f"level with each block")
         for i, d in self._slid.items():
+            if self.visit_kinds[i] in ('angled', 'last'):
+                continue
             self.get_logger().info(f"PLAN      #{self.tablet_id(self.visiting_order[i])} stop slid {d * 100:.0f} cm "
                                    f"along the face to fit - no IR fix there")
         self.publish_map()
@@ -722,8 +797,25 @@ class Task1Runner(RunnerBase):
             self.get_logger().warn(
                 f"PLAN      no scan checkpoint for {' '.join('#' + self.tablet_id(i) for i in self.unreachable)} - skipped")
         self.get_logger().info(f"PLAN      order {' -> '.join(self.tablet_id(i) for i in self.visiting_order)}")
+        if anchors:
+            names = {'anchor': 'anchor', 'angled': 'angled stop (no square spot fits)', 'last': 'last, angled'}
+            for k, i in enumerate(self.visiting_order):
+                reads = [f"#{self.tablet_id(o)}" for o, v in self.drive_bys.items() if v == k]
+                self.get_logger().info(f"PLAN      #{self.tablet_id(i)} {names[self.visit_kinds[k]]}"
+                                       + (f", drive-by {' '.join(reads)} on the way" if reads else '')
+                                       + (' (bent through a via point)' if self.visit_vias[k] else ''))
+        self._planned_n = len(self.visiting_order)
         self.leg_paths = [None] * len(self.visiting_order)
         self.leg_starts = [None] * len(self.visiting_order)   # pose each leg was planned from
+        self.plan_targets, self.target_visit = [], []
+        for k, cp in enumerate(self.checkpoints):
+            for via in self.visit_vias[k]:
+                self.plan_targets.append(via)
+                self.target_visit.append(k)
+            self.plan_targets.append(cp)
+            self.target_visit.append(k)
+        self.target_paths = [None] * len(self.plan_targets)
+        self.target_starts = [None] * len(self.plan_targets)
         self._replanned = set()
         self._heading_retried = set()
         self._off_path = {}
@@ -736,7 +828,7 @@ class Task1Runner(RunnerBase):
     def plan_locally(self, start):
         self._remote = None
         threading.Thread(target=self.plan_legs, daemon=True,
-                         args=(start, self._plan_gen, self.leg_paths, self.checkpoints, self.costmap)).start()
+                         args=(start, self._plan_gen, list(self.plan_targets), self.costmap)).start()
 
     def remote_leg(self, idx, start):
         """One leg planned on the laptop (leg_planner): the path, [] for no path,
@@ -765,7 +857,7 @@ class Task1Runner(RunnerBase):
         self._remote = {'gen': gen, 'start': start, 'acked': False, 'last': self.now()}
         self.plan_request_pub.publish(String(data=json.dumps({
             'gen': gen, 'obstacles_cm': [list(o) for o in obstacles_cm], 'start': list(start),
-            'checkpoints': [list(c) for c in self.checkpoints],
+            'checkpoints': [list(c) for c in self.plan_targets],
             'params': {name: self.get_parameter(name).value for name, _ in self.planner_settings}})))
 
     def plan_result_callback(self, msg: String):
@@ -789,12 +881,10 @@ class Task1Runner(RunnerBase):
                 self.get_logger().info("PLAN      legs planned on the laptop")
             return
         idx = data['idx']
-        self.leg_starts[idx] = tuple(data['start'])
-        self.leg_paths[idx] = [tuple(p) for p in data['path']]
-        if not data['path']:
-            self.get_logger().warn(f"PLAN      leg {idx + 1}/{len(self.checkpoints)}: NO PATH")
-        self.path_pub.publish(markers.route_path(self.leg_paths, self.stamp()))
-        if all(p is not None for p in self.leg_paths):
+        if idx >= len(self.target_paths):
+            return
+        self.store_target(idx, tuple(data['start']), [tuple(p) for p in data['path']])
+        if all(p is not None for p in self.target_paths):
             self._remote = None
             self.plan_state = 'DONE'
             self.get_logger().info(f"PLAN      done, {len(self.checkpoints)} legs - waiting for START")
@@ -814,28 +904,47 @@ class Task1Runner(RunnerBase):
             self.get_logger().warn("PLAN      no answer from the laptop planner - planning here")
             self.plan_locally(r['start'])
 
-    def plan_legs(self, start, gen, leg_paths, checkpoints, costmap):
-        """Background thread: every leg back to back. Writes only single items of
-        leg_paths (atomic under the GIL); control_loop polls them."""
+    def plan_legs(self, start, gen, targets, costmap):
+        """Background thread: every leg back to back (vias as legs of their own,
+        joined by store_target()). Writes only single list items (atomic under the
+        GIL); control_loop polls them."""
         try:
             pose = start
-            for idx, target in enumerate(checkpoints):
+            for idx, target in enumerate(targets):
                 if gen != self._plan_gen:
                     return    # abandoned (new setup / stop)
                 path = plan_leg(costmap, pose, target, progress_callback=self.publish_search_progress)
                 if gen != self._plan_gen:
                     return
-                self.leg_starts[idx] = pose
-                leg_paths[idx] = path
-                if not path:
-                    self.get_logger().warn(f"PLAN      leg {idx + 1}/{len(checkpoints)}: NO PATH")
-                self.path_pub.publish(markers.route_path(self.leg_paths, self.stamp()))
+                self.store_target(idx, pose, path)
                 pose = target
             if gen == self._plan_gen:
                 self.plan_state = 'DONE'
-                self.get_logger().info(f"PLAN      done, {len(checkpoints)} legs - waiting for START")
+                self.get_logger().info(f"PLAN      done, {len(self.checkpoints)} legs - waiting for START")
         except Exception:
             self.get_logger().error(f"PLAN      crashed:\n{traceback.format_exc()}")
+
+    def store_target(self, idx, start, path):
+        """A planned leg to plan_targets[idx]. Once every part of a visit's leg is in,
+        they are joined into leg_paths[visit] (a via is driven through, not stopped at).
+        A part with no path: the visit's leg is [] - start_leg() plans it again
+        straight from where the car is."""
+        self.target_starts[idx] = start
+        self.target_paths[idx] = path
+        if not path:
+            self.get_logger().warn(f"PLAN      leg {idx + 1}/{len(self.plan_targets)}: NO PATH")
+        v = self.target_visit[idx]
+        parts = [k for k, owner in enumerate(self.target_visit) if owner == v]
+        if all(self.target_paths[k] is not None for k in parts):
+            paths = [self.target_paths[k] for k in parts]
+            self.leg_starts[v] = self.target_starts[parts[0]]
+            self.leg_paths[v] = [q for p in paths for q in p] if all(paths) else []
+            for o in (o for o, k in self.drive_bys.items() if k == v):
+                seen = self.view_length(self.leg_paths[v], o)
+                log = self.get_logger().info if seen > 0.0 else self.get_logger().warn
+                log(f"PLAN      drive-by #{self.tablet_id(o)} in view for {seen * 100:.0f} cm of leg {v + 1}"
+                    + ('' if seen > 0.0 else ' - it gets a stop at the end if not read'))
+        self.path_pub.publish(markers.route_path(self.leg_paths, self.stamp()))
 
     def navigate(self):
         if self.current_target_idx >= len(self.leg_paths):
@@ -871,6 +980,8 @@ class Task1Runner(RunnerBase):
         f.lqr_weights = tuple(float(p(n)) for n in ('lqr_q_lateral', 'lqr_q_heading', 'lqr_q_steer', 'lqr_r'))
         f.steer_tau = float(p('steering_time_constant'))
         f.pose_latency = float(p('pose_latency'))
+        if self.drive_by_in_view():           # a steady view for YOLO (visit.drive_by_speed, live)
+            f.target_speed = min(f.target_speed, float(self.get_parameter('visit.drive_by_speed').value))
         ir_stop = self.ir_approach()
         if ir_stop:
             self.follower.set_path([])            # both IRs on the block: this is the stop
@@ -900,7 +1011,11 @@ class Task1Runner(RunnerBase):
                 threading.Thread(target=self.replan_leg, daemon=True,
                                  args=(idx, tuple(self.current_pose), self._plan_gen)).start()
                 return
-            self.detected_target_id, self.scan_detections = None, []
+            # What YOLO already read on the approach (APPROACH_READ_M) counts toward the scan.
+            self.scan_detections = list(self._approach_reads)
+            self.detected_target_id = (Counter(self.scan_detections).most_common(1)[0][0]
+                                       if self.scan_detections else None)
+            self._approach_reads = []
             self.set_state(State.PAUSE_FOR_SCAN)
             if self.ir_active(idx):
                 self.ir_fix.at_stop()
@@ -924,6 +1039,8 @@ class Task1Runner(RunnerBase):
         YOLO's scan - someone times the run by hand and stops when it stops (2026-10-09).
         If the last stop does an IR creep, the car still moves: the time stops at FINISHED."""
         idx = self.current_target_idx
+        if self.pending_drive_bys():
+            return                 # a drive-by not read yet: it may still need a stop at the end
         if idx == len(self.visiting_order) - 1 and not self.ir_active(idx) and self.run_end is None:
             self.end_run(done=True)
             self.get_logger().info(f"TIMER     stopped at {self.run_time():.1f} s - "
@@ -934,7 +1051,8 @@ class Task1Runner(RunnerBase):
         is driven after it, a better pose is no use) nor at one slid clear of the table's
         edge or a block (one IR at most reaches the block, on its very edge - a wrong fix)."""
         return (self.ir_fix is not None and bool(self.get_parameter('ir_pose_fix').value)
-                and idx not in self._slid and idx != len(self.visiting_order) - 1)
+                and idx not in self._slid and idx != len(self.visiting_order) - 1
+                and self.visit_kinds[idx] not in ('angled', 'last'))
 
     def leading_ir(self) -> str:
         """The IR that meets the block first driving into the stop: 'front' forward, 'rear' reversing."""
@@ -1024,6 +1142,7 @@ class Task1Runner(RunnerBase):
         if self.ir_fix is not None:
             bx, by, facing = self.obstacles[self.visiting_order[idx]]
             self.ir_fix.reset(Face(bx, by, *markers.FACING[facing]))
+        self._approach_reads = []
         gears = [p[3] for p in path]
         cuts = [i for i in range(1, len(gears)) if gears[i] != gears[i - 1]]
         moves = ' '.join('fwd' if gears[a] >= 0 else 'REV' for a in [0] + cuts)
@@ -1074,22 +1193,24 @@ class Task1Runner(RunnerBase):
             self.get_logger().error(f"REPLAN    crashed:\n{traceback.format_exc()}")
             self.leg_paths[idx] = []
 
-    def finish_scan(self):
-        """Report the most frequent detection, then go on to the next obstacle."""
-        target_id = self.detected_target_id or "UNKNOWN"
-        obs = self.tablet_id(self.visiting_order[self.current_target_idx])
+    def report_target(self, obstacle, reads, how):
+        """TARGET,<obstacle>,<id> to the tablet: the most frequent of `reads` (UNKNOWN if none)."""
+        found = bool(reads)
+        target_id = Counter(reads).most_common(1)[0][0] if found else "UNKNOWN"
+        obs = self.tablet_id(obstacle)
         self.send_bt(f"TARGET,{obs},{target_id}")
-        seen = ' '.join(f"{k}x{n}" for k, n in Counter(self.scan_detections).most_common()) or 'nothing'
-        self.get_logger().info(f"TARGET    #{obs} = {targets.label(target_id)}   (YOLO saw {seen}, "
-                               f"{self.now() - self.state_start:.1f} s)")
-        found = self.detected_target_id is not None
+        seen = ' '.join(f"{k}x{n}" for k, n in Counter(reads).most_common()) or 'nothing'
+        self.get_logger().info(f"TARGET    #{obs} = {targets.label(target_id)}   (YOLO saw {seen}, {how})")
         self._last_result = f'#{obs} = {targets.label(target_id) if found else "UNKNOWN"}'
-        self._results[self.visiting_order[self.current_target_idx]] = (targets.short(target_id) if found else '?',
-                                                                       found)
+        self._results[obstacle] = (targets.short(target_id) if found else '?', found)
         self.publish_map()
 
+    def finish_scan(self):
+        """Report the most frequent detection, then go on to the next obstacle."""
+        self.report_target(self.visiting_order[self.current_target_idx], self.scan_detections,
+                           f"{self.now() - self.state_start:.1f} s")
         self.current_target_idx += 1
-        if self.current_target_idx >= len(self.visiting_order):
+        if self.current_target_idx >= len(self.visiting_order) and not self.visit_missed_drive_bys():
             scan_s = self.now() - self.state_start
             self.set_state(State.FINISHED)
             self.end_run(done=True)        # FINISHED to the tablet here unless the timer stopped already
@@ -1102,6 +1223,141 @@ class Task1Runner(RunnerBase):
                 self.get_logger().info(f"STEP      SPACE for leg {self.current_target_idx + 1}/"
                                        f"{len(self.visiting_order)} -> #{self.current_label()}")
         self.publish_checkpoints()
+
+    # ----------------------------------------------------------- drive-bys ----
+
+    def pose_at(self, t: float):
+        """The car's pose at time t (the nearest kept), or the current one."""
+        if not self.poses or t < self.poses[0][0] - 0.1:
+            return self.current_pose
+        return min(self.poses, key=lambda tp: abs(tp[0] - t))[1]
+
+    def image_view(self, pose, obstacle, slack=1.0):
+        """(distance m, bearing rad, + left) of the obstacle's image from the camera at
+        `pose`, if it is in view (visit.view_* x slack) - else None."""
+        if self._camera is None:
+            return None
+        cx_, cy_, cyaw = self._camera
+        x, y, th = pose
+        cx, cy = x + cx_ * math.cos(th) - cy_ * math.sin(th), y + cx_ * math.sin(th) + cy_ * math.cos(th)
+        bx, by, facing = self.obstacles[obstacle]
+        nx, ny = markers.FACING[facing]
+        dx, dy = bx + 0.05 * nx - cx, by + 0.05 * ny - cy
+        d = math.hypot(dx, dy)
+        g = lambda name: float(self.get_parameter(f'visit.{name}').value)
+        if d < 0.1 or d > g('view_max_dist') * slack:
+            return None
+        bearing = math.atan2(math.sin(math.atan2(dy, dx) - th - cyaw), math.cos(math.atan2(dy, dx) - th - cyaw))
+        if abs(bearing) > g('view_max_bearing') * slack:
+            return None
+        if math.acos(max(-1.0, min(1.0, -(dx * nx + dy * ny) / d))) > g('view_max_incidence') * slack:
+            return None
+        return d, bearing
+
+    def view_length(self, path, obstacle) -> float:
+        """The longest stretch (m) of `path` with the obstacle's image in view."""
+        best = run = 0.0
+        last = None
+        for q in path:
+            if self.image_view(q[:3], obstacle):
+                if last is not None:
+                    run += math.hypot(q[0] - last[0], q[1] - last[1])
+                last = q
+                best = max(best, run)
+            else:
+                run, last = 0.0, None
+        return best
+
+    def pending_drive_bys(self):
+        return [o for o in self.drive_bys if o not in self._drive_done]
+
+    def drive_by_in_view(self) -> bool:
+        return self.state == State.NAVIGATING_TO_TARGET and any(
+            self.image_view(self.current_pose, o) for o in self.pending_drive_bys())
+
+    def detections_callback(self, msg: String):
+        """/yolo_detections: every box of a frame. Each box goes to the image the camera
+        expects in that direction (BOX_MATCH_RAD): a drive-by not read yet, or - in the
+        last APPROACH_READ_M before a stop - that stop's image."""
+        if self.state != State.NAVIGATING_TO_TARGET:
+            return
+        hfov = self.get_parameter('camera_hfov').value
+        try:
+            stamp, w, _, boxes = task2_vision.parse(msg.data)
+        except (ValueError, KeyError, TypeError):
+            return
+        if hfov is None or not boxes:
+            return
+        pose = self.pose_at(stamp)
+        idx = self.current_target_idx
+        expect = {o: self.image_view(pose, o, VIEW_SLACK) for o in self.pending_drive_bys()}
+        target = self.visiting_order[idx] if idx < len(self.visiting_order) else None
+        if target is not None:
+            cx, cy, _ = self.checkpoints[idx]
+            if math.hypot(pose[0] - cx, pose[1] - cy) < APPROACH_READ_M:
+                expect[target] = self.image_view(pose, target, VIEW_SLACK)
+        expect = {o: v for o, v in expect.items() if v}
+        if not expect:
+            return
+        for box in boxes:
+            if not box[0].isdigit():
+                continue                                   # not an image ID (e.g. a bullseye)
+            b = task2_vision.box_bearing(box, w, float(hfov))
+            o, v = min(expect.items(), key=lambda ov: abs(ov[1][1] - b))
+            if abs(v[1] - b) > BOX_MATCH_RAD:
+                continue
+            if o == target and o not in self.drive_bys:
+                self._approach_reads.append(box[0])
+                continue
+            reads = self._drive_reads.setdefault(o, Counter())
+            reads[box[0]] += 1
+            if reads.most_common(1)[0][1] >= int(self.get_parameter('scan_confirm_count').value):
+                self._drive_done.add(o)
+                self.report_target(o, list(reads.elements()), 'driving by')
+
+    def visit_missed_drive_bys(self) -> bool:
+        """End of the planned stops: a drive-by read but not confirmed is reported as
+        read; one never seen gets a square stop now (planned from here). True if stops
+        were added."""
+        missed = []
+        for o in self.pending_drive_bys():
+            self._drive_done.add(o)
+            if self._drive_reads.get(o):
+                self.report_target(o, list(self._drive_reads[o].elements()), 'driving by, not confirmed')
+            else:
+                missed.append(o)
+        added = []
+        for o in missed:
+            cp = obstacle_to_checkpoint(self.costmap, self.costmap.obstacles[o], self._camera[2])
+            if cp is None:
+                self.report_target(o, [], 'no stop for it')
+                continue
+            x, y, t = cp[0] / 100.0, cp[1] / 100.0, cp[2]
+            if self.ir_fix is not None:
+                mid = self.ir_mid_x()
+                x, y = x - mid * math.cos(t), y - mid * math.sin(t)
+            self.visiting_order.append(o)
+            self.checkpoints.append((x, y, t))
+            self.visit_kinds.append('anchor')
+            self.visit_vias.append([])
+            self.leg_paths.append(None)
+            self.leg_starts.append(None)
+            added.append(len(self.visiting_order) - 1)
+            self.get_logger().warn(f"DRIVE-BY  #{self.tablet_id(o)} not read - a stop for it now")
+        if not added:
+            return False
+        threading.Thread(target=self.plan_added, daemon=True, args=(added, tuple(self.current_pose), self._plan_gen)).start()
+        self.set_state(State.NAVIGATING_TO_TARGET)    # each leg loads once it is planned
+        self.publish_checkpoints()
+        return True
+
+    def plan_added(self, idxs, start, gen):
+        """Background thread: the legs to the stops added for missed drive-bys."""
+        for k in idxs:
+            if gen != self._plan_gen:
+                return
+            self.replan_leg(k, start, gen)
+            start = self.checkpoints[k]
 
     # -------------------------------------------------------------- output ----
 

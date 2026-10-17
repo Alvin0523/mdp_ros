@@ -12,7 +12,7 @@ fixed.
 """
 
 import math
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from typing import List, Tuple
 
 from ..utils.geometry import M, R, change_of_basis
@@ -37,11 +37,17 @@ class PathElement:
         return (f"{{ Steering: {self.steering.name}\tGear: {self.gear.name}"
                 f"\tdistance: {round(self.param, 2)} }}")
 
+    # Built directly, not with dataclasses.replace(): these run ~800 000 times for one
+    # visit plan (visit_plan.py) and replace() was 40 % of its time.
     def reverse_steering(self):
-        return replace(self, steering=Steering(-self.steering.value))
+        return PathElement(self.param, _FLIP_STEER[self.steering], self.gear)
 
     def reverse_gear(self):
-        return replace(self, gear=Gear(-self.gear.value))
+        return PathElement(self.param, self.steering, _FLIP_GEAR[self.gear])
+
+
+_FLIP_STEER = {s: Steering(-s.value) for s in Steering}
+_FLIP_GEAR = {g: Gear(-g.value) for g in Gear}
 
 
 def path_length(path: List[PathElement]) -> float:
@@ -319,3 +325,31 @@ def path12(x, y, phi):
         path.append(PathElement.create(math.pi / 2, Steering.LEFT, Gear.REVERSE))
         path.append(PathElement.create(v, Steering.RIGHT, Gear.FORWARD))
     return path
+
+
+def sample_path(start: Pose, end: Pose, radius: float, step: float = 2.5) -> List[Tuple[float, float, float, int]]:
+    """The shortest Reeds-Shepp path from start to end as poses (x, y, theta, gear)
+    every <= `step` (same units as start/end/radius) - the start excluded. The
+    same arc integration as hybrid_astar.HybridAStar._move, one radius both ways.
+    Ignores obstacles: for cheap estimates (visit_plan.py), not for driving."""
+    elements = get_optimal_path((start[0] / radius, start[1] / radius, start[2]),
+                                (end[0] / radius, end[1] / radius, end[2]))
+    x, y, th = start
+    out = []
+    for e in elements:
+        length = e.param * radius
+        if length < 1e-9:
+            continue
+        n = max(1, int(math.ceil(length / step)))
+        ds = length / n
+        for _ in range(n):
+            if e.steering == Steering.STRAIGHT:
+                x, y = x + e.gear * ds * math.cos(th), y + e.gear * ds * math.sin(th)
+            else:
+                xc, yc = x + e.steering * radius * math.sin(th), y - e.steering * radius * math.cos(th)
+                a = e.gear * (-e.steering * ds / radius)
+                xa, ya = x - xc, y - yc
+                ca, sa = math.cos(a), math.sin(a)
+                x, y, th = xc + xa * ca - ya * sa, yc + xa * sa + ya * ca, M(th + a)
+            out.append((x, y, th, int(e.gear)))
+    return out

@@ -45,7 +45,7 @@ from mdp_bringup.utils.run import run
 REQUEST, RESULT = '/plan_legs/request', '/plan_legs/result'
 
 
-class Task1Planner(Node):
+class LegPlanner(Node):
     def __init__(self):
         super().__init__('leg_planner')
         if not self.has_parameter('use_sim_time'):
@@ -164,7 +164,7 @@ class Task1Planner(Node):
 
 
 def main(args=None):
-    run(Task1Planner, args=args)
+    run(LegPlanner, args=args)
 
 
 if __name__ == '__main__':

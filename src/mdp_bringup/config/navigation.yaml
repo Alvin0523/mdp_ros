@@ -191,6 +191,27 @@ task1_runner:
       # (sim 2026-10-04); 0.05 within ~1 cm. TODO: does the real car move this slow?
       creep_linear_vel: 0.05            # m/s
 
+    # ---------------------------------------------------------------- visit --
+    # How the images are visited (mdp_algorithm planning/visit_plan.py).
+    #   anchors  (default) fewer stops: ANCHORS stop square on (IR fix + scan); an
+    #            image read from a path between them is a DRIVE-BY - read while
+    #            driving, at drive_by_speed; an image no square stop fits gets an
+    #            ANGLED stop (further back / turned, no IR fix); the last image an
+    #            angled stop. A drive-by not read is visited at the end of the run.
+    #   square   the old way: one square-on stop per image, an image no square stop
+    #            fits is skipped - the competition runs up to 2026-10-17 Planned with
+    #            Reeds-Shepp estimates (~0.2-0.5 s), then the legs with Hybrid A*.
+    #            Offline on the 2026-10-14 tablet layout: 8 stops -> 4 + 4 drive-bys.
+    visit:
+      mode: anchors                   # anchors | square
+      view_max_dist: 0.50             # m, camera -> image: "in view" (anchors mode)
+      view_max_bearing: 0.436         # rad = 25 deg off the camera's axis (view +-31)
+      view_max_incidence: 0.785       # rad = 45 deg: the face seen at most this oblique
+      drive_by_min_view: 0.15         # m of path with the image in view, at least
+      drive_by_speed: 0.2             # m/s while a drive-by image is in view (live)
+      max_drive_bys_per_leg: 2        # between two stops - the position fixes stay close
+      last_stop_max_angle: 0.611      # rad = 35 deg off square for the last stop
+
 task2_runner:
   ros__parameters:
     # Speeds (live). The turning circles were measured at 0.2 m/s: faster turns

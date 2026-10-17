@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Task 1 car, costmap, planner and path-follower settings - one object, SI
+Task 1 car, costmap, planner, path-follower and visit settings - one object, SI
 units (metres, radians, seconds), Nav2 parameter names where Nav2 has one.
 
 Each number lives in ONE file: the car's wheelbase and steering limits in the
@@ -42,6 +42,8 @@ SECTIONS = {
                  'path_tracking', 'feedback_k_e', 'feedback_k_theta', 'feedforward_preview_time',
                  'lqr_q_lateral', 'lqr_q_heading', 'lqr_q_steer', 'lqr_r', 'steering_time_constant',
                  'pose_latency'),
+    'visit': ('mode', 'view_max_dist', 'view_max_bearing', 'view_max_incidence', 'drive_by_min_view',
+              'drive_by_speed', 'max_drive_bys_per_leg', 'last_stop_max_angle'),
 }
 
 
@@ -103,6 +105,15 @@ class PlannerParams:
     lqr_r: float
     steering_time_constant: float
     pose_latency: float
+    # --- visit (planning/visit_plan.py) --------------------------------------
+    mode: str
+    view_max_dist: float
+    view_max_bearing: float
+    view_max_incidence: float
+    drive_by_min_view: float
+    drive_by_speed: float
+    max_drive_bys_per_leg: int
+    last_stop_max_angle: float
 
     # --- derived, centimetres (the planner's internal unit) -----------------
     @property
