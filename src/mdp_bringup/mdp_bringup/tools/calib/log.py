@@ -13,6 +13,8 @@ import os
 import sys
 import time
 
+from mdp_algorithm.control.path_follower import yaw_from_quaternion
+
 COLUMNS = ['time', 'where', 'test', 'setting', 'speed_mps', 'car', 'true', 'error', 'unit', 'notes']
 PATH = os.path.join(os.environ.get('PIXI_PROJECT_ROOT', os.getcwd()), 'calibration_log.csv')
 
@@ -74,6 +76,4 @@ class Truth:
     def _on(self, msg):
         if msg.transforms:
             t = msg.transforms[0].transform
-            q = t.rotation
-            yaw = math.atan2(2.0 * (q.w * q.z + q.x * q.y), 1.0 - 2.0 * (q.y * q.y + q.z * q.z))
-            self.pose = (t.translation.x, t.translation.y, yaw)
+            self.pose = (t.translation.x, t.translation.y, yaw_from_quaternion(t.rotation))

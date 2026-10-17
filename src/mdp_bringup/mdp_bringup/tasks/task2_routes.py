@@ -102,7 +102,7 @@ def course_costmap(arena: Task2Arena, x1: float, x2: Optional[float], bar_width:
 
 
 def arena_to_dict(arena: Task2Arena) -> dict:
-    """The course rules for a JSON request (task2_runner -> the laptop's task1_planner)."""
+    """The course rules for a JSON request (task2_runner -> the laptop's leg_planner)."""
     return dataclasses.asdict(arena)
 
 

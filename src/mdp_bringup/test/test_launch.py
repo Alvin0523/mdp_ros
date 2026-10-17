@@ -55,7 +55,7 @@ def test_split_roles(task):
     laptop = _executables(['sim:=false', 'role:=laptop'])
     hardware = {'serial_bridge_node', 'bluetooth_bridge_node', 'ros2_control_node'}
     assert hardware <= pi and not MONITORS & pi
-    assert MONITORS | {'task1_planner', 'bag_recorder'} <= laptop
+    assert MONITORS | {'leg_planner', 'bag_recorder'} <= laptop
     assert not hardware & laptop
     runner = {'0': 'manual_drive', '1': 'task1_runner', '2': 'task2_runner'}[task]
     assert runner in pi
@@ -73,8 +73,8 @@ def test_sim_split():
     """Sim, split like the car: Gazebo's half has the runner, the laptop's the planner and monitors."""
     car = _executables(['sim:=true', 'task:=2'])
     laptop = _executables(['sim:=true', 'role:=laptop'])
-    assert 'task2_runner' in car and not MONITORS & car and 'task1_planner' not in car
-    assert MONITORS | {'task1_planner'} <= laptop
+    assert 'task2_runner' in car and not MONITORS & car and 'leg_planner' not in car
+    assert MONITORS | {'leg_planner'} <= laptop
 
 
 def test_config_files_named_in_the_launch_exist():

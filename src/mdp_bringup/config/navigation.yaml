@@ -261,7 +261,7 @@ task2_runner:
                                # path_speed): steady while the ultrasonic and the camera read obstacle 2 -
                                # at 0.9 it arrived still turning and wiggled +-15 deg (bags 2026-10-15)
     # Hybrid A* for a leg no clean shape and no route table covers: on the laptop
-    # (task1_planner), here if it does not answer within this.
+    # (leg_planner), here if it does not answer within this.
     remote_plan_timeout: 2.0   # s
 
 # The tablet's arrow buttons (f b fl fr bl br): a short burst, then stop.

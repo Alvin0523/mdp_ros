@@ -16,7 +16,7 @@ def test_coreml_twin_only_on_mac(tmp_path, monkeypatch):
 
 
 def test_no_twin_keeps_pt(tmp_path, monkeypatch):
-    pt = tmp_path / 'best_v4.pt'
+    pt = tmp_path / 'best_v5.pt'
     pt.write_bytes(b'')
     monkeypatch.setattr(yd.sys, 'platform', 'darwin')
     assert yd.coreml_twin(str(pt)) == str(pt)               # not exported: MPS on the .pt

@@ -31,6 +31,7 @@ from nav_msgs.msg import Odometry
 from sensor_msgs.msg import Imu
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy
+from mdp_algorithm.control.path_follower import yaw_from_quaternion
 from mdp_algorithm.utils import params as planner_params
 from mdp_bringup.tools.calib import log
 
@@ -51,11 +52,6 @@ STILL_S = 3.0           # standing still first, for the gyro drift
 # full timeout.
 SIGN_INVERSION_DEG = 10.0
 SIGN_INVERSION_TICKS = int(0.5 * PUBLISH_HZ)
-
-
-def yaw_from_quaternion(q) -> float:
-    """2D yaw in radians from a geometry_msgs/Quaternion."""
-    return math.atan2(2.0 * (q.w * q.z + q.x * q.y), 1.0 - 2.0 * (q.y * q.y + q.z * q.z))
 
 
 class RotateAngle(Node):

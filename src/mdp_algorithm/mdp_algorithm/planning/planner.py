@@ -35,7 +35,7 @@ DensePose = Tuple[float, float, float, int]
 def build_costmap(obstacles_grid: List[ObstacleSpec]) -> Costmap:
     """The costmap for (x_cm, y_cm, facing) obstacles, each snapped to its
     cell's centre - the one plan_visiting_order() plans with. Also built by the
-    laptop planner (task1_planner) so its legs match the car's costmap."""
+    laptop planner (leg_planner) so its legs match the car's costmap."""
     return Costmap([Obstacle(x_cm=snap_to_cell_centre(x_cm), y_cm=snap_to_cell_centre(y_cm),
                              facing=facing, id=i)
                     for i, (x_cm, y_cm, facing) in enumerate(obstacles_grid)])

@@ -504,7 +504,7 @@
         "task1_runner": {
           "visible": true
         },
-        "task1_planner": {
+        "leg_planner": {
           "visible": true
         }
       },

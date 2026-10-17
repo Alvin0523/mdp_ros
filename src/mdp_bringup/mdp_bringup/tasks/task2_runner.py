@@ -56,7 +56,7 @@ in Foxglove like task 1.
 /task2_setup - both obstacles and arrows KNOWN, so no ultrasonic measuring and
 no YOLO: checkpoint 1 is planned before START and checkpoints 2-4 at checkpoint 1
 from the known bar. Kept across resets, like task 1's set. Served by the
-laptop's task1_planner.
+laptop's leg_planner.
 """
 
 import dataclasses
@@ -199,7 +199,7 @@ class Task2Runner(RunnerBase):
         # these settings; else planned live like the other legs.
         self.routes = self.load_routes()
 
-        # Hybrid A* on the laptop (task1_planner); here only if it does not answer.
+        # Hybrid A* on the laptop (leg_planner); here only if it does not answer.
         plan_qos = rclpy.qos.QoSProfile(depth=20, reliability=rclpy.qos.ReliabilityPolicy.RELIABLE)
         self.plan_request_pub = self.create_publisher(String, '/plan_legs/request', plan_qos)
         self.create_subscription(String, '/plan_legs/result', self.plan_result_callback, plan_qos)
@@ -439,7 +439,7 @@ class Task2Runner(RunnerBase):
     # --------------------------------------------------- laptop planning ----
 
     def remote_leg(self, start, target, costmap_spec):
-        """One leg planned on the laptop (task1_planner): the path, [] for no path, or
+        """One leg planned on the laptop (leg_planner): the path, [] for no path, or
         None when it does not answer - then the caller plans it here."""
         self._remote_n += 1
         gen = f'task2:{self._plan_gen}:{self._remote_n}'
@@ -473,7 +473,7 @@ class Task2Runner(RunnerBase):
             wait['done'].set()
 
     def costmap_spec(self, x1, x2):
-        """What the laptop needs to build the same costmap (task1_planner)."""
+        """What the laptop needs to build the same costmap (leg_planner)."""
         return {'x1': x1, 'x2': x2, 'bar_width': self.bar_w(), 'padding': float(self.p('obstacle_padding')),
                 'wall_padding': float(self.p('wall_padding')),
                 'obstacle_1_padding': float(self.p('obstacle_1_padding')),
