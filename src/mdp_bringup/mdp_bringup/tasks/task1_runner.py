@@ -939,6 +939,11 @@ class Task1Runner(RunnerBase):
             paths = [self.target_paths[k] for k in parts]
             self.leg_starts[v] = self.target_starts[parts[0]]
             self.leg_paths[v] = [q for p in paths for q in p] if all(paths) else []
+            for o in (o for o, k in self.drive_bys.items() if k == v):
+                seen = self.view_length(self.leg_paths[v], o)
+                log = self.get_logger().info if seen > 0.0 else self.get_logger().warn
+                log(f"PLAN      drive-by #{self.tablet_id(o)} in view for {seen * 100:.0f} cm of leg {v + 1}"
+                    + ('' if seen > 0.0 else ' - it gets a stop at the end if not read'))
         self.path_pub.publish(markers.route_path(self.leg_paths, self.stamp()))
 
     def navigate(self):
@@ -1248,6 +1253,20 @@ class Task1Runner(RunnerBase):
         if math.acos(max(-1.0, min(1.0, -(dx * nx + dy * ny) / d))) > g('view_max_incidence') * slack:
             return None
         return d, bearing
+
+    def view_length(self, path, obstacle) -> float:
+        """The longest stretch (m) of `path` with the obstacle's image in view."""
+        best = run = 0.0
+        last = None
+        for q in path:
+            if self.image_view(q[:3], obstacle):
+                if last is not None:
+                    run += math.hypot(q[0] - last[0], q[1] - last[1])
+                last = q
+                best = max(best, run)
+            else:
+                run, last = 0.0, None
+        return best
 
     def pending_drive_bys(self):
         return [o for o in self.drive_bys if o not in self._drive_done]

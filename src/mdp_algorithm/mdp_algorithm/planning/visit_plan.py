@@ -4,10 +4,10 @@ Task 1 "anchors" visit plan (navigation.yaml visit.mode: anchors): fewer stops.
 
   ANCHOR     a square-on stop, as in square mode (visiting_order.py's checkpoint):
              the IR pair fixes the position there, the camera reads the image.
-  DRIVE-BY   an image the camera sees, up close, from the path between two stops
-             (visit.view_*): read while driving through, at visit.drive_by_speed,
-             no stop. If the plain path does not see it, the leg is bent through a
-             VIA point that does (passed through in one gear, never stopped at).
+  DRIVE-BY   an image read while driving between two stops, at visit.drive_by_speed,
+             no stop: the leg passes through a VIA point where the camera looks
+             straight at it (visit.view_*), in one gear, never stopped at. One via
+             per drive-by, so Hybrid A*'s real path sees it too.
   LAST       the last image: an angled stop (up to visit.last_stop_max_angle off
              square) - nothing is driven after it, a position fix is no use there.
 
@@ -19,9 +19,9 @@ How (2026-10-17, worked out offline on the 2026-10-14 tablet layout with the use
      stay close together);
   3. the last stop angled.
 Everything here uses Reeds-Shepp curves (no obstacles, one radius) to estimate
-the legs and to check what the camera sees along them - milliseconds. The
-runner then plans the real legs with Hybrid A* through the vias; a drive-by its
-real leg does not see is caught at run time (not read -> visited at the end).
+the legs and what the camera sees along them - fast. The runner then plans the
+real legs with Hybrid A* through the vias; a drive-by still not read is visited
+at the end of the run.
 
 Time model for choosing (an estimate, not the car's real times): the follower's
 speed, GEAR_S per direction change, STOP_S per stop, IR_S more at an anchor.
@@ -201,8 +201,8 @@ class _Planner:
 
     def evaluate(self, anchors):
         """(estimated time, legs) for these anchors, every other reachable image a
-        drive-by - or None if one cannot be seen. legs: per stop
-        {'obstacle', 'pose', 'vias', 'drive_bys', 'pts'} (cm)."""
+        drive-by - or None if one cannot be seen. legs: per stop {'obstacle', 'pose',
+        'from', 'vias', 'drive_bys' (the image of each via, same order), 't'} (cm)."""
         order = self.tour(anchors)
         legs, prev = [], self.start
         for i in order:
@@ -211,54 +211,67 @@ class _Planner:
                          'from': prev, 't': self.rs(prev, pose)[0]})
             prev = pose
         for i in sorted(set(self.anchor) - set(anchors)):
-            seen = [leg for leg in legs if len(leg['drive_bys']) < self.max_per_leg
-                    and self.run_on(leg, i) >= self.min_view]
-            if seen:
-                seen[0]['drive_bys'].append(i)
-                continue
-            best = None                                  # bend a leg through a via point
-            cands = []
-            for leg in legs:
-                if leg['vias'] or len(leg['drive_bys']) >= self.max_per_leg:
-                    continue                             # one via per leg keeps it simple
-                fa, to = leg['from'], leg['pose']
-                fx, fy, _ = self.face(i)
-                if min(math.hypot(fa[0] - fx, fa[1] - fy), math.hypot(to[0] - fx, to[1] - fy)) > VIA_NEAR_CM:
-                    continue
-                for via, _ in self.via_options(i):
-                    # a lower bound on the extra time: a curve is never shorter than the straight line
-                    lb = (math.hypot(via[0] - fa[0], via[1] - fa[1]) + math.hypot(to[0] - via[0], to[1] - via[1])
-                          ) / CM_PER_M / self.speed - leg['t']
-                    cands.append((lb, id(leg), leg, via))
-            cands.sort(key=lambda c: c[0])
-            for lb, _, leg, via in cands:
-                if best is not None and lb >= best[0]:
-                    break                                # nothing further can beat it
-                t1, p1 = self.rs(leg['from'], via)
-                t2, p2 = self.rs(via, leg['pose'])
-                if not p1 or not p2 or p1[-1][3] != p2[0][3]:
-                    continue                             # turns round at the via: not "on the way"
-                extra = t1 + t2 - leg['t']
-                if best is not None and extra >= best[0]:
-                    continue
-                if max(self.leg_view(leg['from'], via, i), self.leg_view(via, leg['pose'], i)) < self.min_view:
-                    continue
-                if any(max(self.leg_view(leg['from'], via, j), self.leg_view(via, leg['pose'], j)) < self.min_view
-                       for j in leg['drive_bys']):
-                    continue
-                best = (extra, leg, via, t1 + t2)
+            best = self.best_via(legs, i)
             if best is None:
                 return None
-            _, leg, via, t = best
-            leg.update(vias=[via], t=t)
-            leg['drive_bys'].append(i)
+            _, leg, pos, via, t = best
+            leg['vias'].insert(pos, via)
+            leg['drive_bys'].insert(pos, i)
+            leg['t'] = t
         total = sum(leg['t'] + STOP_S + IR_S for leg in legs)
         return total, legs
 
-    def run_on(self, leg, i) -> float:
-        """Longest in-view stretch of image i on a leg (through its via, if any)."""
-        pts = [leg['from']] + leg['vias'] + [leg['pose']]
-        return max(self.leg_view(a, b, i) for a, b in zip(pts, pts[1:]))
+    def chain(self, points):
+        """Estimated time through `points`, or None if it turns round at one of them
+        (a via is driven through in one gear)."""
+        t, last_gear = 0.0, None
+        for k, (a, b) in enumerate(zip(points, points[1:])):
+            tk, pts = self.rs(a, b)
+            if not pts:
+                return None
+            if k > 0 and pts[0][3] != last_gear:
+                return None
+            t, last_gear = t + tk, pts[-1][3]
+        return t
+
+    def via_seen(self, points, k, i) -> bool:
+        """Image i in view for drive_by_min_view around via points[k]."""
+        return max(self.leg_view(points[k - 1], points[k], i), self.leg_view(points[k], points[k + 1], i)) >= self.min_view
+
+    def best_via(self, legs, i):
+        """The cheapest way to read image i driving by: a VIA point (the camera looking
+        straight at it, via_options()) put into one leg - (extra s, leg, position,
+        via, new leg time), or None. Every drive-by gets its own via: Hybrid A* must pass
+        through it, so the real path sees the image too (a plain leg that only the
+        Reeds-Shepp estimate saw it from did not - sim 2026-10-17)."""
+        fx, fy, _ = self.face(i)
+        cands = []
+        for leg in legs:
+            if len(leg['vias']) >= self.max_per_leg:
+                continue
+            pts = [leg['from']] + leg['vias'] + [leg['pose']]
+            if min(math.hypot(p[0] - fx, p[1] - fy) for p in pts) > VIA_NEAR_CM:
+                continue
+            for via, _ in self.via_options(i):
+                for pos in range(len(leg['vias']) + 1):
+                    a, b = pts[pos], pts[pos + 1]
+                    # a lower bound on the extra time: a curve is never shorter than the straight line
+                    lb = (math.hypot(via[0] - a[0], via[1] - a[1]) + math.hypot(b[0] - via[0], b[1] - via[1])
+                          ) / CM_PER_M / self.speed - self.rs(a, b)[0]
+                    cands.append((lb, id(leg), leg, pos, via))
+        cands.sort(key=lambda c: c[0])
+        best = None
+        for lb, _, leg, pos, via in cands:
+            if best is not None and lb >= best[0]:
+                break                                    # nothing further can beat it
+            pts = [leg['from']] + leg['vias'][:pos] + [via] + leg['vias'][pos:] + [leg['pose']]
+            t = self.chain(pts)
+            if t is None or (best is not None and t - leg['t'] >= best[0]):
+                continue
+            imgs = leg['drive_bys'][:pos] + [i] + leg['drive_bys'][pos:]
+            if all(self.via_seen(pts, k + 1, j) for k, j in enumerate(imgs)):
+                best = (t - leg['t'], leg, pos, via, t)
+        return best
 
     def last_stop(self, legs):
         """Make the last stop angled when that is quicker and keeps its leg's drive-bys."""
@@ -271,8 +284,10 @@ class _Planner:
             t, pts = self.rs(frm, pose)
             if t >= best[0]:
                 continue
-            if all(max(self.leg_view(leg['from'], leg['vias'][-1], j) if leg['vias'] else 0.0,
-                       self.leg_view(frm, pose, j)) >= self.min_view for j in leg['drive_bys']):
+            points = [leg['from']] + leg['vias'] + [pose]
+            if leg['vias'] and self.chain(points[-3:]) is None:
+                continue                                 # would turn round at the last via
+            if all(self.via_seen(points, k + 1, j) for k, j in enumerate(leg['drive_bys'])):
                 best = (t, pose)
         leg['pose'] = best[1]
 
