@@ -41,9 +41,9 @@ except ImportError:
 MODELS_DIR = os.path.join(get_package_share_directory('mdp_vision'), 'models')
 
 # YOLO runs on the laptop (`pixi run laptop`), PyTorch weights from models/:
-#   best_v5.pt  - YOLO26m trained at 640, the current model (default)
-#   best_v4.pt  - YOLO26m trained at 512 (stretched), the previous one
-#   best.pt     - older
+#   best_v5.pt        - YOLO26m trained at 640, task 1 (default)
+#   task2_yolo26s.pt  - Arrow Left / Right + Bullseye, task 2 (task:=2)
+# (best.pt / best_v4.pt, the older ones, were removed 2026-10-17 - git history has them)
 # Switch with the `model_path` parameter (the `model:=` launch arg of
 # mdp.launch.py / vision.launch.py): a file name under models/ or a full path.
 # Where it runs (pick_device): an NVIDIA GPU (CUDA) when there is one; on a Mac

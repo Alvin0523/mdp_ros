@@ -29,7 +29,7 @@ Topics:
        Foxglove drawings - see mdp_bringup/utils/markers.py
   services  /start_run  /stop_run   (reset: /reset_pose, robot_pose_feedback)
             /step       step:=true only (`pixi run step`, SPACE)
-            (/setup_obstacles - `pixi run setup`: the laptop's task1_planner)
+            (/setup_obstacles - `pixi run setup`: the laptop's leg_planner)
 
 step:=true (launch argument, testing): one obstacle per /step. The first starts the
 run (like START); the car drives one leg and does everything it does on a real run
@@ -117,7 +117,7 @@ class Task1Runner(RunnerBase):
         self.declare_parameter('scan_pause_s', 3.0)
         self.declare_parameter('scan_settle_s', 0.5)
         self.declare_parameter('scan_confirm_count', 3)
-        # The paths between checkpoints are planned by task1_planner on the laptop
+        # The paths between checkpoints are planned by leg_planner on the laptop
         # (`pixi run laptop`); no answer within remote_plan_timeout s (or no new leg
         # for max_planning_time + that) and the car plans them itself.
         self.declare_parameter('remote_plan_timeout', 2.0)
@@ -739,7 +739,7 @@ class Task1Runner(RunnerBase):
                          args=(start, self._plan_gen, self.leg_paths, self.checkpoints, self.costmap)).start()
 
     def remote_leg(self, idx, start):
-        """One leg planned on the laptop (task1_planner): the path, [] for no path,
+        """One leg planned on the laptop (leg_planner): the path, [] for no path,
         or None when it does not answer - then the caller plans it here."""
         self._replan_n += 1
         gen = f'{self._session}:{self._plan_gen}:leg{idx}:{self._replan_n}'
@@ -760,7 +760,7 @@ class Task1Runner(RunnerBase):
             self._leg_waits.pop(gen, None)
 
     def request_remote_plan(self, obstacles_cm, start):
-        """Ask task1_planner (laptop) for every leg; answers in plan_result_callback."""
+        """Ask leg_planner (laptop) for every leg; answers in plan_result_callback."""
         gen = f'{self._session}:{self._plan_gen}'
         self._remote = {'gen': gen, 'start': start, 'acked': False, 'last': self.now()}
         self.plan_request_pub.publish(String(data=json.dumps({

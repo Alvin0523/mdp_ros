@@ -1,4 +1,4 @@
-"""Task 1 leg planner on the laptop (`pixi run laptop`): plans the Hybrid A*
+"""The leg planner on the laptop (`pixi run laptop`), for both task runners: plans the Hybrid A*
 paths between the car's checkpoints, the slow part of planning, and sends each
 one back as soon as it is found.
 
@@ -47,7 +47,7 @@ REQUEST, RESULT = '/plan_legs/request', '/plan_legs/result'
 
 class Task1Planner(Node):
     def __init__(self):
-        super().__init__('task1_planner')
+        super().__init__('leg_planner')
         if not self.has_parameter('use_sim_time'):
             self.declare_parameter('use_sim_time', False)
         qos = QoSProfile(depth=20, reliability=ReliabilityPolicy.RELIABLE)

@@ -2,7 +2,7 @@
 (vision:=true). Settings: config/vision.yaml.
 
     ros2 launch mdp_bringup vision.launch.py                       Pi camera + YOLO
-    ros2 launch mdp_bringup vision.launch.py model:=best.pt
+    ros2 launch mdp_bringup vision.launch.py model:=best_v5.pt
     ros2 launch mdp_bringup vision.launch.py camera:=false camera_topic:=/camera/image_raw
                                                                   YOLO on another camera (sim)
 """

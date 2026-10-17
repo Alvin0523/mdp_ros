@@ -3,7 +3,7 @@
 <package format="3">
   <name>mdp_algorithm</name>
   <version>0.1.0</version>
-  <description>Path planning building blocks for the Mini Ackermann Robot (Reeds-Shepp/Dubins curve + TSP solver, pure-pursuit follower, spline planner)</description>
+  <description>Path planning building blocks for the Mini Ackermann Robot (costmap, Hybrid A*, Reeds-Shepp, visit order, path follower)</description>
 
   <maintainer email="user@todo.todo">MDP Team</maintainer>
   <license>Apache-2.0</license>

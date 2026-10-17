@@ -128,7 +128,7 @@ def _launch_arg(name, default, argv=None):
 
 # Nodes whose normal (INFO) output is the story of the run; with log:=quiet
 # every other node shows only its warnings and errors in the terminal.
-_STORY_NODES = {'task1_runner', 'task2_runner', 'task1_planner', 'bluetooth_bridge_node',
+_STORY_NODES = {'task1_runner', 'task2_runner', 'leg_planner', 'bluetooth_bridge_node',
                 'serial_bridge_node', 'manual_drive', 'sim_helpers', 'bag_recorder'}
 
 
@@ -277,7 +277,7 @@ def generate_launch_description(argv=None):
         # The legs' Hybrid A* for both runners on the car - they plan them
         # themselves only if this does not answer.
         # It also serves /setup_obstacles (pixi run setup) from THIS machine's layout file.
-        actions.append(Node(package='mdp_bringup', executable='task1_planner', output='screen',
+        actions.append(Node(package='mdp_bringup', executable='leg_planner', output='screen',
                             parameters=[{'layout': layout}, sim_time]))
         actions += monitors('/camera/image_raw' if sim else '/image_raw')
         # Foxglove's REC records here: bags land on the laptop, not the Pi's SD card.

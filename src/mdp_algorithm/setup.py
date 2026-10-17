@@ -22,8 +22,7 @@ setup(
     },
     # mdp_algorithm is a pure planning library - its modules are imported by
     # the task runners in mdp_bringup (e.g. planning.planner,
-    # path_follower's PathFollower class, spline_planner's
-    # SplinePathPlanner class), not launched as standalone nodes. No
+    # path_follower's PathFollower class), not launched as standalone nodes. No
     # console_scripts: the previous entries pointed at demo/no-op main()s
     # that nothing ran (and reeds_shepp_planner, now removed, was dead).
     entry_points={

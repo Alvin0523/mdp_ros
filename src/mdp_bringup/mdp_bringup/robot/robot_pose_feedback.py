@@ -23,18 +23,18 @@ from nav_msgs.msg import Odometry
 from rclpy.node import Node
 from std_msgs.msg import Float64, String
 from std_srvs.srv import Trigger
+from mdp_algorithm.control.path_follower import yaw_from_quaternion
+from mdp_bringup.utils import markers
 from mdp_bringup.utils.run import run, wall_timer
 
-CELL_CM = 10.0
 MAX_CELL = 19
 
 
 def robot_cell_line(x_m: float, y_m: float, yaw_rad: float) -> str:
     def cell(v_m: float) -> int:
-        return max(0, min(MAX_CELL, int(math.floor(v_m * 100.0 / CELL_CM))))
+        return max(0, min(MAX_CELL, markers.cell(v_m)))
 
-    quarter = int(round(math.atan2(math.sin(yaw_rad), math.cos(yaw_rad)) / (math.pi / 2.0))) % 4
-    return f'ROBOT,{cell(x_m)},{cell(y_m)},{"ENWS"[quarter]}'
+    return f'ROBOT,{cell(x_m)},{cell(y_m)},{markers.direction(yaw_rad)}'
 
 
 class RobotPoseFeedback(Node):
@@ -76,9 +76,7 @@ class RobotPoseFeedback(Node):
                                    throttle_duration_sec=5.0)
             return
         pose = tf2_geometry_msgs.do_transform_pose(pose_in.pose, tf)
-        q = pose.orientation
-        yaw = math.atan2(2.0 * (q.w * q.z + q.x * q.y), 1.0 - 2.0 * (q.y * q.y + q.z * q.z))
-        line = robot_cell_line(pose.position.x, pose.position.y, yaw)
+        line = robot_cell_line(pose.position.x, pose.position.y, yaw_from_quaternion(pose.orientation))
         if line != self.last_line:
             self.last_line = line
             self.send(line)

@@ -4,7 +4,7 @@
 (yolo_detector.coreml_twin), on the Neural Engine. Run once per model, on the Mac:
 
     pixi run export-coreml                 # best_v5.pt
-    pixi run export-coreml best_v4.pt
+    pixi run export-coreml task2_yolo26s.pt
     pixi run export-coreml task2_yolo26s.pt    # task 2: arrows + bullseye
     pixi run export-coreml best_v5.pt --int8   # smaller/faster, check accuracy first
 
