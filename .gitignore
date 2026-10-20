@@ -34,3 +34,6 @@ datasets/
 
 # CoreML exports (Mac, `pixi run export-coreml`) - made from the .pt on each Mac
 src/mdp_vision/models/*.mlpackage/
+
+# pixi run calib output (the numbers used are in the docs: Quickstart, Measured car numbers)
+calibration_log.csv

@@ -2,7 +2,8 @@
 
 ROS 2 Jazzy workspace for the MDP Ackermann car (NTU MDP, Group 14). The same code runs the real
 car (Raspberry Pi 4 + STM32) and a Gazebo sim. Human-facing docs: `../docs/quickstart.md` (commands,
-calibration, every measured number) and `../docs/rpi/`.
+calibration, every measured number) and `../docs/rpi/`. The whole workspace (docs, STM32, the
+app, git): `../AGENTS.md`.
 
 ## Environment
 
@@ -19,7 +20,7 @@ calibration, every measured number) and `../docs/rpi/`.
 | Package | What |
 | --- | --- |
 | `mdp_bringup` (Python) | `launch/mdp.launch.py` (everything, sim and real), `launch/vision.launch.py`, `config/` (all settings). Nodes: `tasks/` (the two runners, sharing `runner_base.py`), `robot/` (pose feedback, manual drive, health, bag recorder, bt monitor), `sim/sim_helpers.py` (sim-only stand-ins, one node). CLI tools in `tools/` (`calib/` = straight, rotate, turn, goto, ultrasonic; rows go to `calibration_log.csv`) |
-| `mdp_algorithm` (Python library, no nodes) | costmap (any area size), Hybrid A*, visit order (`visit.mode` square) / anchors + drive-bys (`visit_plan.py`, anchors), pure pursuit; `utils/params.py` loads settings |
+| `mdp_algorithm` (Python library, no nodes) | costmap (any area size), Hybrid A*, visit order (`visit.mode` square) / anchors + drive-bys (`visit_plan.py`, anchors), path follower (LQR, both tasks); `utils/params.py` loads settings |
 | `mdp_vision` (Python) | `rpi_cam_publisher`, `yolo_detector`, models in `models/` |
 | `mdp_bridge` (C++) | `serial_bridge_node` (STM32), `bluetooth_bridge_node` (tablet) |
 | `mdp_description` (CMake) | `urdf/mdp_robot.urdf.xacro` (one URDF, `sim:=true/false`), arenas, symbol meshes |
@@ -55,9 +56,9 @@ these fits. Steering limits must also match `../mdp_stm32/include/servo.h`.
 | Goal | Command |
 | --- | --- |
 | Sim, task 1 (obstacles from `tasks.yaml`) | `pixi run sim task:=1` + `pixi run laptop sim:=true task:=1`, then `pixi run reset`, `pixi run start` |
-| Sim, task 2 | `pixi run sim-car` (or `pixi run sim task:=2` + `pixi run laptop sim:=true task:=2`), then `pixi run start` |
+| Sim, task 2 | `pixi run sim task:=2` + `pixi run laptop sim:=true task:=2` (or `pixi run sim-car task:=2`, zellij), then `pixi run start` |
 | Bare car (manual / calibration) | `pixi run sim` + `pixi run laptop sim:=true`, then `pixi run calib straight 1.0` / `rotate 90` / `turn left` / `goto 5 8 E` / `ultrasonic 60` |
-| Real car + laptop | Pi: `pixi run pi [task:=1\|2]`; laptop: `pixi run laptop [task:=1\|2]` (YOLO + the legs' path planning and `/setup_obstacles`, `tasks/leg_planner.py`, + the monitors `health_monitor`/`bt_monitor`, bags, snapshots; the Pi plans a leg itself if it does not answer within `remote_plan_timeout`). Task 2: `pixi run car`. Sim, the same split: `pixi run sim ...` + `pixi run laptop sim:=true` (task 2: `pixi run sim-car`). `role:=pi\|laptop` in `mdp.launch.py` - nothing runs alone |
+| Real car + laptop | Pi: `pixi run pi [task:=1\|2]`; laptop: `pixi run laptop [task:=1\|2]` (YOLO + the legs' path planning and `/setup_obstacles`, `tasks/leg_planner.py`, + the monitors `health_monitor`/`bt_monitor`, bags, snapshots; the Pi plans a leg itself if it does not answer within `remote_plan_timeout`). One zellij window, any task: `pixi run car <launch args>` (`scripts/car.sh`). Sim, the same split: `pixi run sim ...` + `pixi run laptop sim:=true` (or `pixi run sim-car <launch args>`). `role:=pi\|laptop` in `mdp.launch.py` - nothing runs alone |
 | Headless | add `gui:=false`; no camera: `vision:=false` |
 
 Launch arguments, tablet protocol and pixi tasks: `../docs/quickstart.md`.

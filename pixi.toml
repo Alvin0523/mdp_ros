@@ -6,69 +6,53 @@ platforms = ["linux-64", "linux-aarch64", "osx-arm64"]
 version = "0.1.0"
 
 [tasks]
-# Mac: ROS loads RunStatus's typesupport library by name (dlopen) through
-# DYLD_LIBRARY_PATH. macOS SIP strips DYLD_* from install/setup.bash and from
-# [activation.env] alike, so every node using mdp_interfaces died with "invalid
-# allocator" (2026-10-14). Only a task's own env gets through - hence the env on
-# each task that starts ROS nodes. Unused on Linux.
-# --- Workspace ---------------------------------------------------------------
+# DYLD_LIBRARY_PATH: macOS only (docs: Troubleshooting)
+
+# Workspace
 build = { cmd = "colcon build --symlink-install", description = "Build all packages" }
 test = { cmd = "colcon test", description = "Run the package tests", env = { DYLD_LIBRARY_PATH = "$PIXI_PROJECT_ROOT/install/mdp_interfaces/lib" } }
-clean = { cmd = "rm -rf build install log", description = "Delete build, install and log folders" }
-realtime = { cmd = "scripts/realtime/install.sh", description = "Pi, once: allow real-time priority for the controller loop (asks for sudo; log in again after)" }
+clean = { cmd = "rm -rf build install log", description = "Delete build/ install/ log/" }
+realtime = { cmd = "scripts/realtime/install.sh", description = "Pi, once: allow real-time priority (sudo, log in again after)" }
 
-# --- Robot bringup: ONE launch for real and sim (launch/mdp.launch.py) --------
-# Settings: src/mdp_bringup/config/ (planner, controller, ekf, bridges, vision,
-# tasks). All options are launch arguments, appended to either:
-# Always two halves, the car's and the laptop's - real and sim alike:
-#   pixi run pi task:=1      + laptop: pixi run laptop            the real car (pixi run car: task 2, one window)
-#   pixi run sim task:=2     + laptop: pixi run laptop sim:=true  Gazebo (pixi run sim-car: task 2, one window)
-#   pixi run sim task:=1 obstacles:=tablet       Gazebo, obstacles only from the tablet
-#   task:=0|1|2  vision:=true|false  model:=best_v5.pt  obstacles:=tablet|yaml
-#   layout:=<tasks.yaml>  start_cell:=1,1  start_dir:=N  gui:=false (sim)  log:=full
-#   serial_port:=...  bluetooth_device:=...      (default: config/bridges.yaml)
-pi = { cmd = "ros2 launch mdp_bringup mdp.launch.py sim:=false role:=pi", description = "On the Pi, with the laptop running `pixi run laptop`: the robot without YOLO and the monitors. Args: task:=0|1|2 vision:=true|false obstacles:=tablet|yaml start_cell:=COL,ROW start_dir:=N|E|S|W", env = { DYLD_LIBRARY_PATH = "$PIXI_PROJECT_ROOT/install/mdp_interfaces/lib" } }
-laptop = { cmd = "ros2 launch mdp_bringup mdp.launch.py role:=laptop", description = "On the laptop, with the Pi running `pixi run pi`: YOLO on the Pi camera's JPEG frames, task 1 path planning, health_monitor + bt_monitor. Sim: `pixi run sim ...` + `pixi run laptop sim:=true`. Args: model:=... task:=2 (its model)", env = { DYLD_LIBRARY_PATH = "$PIXI_PROJECT_ROOT/install/mdp_interfaces/lib" } }
-sim = { cmd = "ros2 launch mdp_bringup mdp.launch.py sim:=true", description = "Gazebo: the car's half, same args as pi (+ gui:=false) - with `pixi run laptop sim:=true`", env = { DYLD_LIBRARY_PATH = "$PIXI_PROJECT_ROOT/install/mdp_interfaces/lib" } }
-vision = { cmd = "ros2 launch mdp_bringup vision.launch.py", description = "Camera and YOLO only, no robot", env = { DYLD_LIBRARY_PATH = "$PIXI_PROJECT_ROOT/install/mdp_interfaces/lib" } }
+# Run (docs: Quickstart)
+pi = { cmd = "ros2 launch mdp_bringup mdp.launch.py sim:=false role:=pi", description = "Real car, the car's half (on the Pi) - with `laptop`", env = { DYLD_LIBRARY_PATH = "$PIXI_PROJECT_ROOT/install/mdp_interfaces/lib" } }
+laptop = { cmd = "ros2 launch mdp_bringup mdp.launch.py role:=laptop", description = "The laptop's half: YOLO, leg planning, monitors, bags", env = { DYLD_LIBRARY_PATH = "$PIXI_PROJECT_ROOT/install/mdp_interfaces/lib" } }
+sim = { cmd = "ros2 launch mdp_bringup mdp.launch.py sim:=true", description = "Gazebo, the car's half - with `laptop sim:=true`", env = { DYLD_LIBRARY_PATH = "$PIXI_PROJECT_ROOT/install/mdp_interfaces/lib" } }
+car = { cmd = "bash scripts/car.sh real", description = "Real car: Pi + laptop + Foxglove in one zellij window [launch args]" }
+sim-car = { cmd = "bash scripts/car.sh sim", description = "Sim: the same split in one zellij window [launch args]" }
+vision = { cmd = "ros2 launch mdp_bringup vision.launch.py", description = "Camera + YOLO only, no car", env = { DYLD_LIBRARY_PATH = "$PIXI_PROJECT_ROOT/install/mdp_interfaces/lib" } }
 
-# --- Run control (same for real and sim; reset works on any bringup; setup/go/stop need task:=1)
-setup = { cmd = "ros2 run mdp_bringup trigger /setup_obstacles", description = "Send the layout file's obstacles (config/tasks.yaml, or the launch's layout:=): task 1 like the tablet's DONE, task 2 as known (no ultrasonic / YOLO) - same as Foxglove's SETUP", env = { DYLD_LIBRARY_PATH = "$PIXI_PROJECT_ROOT/install/mdp_interfaces/lib" } }
-block = { cmd = "ros2 run mdp_bringup publish_obstacles --block", description = "Task 1 with a few blocks from the command line, like the tablet sending just them: pixi run block COL ROW N|E|S|W [COL ROW N|E|S|W ...] (image side). E.g. to test the IR position fix (ros2 param set /task1_runner ir_pose_fix true|false)", env = { DYLD_LIBRARY_PATH = "$PIXI_PROJECT_ROOT/install/mdp_interfaces/lib" } }
-capture = { cmd = "ros2 run mdp_bringup capture", description = "Record the camera as an MP4 for Roboflow (datasets/videos/): until Ctrl+C | --scan (only at task 1 scan stops) | --from-bag BAG | --topic /camera/image_raw (sim)", env = { DYLD_LIBRARY_PATH = "$PIXI_PROJECT_ROOT/install/mdp_interfaces/lib" } }
-reset = { cmd = "ros2 run mdp_bringup trigger /reset_pose", description = "Reset the EKF pose to the start pose (base bringup, any task)", env = { DYLD_LIBRARY_PATH = "$PIXI_PROJECT_ROOT/install/mdp_interfaces/lib" } }
-start = { cmd = "ros2 run mdp_bringup trigger /start_run", description = "Start the planned run - same as the tablet's START and Foxglove's START", env = { DYLD_LIBRARY_PATH = "$PIXI_PROJECT_ROOT/install/mdp_interfaces/lib" } }
-step = { cmd = "ros2 run mdp_bringup step", description = "Task 1 / 2 step-through (car launched with step:=true): SPACE = next checkpoint (the first starts the run; task 1: after each stop's IR fix + scan), s = E-STOP, q = quit", env = { DYLD_LIBRARY_PATH = "$PIXI_PROJECT_ROOT/install/mdp_interfaces/lib" } }
-stop = { cmd = "ros2 run mdp_bringup trigger /stop_run", description = "EMERGENCY STOP: stop the run now, zero velocity, reset before the next run - same as the tablet's STOP and Foxglove's E-STOP (the motor switch cuts the motors in hardware)", env = { DYLD_LIBRARY_PATH = "$PIXI_PROJECT_ROOT/install/mdp_interfaces/lib" } }
-status = { cmd = "ros2 topic echo /run_status mdp_interfaces/msg/RunStatus", description = "Live task-1 state (mdp_interfaces/RunStatus, 2 Hz): target, checkpoint, distance, chased waypoint, FWD/REV, cmd, scan/YOLO", env = { DYLD_LIBRARY_PATH = "$PIXI_PROJECT_ROOT/install/mdp_interfaces/lib" } }
-btlog = { cmd = "ros2 run mdp_bringup bt_monitor --ros-args -r __node:=bt_monitor_view", description = "Tablet link traffic: LINK UP/DOWN, TABLET -> RPI, RPI -> TABLET (add --all for the 2 s repeats)", env = { DYLD_LIBRARY_PATH = "$PIXI_PROJECT_ROOT/install/mdp_interfaces/lib" } }
+# Run control
+setup = { cmd = "ros2 run mdp_bringup trigger /setup_obstacles", description = "Send tasks.yaml's obstacles (= tablet DONE / Foxglove SETUP)", env = { DYLD_LIBRARY_PATH = "$PIXI_PROJECT_ROOT/install/mdp_interfaces/lib" } }
+block = { cmd = "ros2 run mdp_bringup publish_obstacles --block", description = "Task 1 with a few blocks: block COL ROW N|E|S|W ...", env = { DYLD_LIBRARY_PATH = "$PIXI_PROJECT_ROOT/install/mdp_interfaces/lib" } }
+reset = { cmd = "ros2 run mdp_bringup trigger /reset_pose", description = "Reset the pose to the start (= tablet RESET)", env = { DYLD_LIBRARY_PATH = "$PIXI_PROJECT_ROOT/install/mdp_interfaces/lib" } }
+start = { cmd = "ros2 run mdp_bringup trigger /start_run", description = "Start the run (= tablet / Foxglove START)", env = { DYLD_LIBRARY_PATH = "$PIXI_PROJECT_ROOT/install/mdp_interfaces/lib" } }
+step = { cmd = "ros2 run mdp_bringup step", description = "Step-through (car with step:=true): SPACE next, s E-STOP", env = { DYLD_LIBRARY_PATH = "$PIXI_PROJECT_ROOT/install/mdp_interfaces/lib" } }
+stop = { cmd = "ros2 run mdp_bringup trigger /stop_run", description = "Emergency stop (= tablet STOP / Foxglove E-STOP)", env = { DYLD_LIBRARY_PATH = "$PIXI_PROJECT_ROOT/install/mdp_interfaces/lib" } }
 
+# Watch and record
+foxglove = { cmd = "ros2 launch foxglove_bridge foxglove_bridge_launch.xml", description = "Foxglove bridge (ws://<host>:8765)", env = { DYLD_LIBRARY_PATH = "$PIXI_PROJECT_ROOT/install/mdp_interfaces/lib" } }
+status = { cmd = "ros2 topic echo /run_status mdp_interfaces/msg/RunStatus", description = "Live task 1 state (/run_status)", env = { DYLD_LIBRARY_PATH = "$PIXI_PROJECT_ROOT/install/mdp_interfaces/lib" } }
+btlog = { cmd = "ros2 run mdp_bringup bt_monitor --ros-args -r __node:=bt_monitor_view", description = "Tablet link traffic", env = { DYLD_LIBRARY_PATH = "$PIXI_PROJECT_ROOT/install/mdp_interfaces/lib" } }
+bag = { cmd = "ros2 run mdp_bringup trigger /bag/toggle", description = "Start / stop a bag (= Foxglove REC)", env = { DYLD_LIBRARY_PATH = "$PIXI_PROJECT_ROOT/install/mdp_interfaces/lib" } }
+bag-all = { cmd = "ros2 bag record -a -o bags/rosbag2_$(date +%Y%m%d_%H%M%S)", description = "Record everything, camera images too", env = { DYLD_LIBRARY_PATH = "$PIXI_PROJECT_ROOT/install/mdp_interfaces/lib" } }
+capture = { cmd = "ros2 run mdp_bringup capture", description = "Record the camera as MP4 for Roboflow (datasets/videos/)", env = { DYLD_LIBRARY_PATH = "$PIXI_PROJECT_ROOT/install/mdp_interfaces/lib" } }
 
-# --- Calibration and tests (bare car: pixi run pi + laptop / sim) ----------
-task2-table = { cmd = "ros2 run mdp_bringup task2_table", description = "Task 2: build the checkpoint 1 -> 2 route table (config/task2_routes.json.gz) - after changing the car or task2_runner settings it depends on. Args: [--no-hybrid] [--out FILE]" }
-calib = { cmd = "ros2 run mdp_bringup calib", description = "Calibrate (rows go to calibration_log.csv): calib straight 2.0 [--speed 0.9] | rotate 90 | turn left|right [--speed 0.35] | goto COL ROW N|E|S|W | ultrasonic CM | ir  (-h for options)", env = { DYLD_LIBRARY_PATH = "$PIXI_PROJECT_ROOT/install/mdp_interfaces/lib" } }
-around-obstacle = { cmd = "ros2 run mdp_bringup around_obstacle", description = "Checklist: approach a block on the ultrasonic and drive a square round it [--direction right]", env = { DYLD_LIBRARY_PATH = "$PIXI_PROJECT_ROOT/install/mdp_interfaces/lib" } }
+# Calibration and tools
+calib = { cmd = "ros2 run mdp_bringup calib", description = "Calibrate: straight | rotate | turn | goto | ultrasonic | ir", env = { DYLD_LIBRARY_PATH = "$PIXI_PROJECT_ROOT/install/mdp_interfaces/lib" } }
+around-obstacle = { cmd = "ros2 run mdp_bringup around_obstacle", description = "Checklist: drive a square round a block", env = { DYLD_LIBRARY_PATH = "$PIXI_PROJECT_ROOT/install/mdp_interfaces/lib" } }
 teleop = { cmd = "ros2 run teleop_twist_keyboard teleop_twist_keyboard --ros-args -p stamped:=true", description = "Keyboard driving", env = { DYLD_LIBRARY_PATH = "$PIXI_PROJECT_ROOT/install/mdp_interfaces/lib" } }
+task2-table = { cmd = "ros2 run mdp_bringup task2_table", description = "Task 2: rebuild the CP1 -> CP2 route table" }
 
-# --- Viewing and recording ---------------------------------------------------
-car = { cmd = "zellij --layout zellij/car.kdl", description = "Real task 2 run in one zellij window: the Pi (waits for it, SSHes in, pixi run pi task:=2), the laptop side (laptop task:=2) and Foxglove's bridge - Ctrl+C stops a pane, ENTER reruns it, Ctrl+Q quits. MDP_PI=user@host for another Pi" }
-sim-car = { cmd = "zellij --layout zellij/sim-car.kdl", description = "Task 2 sim split like the real car, one zellij window: sim task:=2 (the car), laptop sim:=true task:=2, Foxglove - Ctrl+C stops a pane, ENTER reruns it, Ctrl+Q quits" }
-foxglove = { cmd = "ros2 launch foxglove_bridge foxglove_bridge_launch.xml", description = "Foxglove bridge (ws://<pi>:8765, display frame: map)", env = { DYLD_LIBRARY_PATH = "$PIXI_PROJECT_ROOT/install/mdp_interfaces/lib" } }
-bag = { cmd = "ros2 run mdp_bringup trigger /bag/toggle", description = "Start recording a bag (every topic except camera images) into bags/, or stop it if recording - same as the Foxglove REC button", env = { DYLD_LIBRARY_PATH = "$PIXI_PROJECT_ROOT/install/mdp_interfaces/lib" } }
-bag-all = { cmd = "ros2 bag record -a -o bags/rosbag2_$(date +%Y%m%d_%H%M%S)", description = "Record everything, including camera images (large)", env = { DYLD_LIBRARY_PATH = "$PIXI_PROJECT_ROOT/install/mdp_interfaces/lib" } }
+# Sim assets
+panels = { cmd = "python src/mdp_description/scripts/gen_symbol_meshes.py", description = "Sim: generate the symbol panel meshes" }
+import-symbols = { cmd = "python src/mdp_description/scripts/import_symbol_textures.py", description = "Sim: import the symbol textures" }
 
-# --- Sim assets ---------------------------------------------------------------
-panels = { cmd = "python src/mdp_description/scripts/gen_symbol_meshes.py", description = "Generate the symbol panel meshes" }
-import-symbols = { cmd = "python src/mdp_description/scripts/import_symbol_textures.py", description = "Import the symbol textures" }
-
-# --- YOLO on a Mac --------------------------------------------------------------
-# CoreML (Neural Engine) is the fastest there; the detector picks <name>.mlpackage
-# next to <name>.pt by itself. CUDA (NVIDIA laptop) / MPS / CPU otherwise.
-export-coreml = { cmd = "python scripts/yolo/export_coreml.py && colcon build --symlink-install --packages-select mdp_vision", description = "Mac, once per model: best_v5.pt -> best_v5.mlpackage (CoreML) and install it. Args: [model.pt] [--int8]" }
-bench-yolo = { cmd = "python scripts/yolo/bench_yolo.py", description = "Time YOLO here on every backend there is (CUDA / CoreML / MPS / CPU). Args: [model.pt] [--frames N] [--images DIR]" }
+# YOLO
+export-coreml = { cmd = "python scripts/yolo/export_coreml.py && colcon build --symlink-install --packages-select mdp_vision", description = "Mac, once per model: YOLO -> CoreML [model.pt] [--int8]" }
+bench-yolo = { cmd = "python scripts/yolo/bench_yolo.py", description = "Time YOLO on every backend here" }
 
 [dependencies]
-# Core ROS2 & Control
 ros-jazzy-ros-base = "*"
 ros-jazzy-xacro = "*"
 ros-jazzy-robot-state-publisher = "*"
@@ -77,37 +61,22 @@ ros-jazzy-teleop-twist-keyboard = "*"
 ros-jazzy-ros2-control = "*"
 ros-jazzy-ros2-controllers = "*"
 ros-jazzy-topic-based-ros2-control = "*"
-
-# Telemetry & Sensor Fusion
 ros-jazzy-foxglove-bridge = "*"
 ros-jazzy-robot-localization = "*"
-
-# Planning & Math
+ros-jazzy-cv-bridge = "*"
 scipy = "*"
 numpy = "*"
 pyyaml = "*"
-
-# Vision Runtime
-ros-jazzy-cv-bridge = "*"
-# opencv = "*"
-# libblas = { version = "*", build = "*openblas" }
-# liblapack = { version = "*", build = "*openblas" }
-
-# Build Tools
 colcon-common-extensions = "*"
 compilers = "*"
 cmake = "*"
 ninja = "*"
 hypothesis = ">=6.168.1,<7"
 
+# torch per machine: docs, RPi overview
 [pypi-dependencies]
 ultralytics = "*"
-# torch / torchvision per machine (below): CUDA on the Linux laptop, CPU on the Pi,
-# CPU + Apple GPU (MPS) on a Mac - plus CoreML there (`pixi run export-coreml`).
 
-# ---------------------------------------------------------------------------
-# Laptop-only targets (Simulation, GUI testing, Model conversion)
-# ---------------------------------------------------------------------------
 [target.linux-64.dependencies]
 ros-jazzy-ros-gz = "*"
 ros-jazzy-gz-ros2-control = "*"
@@ -115,13 +84,10 @@ ros-jazzy-joint-state-publisher-gui = "*"
 
 [target.linux-64.pypi-dependencies]
 pnnx = "*"
-# CUDA 12.8 build: YOLO on the laptop's NVIDIA GPU - 12.8 is the
-# first CUDA for RTX 50-series. Without an NVIDIA GPU it runs on the CPU.
 torch = { version = "==2.8.0", index = "https://download.pytorch.org/whl/cu128" }
 torchvision = { version = "==0.23.0", index = "https://download.pytorch.org/whl/cu128" }
 
 [target.linux-aarch64.pypi-dependencies]
-# The Pi: CPU build (no CUDA; YOLO runs on the laptop - PyTorch crashed on the Pi)
 torch = { version = "==2.8.0", index = "https://download.pytorch.org/whl/cpu" }
 torchvision = { version = "==0.23.0", index = "https://download.pytorch.org/whl/cpu" }
 
@@ -132,30 +98,24 @@ ros-jazzy-joint-state-publisher-gui = "*"
 
 [target.osx-arm64.pypi-dependencies]
 pnnx = "*"
-torch = "==2.8.0"          # PyPI's Mac build: CPU + the Apple GPU (MPS)
+torch = "==2.8.0"
 torchvision = "==0.23.0"
-coremltools = "*"          # `pixi run export-coreml`: YOLO -> CoreML (Neural Engine)
+coremltools = "*"
 
 [activation]
 scripts = ["install/setup.bash", "scripts/activate_rmw.sh"]
 
-# NVIDIA GPU for Gazebo rendering when the driver is present (no-op otherwise).
-# A target's scripts REPLACE the list above, so install/setup.bash is repeated.
+# A target's scripts replace the list above
 [target.linux-64.activation]
 scripts = ["install/setup.bash", "scripts/activate_rmw.sh", "scripts/activate_gpu.sh"]
 
+# Pi <-> laptop discovery, other links' addresses: docs, Network
 [activation.env]
 ROS_DOMAIN_ID = "14"
-# Pi <-> laptop: no multicast discovery, reach the other machine directly.
-# Same list on both machines (Pi first, laptop second; listing yourself is harmless).
 ROS_AUTOMATIC_DISCOVERY_RANGE = "LOCALHOST"
-ROS_STATIC_PEERS = "100.102.151.31;100.87.142.86"   # Tailscale: Pi 100.102.151.31, laptop 100.87.142.86
-# ROS_STATIC_PEERS = "10.42.0.1;10.42.0.119"   # Pi's WiFi hotspot max_verstappen: Pi .1, laptop .119 (static)
-# ROS_STATIC_PEERS = "192.168.68.103;192.168.68.104"   # router "scott1": Pi .103, laptop .104
+ROS_STATIC_PEERS = "100.102.151.31;100.87.142.86"
 GZ_SIM_SYSTEM_PLUGIN_PATH = "$CONDA_PREFIX/lib"
 
-# Pi only: OpenCV/numpy (OpenMP) worker threads spin between jobs - the camera
-# publisher took ~290% CPU for 10 fps. PASSIVE makes them sleep instead: 10%,
-# same frame rate, all threads still there for YOLO when the Pi runs it alone.
+# Pi: OpenMP threads sleep instead of spinning (docs, RPi overview)
 [target.linux-aarch64.activation.env]
 OMP_WAIT_POLICY = "PASSIVE"
