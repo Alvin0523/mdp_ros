@@ -351,7 +351,12 @@ def generate_launch_description(argv=None):
             Node(package='robot_state_publisher', executable='robot_state_publisher', output='screen',
                  parameters=[{'robot_description': robot_desc}, sim_time]),
             Node(package='ros_gz_sim', executable='create', output='screen',
-                 arguments=['-string', robot_desc, '-name', 'mini_akm_robot',
+                 # The car's meshes as absolute file:// paths: the GUI often could
+                 # not resolve model://mdp_description/meshes/... (from package://)
+                 # and drew only the box/cylinder parts - no chassis, wheels or
+                 # knuckles. robot_state_publisher keeps package:// (Foxglove).
+                 arguments=['-string', robot_desc.replace('package://mdp_description/', f'file://{pkg_description}/'),
+                            '-name', 'mini_akm_robot',
                             '-x', str(start_x), '-y', str(start_y), '-z', '0.05', '-Y', str(start_yaw)]),
             Node(package='ros_gz_bridge', executable='parameter_bridge', output='screen',
                  parameters=[sim_time],

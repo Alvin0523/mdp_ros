@@ -203,7 +203,7 @@ task1_runner:
     #            Reeds-Shepp estimates (~0.2-0.5 s), then the legs with Hybrid A*.
     #            Offline on the 2026-10-14 tablet layout: 8 stops -> 4 + 4 drive-bys.
     visit:
-      mode: anchors                   # anchors | square
+      mode: square                    # anchors | square
       view_max_dist: 0.50             # m, camera -> image: "in view" (anchors mode)
       view_max_bearing: 0.436         # rad = 25 deg off the camera's axis (view +-31)
       view_max_incidence: 0.785       # rad = 45 deg: the face seen at most this oblique

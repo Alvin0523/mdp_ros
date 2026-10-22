@@ -12,7 +12,8 @@ snapped to the centre of its 10 cm cell. Where the car does not fit there - its
 nose (or tail) over the table's edge, e.g. block (1,18) facing E, or on another
 block, e.g. (13,11)E with (16,13)W - or another block stands between it and the
 face, the stop slides along the car's heading (along the face), 1 cm at a time up
-to MAX_SLIDE_CM either way, to the nearest spot where it fits and sees the face.
+to MAX_SLIDE_CM either way, to the nearest spot where it fits and sees the face;
+failing that, on backwards (along the car's heading) up to MAX_BACK_SLIDE_CM.
 An obstacle with no such spot is unreachable and skipped.
 
 ORDER: every permutation of the reachable obstacles, scored by the sum of
@@ -38,6 +39,12 @@ Checkpoint = Tuple[float, float, float, int]  # (x_cm, y_cm, theta_rad, obstacle
 
 MAX_SLIDE_CM = 10.0   # a stop slid further than this: the camera misses the block
 MAX_STANDOFF_SHIFT_CM = 3.0   # a stop may also be this much nearer the face or further from it
+# No spot within MAX_SLIDE_CM: the stop goes on BACKWARDS along the car's heading,
+# 1 cm at a time, until the car fits (the user's call 2026-10-23: move it back, don't
+# skip it - (13,11)E and (16,13)W fit 11 cm back). As far as the image stays whole in
+# the camera's view: at the 30 cm stand-off the camera (on the rear axle, looking
+# left, +-31 deg) sees +-18 cm along the face, minus the image's half width 5.
+MAX_BACK_SLIDE_CM = 13.0
 
 
 def _view_blocked(costmap: Costmap, obstacle: Obstacle, x: float, y: float) -> bool:
@@ -90,6 +97,12 @@ def obstacle_to_checkpoint(costmap: Costmap, obstacle: Obstacle,
         sx, sy = x + d * c + e * nx, y + d * s + e * ny
         if not costmap.in_collision(sx, sy, theta) and not _view_blocked(costmap, obstacle, sx, sy):
             return (float(sx), float(sy), theta, obstacle.id)
+    # Nothing near: further back along the heading, the nearest spot that fits.
+    for d in np.arange(-MAX_SLIDE_CM - 1.0, -MAX_BACK_SLIDE_CM - 0.5, -1.0):
+        for e in sorted(shifts, key=abs):
+            sx, sy = x + d * c + e * nx, y + d * s + e * ny
+            if not costmap.in_collision(sx, sy, theta) and not _view_blocked(costmap, obstacle, sx, sy):
+                return (float(sx), float(sy), theta, obstacle.id)
     return None
 
 
